@@ -188,6 +188,7 @@ function M.env(w)
     e.cooldown = default({ remains = 0 })
     e.active_dot = default(0)
     e.rage = pool({ current = 50 })
+    e.weapon = { size = w.state.weapon.size }
     e.target = { minR = 10, is_boss = false }
     e.combat, e.active_enemies = 0, 1
     function e.applyBuff(key, duration, stacks)

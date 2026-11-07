@@ -43,6 +43,12 @@
 -- stat-buff cooldown in this gear): no lines; GAP 14 (autocastOtherCooldowns) costs Arms nothing (none in its APL).
 -- Not a deviation: Blood Fury's cooldown is the DB2's 120 s; wowsims holds it to 180 s (queued at 3m), so from 120 s
 -- our off-GCD icon shows it while wowsims waits (off the GCD: not scored).
+local outdoorCombat = "arms_open_world&combat>0"
+local pveCombat = "arms_pve_target&combat>0"
+local melee = "&target.within5&!target.outside5"
+local noLastStand = "&(!action.last_stand.known|!buff.last_stand.up)"
+local noShieldWall = "&(!action.shield_wall.known|!buff.shield_wall.up)"
+
 return {
     class = "WARRIOR",
     pack = "Arms (wowsims.com)",
@@ -74,8 +80,10 @@ return {
     -- player-facing lines of the in-game description (the user's audit rulings, 2026-10-21)
     notes = {
         "Cooldowns toggle hides: Death Wish, Recklessness (also behind its pack setting, off by default), Sweeping Strikes and the racials (Blood Fury, Berserking, Eureka, Elune's Light).",
-        "No line here sits under the Potions or Defensives toggles.",
-        "Rend is used on every target, boss or not.",
+        "The endgame priority adapts as you learn abilities. Open-world pulls use earlier Rend and spend less rage on armor stacks.",
+        "While leveling or fighting outdoors, Bloodrage favors low rage. Readable health must be at least 65%; hidden health in combat leaves it eligible.",
+        "Rend skips known bleed-immune targets and backs off briefly after an immune result in PvE.",
+        "PvE utility follows your Interrupts and Defensives toggles. Retaliation also follows Cooldowns.",
     },
     executePhase = "execute_phase",
     -- the user's ruling (2026-10-21): Berserker Rage only "if talented for the rage gain", precombat and in combat
@@ -89,22 +97,82 @@ return {
     -- line is the leveling line below (the slow missing: a need, R41). Fury casts no Thunder Clap, so its recipe names
     -- none (rule 15 errors on a key with no cast line) and the setting is registered for Arms only.
     maintenance = { thunder_clap = "maintain_thunder_clap" },
-    -- leveling: before Mortal Strike's talent (the brackets' L40 has 31 points, short of it) Arms has only cooldown
-    -- strikes (Slam 18 s, Spearing Strike 20 s), Rend, Thunder Clap and five Sunders; the rest goes to the off-GCD Heroic
-    -- Strike (a rage dump). Each line is a genuine need (R41): Heroic Strike spends rage, Thunder Clap puts its debuff
-    -- back, Sunder Armor builds the stack (wowsims's own "Sunder Armor" group casts it below 5 stacks). The Hamstring
-    -- filler that pressed the idle GCD is gone (R41: not a PvE rotation ability, no need); the idle that leaves is a
-    -- measured per-bracket limit (tests/Forever/wowsims_warrior_spec.lua). Thunder Clap has no rage hold: wowsims's Arms
-    -- list has no Thunder Clap line to take one from, and the harness (rule 15's setting on) never cast it
-    -- (tests/Forever/maintenance_spec.lua); in game the setting is off and the line silent.
-    leveling = {
-        "heroic_strike,use_off_gcd=1,focus=2,if=!action.mortal_strike.known&rage.lo>=30",
-        "thunder_clap,if=!action.mortal_strike.known&!debuff.thunder_clap.up",
-        "sunder_armor,if=!action.mortal_strike.known&debuff.sunder_armor.stack<5",
+    guard = {
+        -- Bloodrage uses a health threshold only when the client supplies a readable value in combat.
+        bloodrage = "arms_bloodrage_safe",
+        sunder_armor = "!(arms_open_world&arms_short_pull)",
+        rend = "!arms_skip_rend",
+        -- When stance dancing, a swap for Overpower still makes sense if Rend is blocked.
+        battle_stance = "!arms_skip_rend|!settings.wowsims_stance_dance|buff.overpower_ready.up",
     },
-    -- extra (content outside wowsims's model): Victory Rush; wowsims never goes mob to mob, so its kill window never
-    -- opens there. The user's ruling (2026-10-21): "just above bloodthirst (since it's a mini bloodthirst)". The bare
-    -- line: the kit's usable already refuses it outside Victorious.
-    -- Arms has no Bloodthirst: above its main strike, Mortal Strike (the owner's placement; the user may move it).
-    extra = { { before = "mortal_strike", line = "victory_rush,focus=1" } },
+    leveling = {
+        -- Until Rend is trained, Heroic Strike is the only damage spender. After that, keep rage for Rend and Overpower.
+        "heroic_strike,use_off_gcd=1,focus=2,if=level<60&combat>0&!action.rend.known",
+        -- One armor stack gives the early kit a useful alternative against a bleed-immune short pull.
+        "sunder_armor,if="
+            .. outdoorCombat
+            .. "&arms_short_pull&arms_skip_rend&!action.mortal_strike.known&!execute_phase&debuff.sunder_armor.stack=0",
+        "heroic_strike,use_off_gcd=1,focus=2,if=!action.mortal_strike.known&(rage.lo>=40|(!arms_open_world|arms_skip_rend)&rage.lo>=30)",
+        "thunder_clap,if=!action.mortal_strike.known&!debuff.thunder_clap.up",
+        "sunder_armor,if=!action.mortal_strike.known&debuff.sunder_armor.stack<5&!(arms_open_world&arms_short_pull)",
+    },
+    -- Situational PvE utility and short outdoor pulls use the same underlying damage priority.
+    extra = {
+        {
+            before = "call_action_list",
+            line = "shield_bash,if=" .. pveCombat .. melee .. "&debuff.casting.up&debuff.casting.v2=0",
+        },
+        {
+            before = "call_action_list",
+            line = "pummel,if=" .. pveCombat .. melee .. "&debuff.casting.up&debuff.casting.v2=0",
+        },
+        { before = "call_action_list", line = "healthstone,use_off_gcd=1,if=" .. pveCombat .. "&health.pct<=30" },
+        { before = "call_action_list", line = "shield_wall,if=" .. pveCombat .. "&health.pct<=25" .. noLastStand },
+        {
+            before = "call_action_list",
+            line = "last_stand,use_off_gcd=1,if=" .. pveCombat .. "&health.pct<=35" .. noShieldWall,
+        },
+        { before = "call_action_list", line = "victory_rush,focus=1,if=" .. pveCombat .. "&health.pct<=75" },
+        {
+            before = "call_action_list",
+            line = "retaliation,if="
+                .. outdoorCombat
+                .. melee
+                .. "&toggle.defensives&health.pct<=45&active_enemies>=2"
+                .. noLastStand
+                .. noShieldWall,
+        },
+        {
+            before = "call_action_list",
+            line = "demoralizing_shout,if="
+                .. outdoorCombat
+                .. melee
+                .. "&toggle.defensives&health.pct<=75&active_enemies>=2&debuff.demoralizing_shout.down",
+        },
+        -- Keep the upstream kill-window placement as well. The ability itself checks for Victorious.
+        { before = "mortal_strike", line = "victory_rush,focus=1" },
+        {
+            before = "slam",
+            line = "bloodrage,use_off_gcd=1,if="
+                .. pveCombat
+                .. "&(level<60|arms_open_world)&rage.lo<=15&arms_bloodrage_safe",
+        },
+        {
+            before = "slam",
+            line = "rend,focus=2,if=" .. outdoorCombat .. "&!arms_skip_rend&!execute_phase&debuff.rend.down",
+        },
+        {
+            before = "cleave",
+            line = "hamstring,if="
+                .. outdoorCombat
+                .. melee
+                .. "&execute_phase&arms_moving_humanoid&debuff.hamstring.down",
+        },
+        {
+            before = "heroic_strike",
+            line = "heroic_strike,use_off_gcd=1,focus=2,if="
+                .. outdoorCombat
+                .. "&arms_short_pull&action.mortal_strike.known&!execute_phase&active_enemies=1&rage.lo>=65",
+        },
+    },
 }

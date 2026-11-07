@@ -9,7 +9,7 @@ local pg = require("Forever.helpers.protection_gate")
 
 describe("headless Arms", function()
     it("boots the Arms character: two entries out of combat with a target, no error, no unlisted nil read", function()
-        local H = headless.new({ character = ww.character(), pack = ww.PACK })
+        local H = headless.new({ character = ww.Raid.character(), pack = ww.PACK })
         assert.are.same({}, H.loadErrors)
         assert.are.equal(ww.SPEC, H.Hekili.State.spec.id)
         H.ctl.inRange.target, H.ctl.level.target = true, 60
@@ -83,7 +83,7 @@ describe("the Warrior world mapping", function()
         s.rage.current, s.rage.lo, s.rage.actual = 100, 100, 100 -- the class file reads the floor (border batch 2)
         s.swap_stance("berserker_stance") -- the booted class file, on the character's talents and spells
         local keep = s.rage.actual
-        assert.are.equal(85, keep) -- Forever's Tactical Mastery passive 10, the talent's 5 ranks 15 each
+        assert.are.equal(25, keep) -- Tactical Mastery keeps 10 rage, and its three talent ranks add 15.
         local W = { t = 0 }
         local e = { power = 100, form = 1 }
         function W.setForm(x, f)

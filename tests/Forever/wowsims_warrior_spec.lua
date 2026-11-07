@@ -30,16 +30,44 @@ local ARMS = {
         end,
     },
 }
-local ARMS_REPLAY = { hidden = { [1282733] = true }, procs = {} }
+-- The pinned fight predates launch tuning and was simulated with the old 15 s Improved Slam cooldown.
+local ARMS_REPLAY = { hidden = { [1282733] = true }, procs = {}, cooldowns = { slam = 15 } }
+
+-- https://www.icy-veins.com/wow-forever/arms-warrior-leveling#leveling-talent-build (level 40)
+local ARMS_LEVEL_40 = {
+    kit = ARMS.kit,
+    requires = {
+        overpower = ARMS.requires.overpower,
+        shatter_curse = function()
+            return false, "the test mob only uses melee attacks"
+        end,
+    },
+    talents = {
+        { 16462, 2, 1 }, -- Deflection
+        { 12286, 3, 1 }, -- Improved Rend
+        { 12285, 2, 1 }, -- Improved Charge
+        { 12295, 3, 1 }, -- Improved Tactical Mastery
+        { 12290, 2, 1 }, -- Improved Overpower
+        { 12296, 1, 1 }, -- Anger Management
+        { 12834, 3, 1 }, -- Deep Wounds
+        { 1310222, 1, 1 }, -- Spearing Strike
+        { 12163, 3, 1 }, -- Two-Handed Weapon Specialization
+        { 12292, 1, 1 }, -- Sweeping Strikes
+        { 1289682, 2, 1 }, -- Bloodthrill
+        { 1290261, 5, 1 }, -- Weaponmaster
+        { 12862, 2, 1 }, -- Improved Slam
+        { 12294, 1, 1 }, -- Mortal Strike
+    },
+}
 -- The replay's character wields the wowsims build's main hand (p1_arms: Arcanite Reaper, 12784, ItemDelay 3800 in the
 -- Forever DB2), so the client's swing speed is the log's swings' 3.8 s, not the loop world's 3.6 s weapon.
 local ARMS_CHAR = setmetatable({
     character = function()
-        local c = ww.character()
+        local c = ww.Raid.character()
         c.speed = { 3.8 }
         return c
     end,
-}, { __index = ww })
+}, { __index = ww.Raid })
 
 -- Fury: the same Overpower window (its Overpower Weaving group reads 1282733); Berserker Rage is a trained ability the
 -- loop kit lacks. The base is the dual-wield world (ww.Fury), the log's own weapon speeds.
@@ -106,15 +134,13 @@ describe("the Warrior wowsims.com packs #slow #wowsims", function()
     -- Sunders up, the rage going to the off-GCD Heroic Strike; L40 the same with Slam and Spearing Strike cooling.
     -- Re-pin e2842f0a78 (lane 14): 7.4 / 8.6 / 5.6 measured; L40 12.8 -> 8.6 (R6, R41: 37.4-45.4 s, Slam 8.5 s and
     -- Spearing Strike cooling, Rend up 8.1 s, five Sunders up, rage 12-28 pooling to the off-GCD Heroic Strike: nothing
-    -- useful to cast); L10 and L60 stay
-    local ARMS_LIVE = { [10] = 7.4, [40] = 8.6, [60] = 6 } -- 7.4 / 8.6 / 5.6
+    -- useful to cast). L40 now uses the launch leveling build, and L60 runs the long-fight priority in a raid context.
+    local ARMS_LIVE = { [10] = 7.4, [40] = 8.6, [60] = 6 }
     for _, level in ipairs({ 10, 40, 60 }) do
         it("Arms (wowsims.com) stays live at level " .. level, function()
-            ws.live(
-                "Arms (wowsims.com)",
-                content("warrior_arms", ww, "Arms (wowsims.com)", level, ARMS),
-                ARMS_LIVE[level]
-            )
+            local base = level == 60 and ww.Raid or ww
+            local C = content("warrior_arms", base, "Arms (wowsims.com)", level, level == 40 and ARMS_LEVEL_40 or ARMS)
+            ws.live("Arms (wowsims.com)", C, ARMS_LIVE[level])
         end)
     end
     it("Fury (wowsims.com) follows wowsims's casts", function()
@@ -159,7 +185,7 @@ describe("the Warrior wowsims.com packs #slow #wowsims", function()
     -- icon is never Sunder while the target's true 5 stacks have more than 15 s left (past any wait the queue shows)
     -- and the fifth is older than one tick (the cast's frame, before its success folds in).
     for _, case in ipairs({
-        { "warrior_arms", ww, "Arms (wowsims.com)", ARMS },
+        { "warrior_arms", ww.Raid, "Arms (wowsims.com)", ARMS },
         { "warrior_fury", ww.Fury, "Fury (wowsims.com)", FURY },
     }) do
         it(case[3] .. " stops Sunder Armor at 5 stacks at level 30", function()

@@ -40,13 +40,13 @@ M.KIT = {
     "victory_rush",
     "whirlwind",
 }
--- An Arms build by definition spell (the SPIKE's): Mortal Strike, Anger Management, Deep Wounds 3, Tactical Mastery 5,
+-- An Arms build by definition spell: Mortal Strike, Anger Management, Deep Wounds 3, Improved Tactical Mastery 3,
 -- Impale 2, Improved Rend 3, and Spearing Strike (the Arms talent the wowsims.com build takes).
-M.TALENTS = { [12294] = 1, [12296] = 1, [12834] = 3, [12295] = 5, [16493] = 2, [12163] = 3, [1310222] = 1 }
+M.TALENTS = { [12294] = 1, [12296] = 1, [12834] = 3, [12295] = 3, [16493] = 2, [12163] = 3, [1310222] = 1 }
 -- How many of an ability's rank list (`id`, then `copy`) the character knows when the list runs past its trained ranks:
 -- Slam's list ends in Improved Slam's override IDs, which this build (no Improved Slam) does not know.
 M.RANKS = { slam = 5 }
--- Forever's Tactical Mastery passive (the user's Warrior knows it): the stance keep is 85 (the class file's swap_stance).
+-- Forever's Tactical Mastery passive, trained at level 14.
 M.PASSIVES = { 1310185 }
 
 -- Every known rank's spell ID of each kit ability (the class file reads the usability of the highest rank known).
@@ -98,6 +98,15 @@ function M.character()
         form = 1,
     }
 end
+
+-- A raid context for fixtures that measure the upstream priority.
+M.Raid = setmetatable({
+    character = function()
+        local c = M.character()
+        c.instanceType = "raid"
+        return c
+    end,
+}, { __index = M })
 
 -- The world the loop fights in (scenarios.world's knobs): level 60 against a level 60 mob in melee range, the
 -- two-hander's damage (Arcanite Reaper's range, rounded), rage capped at 100, a mob of 15000 health (killed in about
@@ -222,6 +231,7 @@ M.MAP = {
     shield_block = selfAura("shield_block"),
     last_stand = selfAura("last_stand"), -- its health gain not modelled
     shield_wall = selfAura("shield_wall"),
+    retaliation = selfAura("retaliation"),
     spearing_strike = { -- UNMEASURED amount: a plain weapon hit
         effect = function(W, e)
             W.hit(e, e.target, weapon(W, e, 0), 1)
@@ -234,6 +244,7 @@ M.MAP = {
     concussion_blow = strike(nil, "concussion_blow"),
     -- threat and interrupts are not modelled: these only press
     shield_bash = {},
+    pummel = {},
     taunt = {},
     challenging_shout = {},
     revenge = { -- a dodge, parry or block of a swing at us within 5 s (the class file's window)

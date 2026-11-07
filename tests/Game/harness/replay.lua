@@ -295,7 +295,8 @@ end
 
 --- A replay of log `text` bound to booted instance `H`'s class data (abilities by `key`, `id`, `copy`, `cooldown`: a
 --- number, else the engine's answer `H.Hekili.State.action[key].cooldown` (talent-modified), else the log's least
---- spacing between two of the key's casts; auras by `id`, `copy`, `duration`). `o.shared` ({ [key] = partner key or
+--- spacing between two of the key's casts; auras by `id`, `copy`, `duration`). `o.cooldowns` overrides spell cooldowns
+--- by key when a log predates the live tuning. `o.shared` ({ [key] = partner key or
 --- keys }: a category cooldown, the content's) puts the partners on the cast's cooldown too, on every member's ranks. `o`: forms ({ spellID, ... }: the client's form index of each form's spell and
 --- aura), hidden ({ [auraID] = true }: in the truth, never shown to the client), procs ({ [spellID] = true }: neither a
 --- decision nor a cast; a key is a spell ID, every tag of it, or "<spellID>:<tag>", that tag only: a weapon proc logged
@@ -370,7 +371,8 @@ function M.new(text, H, o)
         for _, id in ipairs(type(a.copy) == "table" and a.copy or { a.copy }) do
             list[#list + 1] = id
         end
-        rankIDs[key], cd[key] = {}, tonumber(a.cooldown) or (a.cooldown == nil and 0) or nil
+        rankIDs[key] = {}
+        cd[key] = o.cooldowns and o.cooldowns[key] or tonumber(a.cooldown) or (a.cooldown == nil and 0) or nil
         if cd[key] == nil then
             engine[key] = engineCooldown(key)
         end

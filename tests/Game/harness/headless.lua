@@ -890,6 +890,7 @@ function M.new(o)
     local c = o.character
     if c then -- the character, before login: VirtualState builds its spellbook at SpecializationChanged
         ctl.class, ctl.classID, ctl.specID, ctl.race = c.class, c.classID or 0, c.specID, c.race
+        ctl.instanceType = c.instanceType or ctl.instanceType
         ctl.level.player = c.level
         for _, id in ipairs(c.known or {}) do
             ctl.known[id] = true

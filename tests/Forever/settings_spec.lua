@@ -71,7 +71,7 @@ end)
 
 describe("Engine.Configure (headless Arms boot)", function()
     it("runs once from the fixture profile through OnInitialize -> InitializeProfile", function()
-        local H = headless.new({ character = ww.character(), pack = ww.PACK })
+        local H = headless.new({ character = ww.Raid.character(), pack = ww.PACK })
         assert.are.same({}, H.loadErrors)
         local s, p = H.Hekili.Engine.settings, H.Hekili.DB.profile
         assert.are.equal(1, s.version)
@@ -177,7 +177,7 @@ describe("a choice setting", function()
     local ORDER = { "alpha", "beta", "none" }
 
     local function boot(scenario)
-        local H = headless.new({ character = ww.character(), pack = ww.PACK, scenario = scenario })
+        local H = headless.new({ character = ww.Raid.character(), pack = ww.PACK, scenario = scenario })
         assert.are.same({}, H.loadErrors)
         local id = H.Hekili.State.spec.id
         local spec = H.Hekili.Class.specs[id]

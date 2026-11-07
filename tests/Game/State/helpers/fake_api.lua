@@ -115,6 +115,9 @@ function M.new()
         spellHaste = 0,
         health = 1000,
         healthMax = 1000,
+        instanceType = "none",
+        groupMembers = 0,
+        inRaid = false,
         unitHealth = {}, -- [unit] = UnitHealth (default: health)
         unitHealthMax = {}, -- [unit] = UnitHealthMax (default: healthMax)
         totems = {},
@@ -421,13 +424,19 @@ function M.new()
     end
     api.UnitPhaseReason, api.UnitThreatSituation, api.UnitTokenFromGUID, api.IsActionInRange = none, none, none, none
     api.HasOverrideActionBar, api.HasVehicleActionBar, api.SpellIsSelfBuff = no, no, no
-    api.IsMounted, api.IsResting, api.IsInRaid, api.UnitCanAssist = no, no, no, no
+    api.IsMounted, api.IsResting, api.UnitCanAssist = no, no, no
+    function api.IsInRaid()
+        return ctl.inRaid
+    end
     function api.IsInGroup() -- `ctl.inGroup` (the meter provider reads it at PLAYER_REGEN_DISABLED)
         return ctl.inGroup == true
     end
     api.UnitIsTrivial, api.UnitIsPVP, api.UnitInVehicle, api.UnitHasVehicleUI, api.UnitOnTaxi = no, no, no, no, no
     api.UnitInParty, api.UnitInRaid = no, none
-    api.GetHaste, api.GetFrameCPUUsage, api.GetNumGroupMembers, api.GetNumSubgroupMembers = zero, zero, zero, zero
+    api.GetHaste, api.GetFrameCPUUsage, api.GetNumSubgroupMembers = zero, zero, zero
+    function api.GetNumGroupMembers()
+        return ctl.groupMembers
+    end
     function api.GetFramerate()
         return 60
     end
@@ -508,7 +517,7 @@ function M.new()
         return 0, 7, 7, 4.72
     end
     function api.IsInInstance()
-        return false, "none"
+        return ctl.instanceType ~= "none", ctl.instanceType
     end
     function api.GetInstanceInfo()
         return "World", "none", 0, "", 5, 0, false, 1
@@ -579,7 +588,9 @@ function M.new()
             return ctl.itemCount[id] or 0
         end,
         GetItemSpell = none,
-        IsUsableItem = no,
+        IsUsableItem = function(id)
+            return (ctl.itemCount[id] or 0) > 0
+        end,
         GetItemInfo = function(id)
             local i = ctl.items[id]
             if i then

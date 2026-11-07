@@ -412,7 +412,20 @@ end, "target secret always [W PR14]; Health()")
 
 -- The player's maximum: the raw read while plain, the belief's when secret; another unit's (secret always) the belief's,
 -- without a call. Allocates nothing.
-local realUnitHealthMax = resolve("UnitHealthMax")
+local realUnitHealth, realUnitHealthMax = resolve("UnitHealth"), resolve("UnitHealthMax")
+
+-- A health-cost check uses current readings. Nil means there is no readable health fraction.
+function Facade.PlayerHealthFraction()
+    local health = realUnitHealth and realUnitHealth("player")
+    if issecretvalue(health) or type(health) ~= "number" then
+        return nil
+    end
+    local maximum = realUnitHealthMax and realUnitHealthMax("player")
+    if not issecretvalue(maximum) and type(maximum) == "number" and maximum > 0 then
+        return health / maximum
+    end
+end
+
 kept("UnitHealthMax", realUnitHealthMax and "hybrid" or "virtual", function(unit)
     if unit == "player" and realUnitHealthMax then
         local v = realUnitHealthMax(unit)

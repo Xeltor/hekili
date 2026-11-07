@@ -101,15 +101,19 @@ local knownRank = state.knownRank
 local TACTICAL_MASTERY_IDS = { TACTICAL_MASTERY }
 spec:RegisterAbility("tactical_mastery", { id = TACTICAL_MASTERY, passive = true })
 
--- The rage a stance swap keeps (Tactical Mastery and its improvement): shared by swap_stance and the stances' `now`.
+-- Launch tuning caps Improved Tactical Mastery at three ranks. Older replay builds had five.
 local function stanceKeep(improvedRank)
-    return (knownRank(TACTICAL_MASTERY_IDS) > 0 and 10 or 0) + 15 * improvedRank
+    return (knownRank(TACTICAL_MASTERY_IDS) > 0 and 10 or 0) + 5 * min(improvedRank, 3)
 end
 
 local function knows(ids)
     return function()
         return knownRank(ids) > 0
     end
+end
+
+local function hasMeleeWeapon()
+    return weapon.size > 0, "requires a melee weapon"
 end
 
 -- A reactive ability's window (Execute, Revenge, Victory Rush) from the plain usability read:
@@ -397,7 +401,7 @@ spec:RegisterTalents({
     deflection = { 1, 16462, 5 },
     improved_rend = { 1, 12286, 3 },
     improved_charge = { 1, 12285, 2 },
-    improved_tactical_mastery = { 1, 12295, 5 },
+    improved_tactical_mastery = { 1, 12295, 3 },
     improved_overpower = { 1, 12290, 2 },
     anger_management = { 1, 12296, 1 },
     deep_wounds = { 1, 12834, 3 },
@@ -708,8 +712,7 @@ spec:RegisterAuras({
     },
 })
 
--- A stance change drops all rage above what is kept: Forever's Tactical Mastery passive keeps 10, Improved Tactical
--- Mastery 15 more a rank (DB2: 1310185 keeps $m1 + $12295m1; 12295's m1 is 15). Rage tops out at 100, so no cap.
+-- A stance change drops all rage above the amount kept by Tactical Mastery and its improved talent.
 spec:RegisterStateFunction("swap_stance", function(stance)
     removeBuff("battle_stance")
     removeBuff("defensive_stance")
@@ -755,16 +758,31 @@ local IMPROVED_EXECUTE = { [0] = 0, 3, 5 }
 local enemy_revenge_trigger, enemy_dodged, enemy_dodged_target = 0, 0, nil
 local last_overpower = 0
 local misses = { DODGE = true, PARRY = true, BLOCK = true }
-local overpower_ids = {}
+local overpower_ids, rend_ids = {}, {}
 for _, id in ipairs(OVERPOWER) do
     overpower_ids[id] = true
 end
+for _, id in ipairs(REND) do
+    rend_ids[id] = true
+end
+
+-- A short, bounded memory per unit. An immune result can come from a temporary buff.
+local rendImmuneTargets, rendImmuneUntil = { false, false, false, false }, { 0, 0, 0, 0 }
+local nextRendImmune = 1
 
 spec:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED", function()
     local _, subtype, _, sourceGUID, _, _, _, destGUID, _, _, _, actionType, _, _, spellMissType, blocked =
         CombatLogGetCurrentEventInfo()
 
     if
+        sourceGUID == state.GUID
+        and subtype == "SPELL_MISSED"
+        and spellMissType == "IMMUNE"
+        and rend_ids[actionType]
+    then
+        rendImmuneTargets[nextRendImmune], rendImmuneUntil[nextRendImmune] = destGUID, GetTime() + 30
+        nextRendImmune = nextRendImmune % #rendImmuneUntil + 1
+    elseif
         sourceGUID == state.GUID
         and subtype:match("_MISSED$")
         and (actionType == "DODGE" or spellMissType == "DODGE")
@@ -1260,6 +1278,7 @@ spec:RegisterAbilities({
         refundOnAvoid = true, -- wowsims hamstring.go; DB2 Discount Power On Miss
         known = knows(HAMSTRING),
         nobuff = "defensive_stance",
+        usable = hasMeleeWeapon,
 
         -- what the cast did to the now-state, in the belief's context (spec §12a)
         now = function()
@@ -1294,6 +1313,9 @@ spec:RegisterAbilities({
         known = knows(HEROIC_STRIKE),
 
         usable = function()
+            if weapon.size == 0 then
+                return false, "requires a melee weapon"
+            end
             return not buff.heroic_strike.up and not buff.cleave.up, "a strike is already queued"
         end,
 
@@ -1449,6 +1471,9 @@ spec:RegisterAbilities({
         form = "battle_stance",
 
         usable = function()
+            if weapon.size == 0 then
+                return false, "requires a melee weapon"
+            end
             return buff.overpower_ready.up, "only usable after dodging"
         end,
 
@@ -1499,6 +1524,7 @@ spec:RegisterAbilities({
         startsCombat = true,
         refundOnAvoid = true, -- wowsims pummel.go; DB2 Discount Power On Miss
         known = knows(PUMMEL),
+        toggle = "interrupts",
         form = "berserker_stance",
         debuff = "casting",
         readyTime = state.timeToInterrupt,
@@ -1544,6 +1570,7 @@ spec:RegisterAbilities({
         refundOnAvoid = true, -- wowsims rend.go; DB2 Discount Power On Miss
         known = knows(REND),
         nobuff = "berserker_stance",
+        usable = hasMeleeWeapon,
 
         -- what the cast did to the now-state, in the belief's context (spec §12a)
         now = function()
@@ -1698,21 +1725,21 @@ spec:RegisterAbilities({
         end,
     },
 
-    -- Forever gave Slam an 18 s cooldown (DB2 category recovery) and a rank 1 at level 20.
+    -- Forever launch tuning: Slam is learned at level 20, and Improved Slam scales its timing per point.
     slam = {
         id = 1240193,
         copy = rest(SLAM),
-        -- Improved Slam (12862, Forever DB2): the cast and the GCD 0.5 s and the cooldown 3 s shorter (wowsims's log:
-        -- 1 s casts); at 2/2 Slam no longer delays the swing (its tooltip), and this kit models no delay either way
         cast = function()
-            return talent.improved_slam.enabled and 1.0 or 1.5
+            return 1.5 - 0.25 * talent.improved_slam.rank
         end,
         cooldown = function()
-            return talent.improved_slam.enabled and 15 or 18
+            return 15 - 2.5 * talent.improved_slam.rank
         end,
         gcd = "spell",
         gcdTime = function()
-            return talent.improved_slam.enabled and 1.0 or nil
+            if talent.improved_slam.enabled then
+                return 1.5 - 0.25 * talent.improved_slam.rank
+            end
         end,
 
         spend = function()
@@ -1760,6 +1787,7 @@ spec:RegisterAbilities({
         startsCombat = true,
         refundOnAvoid = true, -- wowsims sunder_armor.go; DB2 Discount Power On Miss
         known = knows(SUNDER_ARMOR),
+        usable = hasMeleeWeapon,
 
         -- what the cast did to the now-state, in the belief's context (spec §12a)
         now = function()
@@ -1899,6 +1927,84 @@ spec:RegisterStateExpr("execute_phase", function()
     return reactive(EXECUTE)
 end)
 
+local function isPvE()
+    local _, instanceType = Facade.IsInInstance()
+    return instanceType == "none" or instanceType == "party" or instanceType == "raid" or instanceType == "scenario"
+end
+
+local function isOpenWorld()
+    return Facade.IsInInstance() == false and Facade.IsInRaid() == false
+end
+
+spec:RegisterStateExpr("arms_pve_target", function()
+    return isPvE()
+        and Facade.UnitCanAttack("player", "target") == true
+        and Facade.UnitIsPlayer("target") == false
+        and not target.is_dummy
+        and not target.is_dead
+end)
+
+-- Short outdoor pulls need a different rage budget than sustained fights.
+spec:RegisterStateExpr("arms_open_world", function()
+    return isOpenWorld() and state.arms_pve_target and not boss and not target.is_boss
+end)
+
+-- Keep the original condition available to saved custom priorities.
+spec:RegisterStateExpr("arms_solo", function()
+    return solo and state.arms_open_world
+end)
+
+spec:RegisterStateExpr("arms_short_pull", function()
+    local classification = Facade.UnitClassification("target")
+    return not issecretvalue(classification) and (classification == "normal" or classification == "rare")
+end)
+
+local BLEED_IMMUNE_NPCS = {
+    [114] = true, -- Harvest Watcher, confirmed in WoW Forever.
+}
+
+spec:RegisterStateExpr("arms_skip_rend", function()
+    if not state.arms_pve_target then
+        return false
+    elseif BLEED_IMMUNE_NPCS[target.npcid] then
+        return true
+    end
+    local guid = Facade.UnitGUID("target")
+    if guid then
+        for i = 1, #rendImmuneUntil do
+            if rendImmuneTargets[i] == guid and rendImmuneUntil[i] > now then
+                return true
+            end
+        end
+    end
+    return false
+end)
+
+spec:RegisterStateExpr("arms_moving_humanoid", function()
+    return target.creature_type == "humanoid" and target.moving
+end)
+
+spec:RegisterStateExpr("arms_bloodrage_safe", function()
+    if not (isOpenWorld() or level < 60 and isPvE()) or Facade.UnitIsPlayer("target") == true then
+        return true
+    end
+    if rage.lo > 25 then
+        return false
+    end
+    local inCombat = combat > 0
+    if
+        not inCombat
+        and not (Facade.UnitCanAttack("player", "target") == true and target.within5 and not target.outside5)
+    then
+        return false
+    end
+    local playerHealth = Facade.PlayerHealthFraction()
+    if playerHealth == nil then
+        return inCombat
+    end
+    return playerHealth >= 0.65
+end)
+
 -- The time to the next main-hand swing, ported from Hekili's Classic profile (Classic/Warrior.lua:462-575, without its
 -- debug lines); the Slam weave reads it.
 spec:RegisterStateExpr("mainhand_remains", function()
@@ -1979,8 +2085,8 @@ spec:RegisterPack(
 )
 spec:RegisterPack(
     "Arms (wowsims.com)",
-    20261105002,
-    [[Hekili:TVvBVTnos4Fl5lETr7k)sA22euhG2TxX1fD7vexG(njtlrhRZYsgIuXxac8V9BgkzjsAszjB3ID72p0adtYzEMx4qYNX1DO7xCNeq4u3pnAWOFB4WbxnyWi3j8hxtDNSM4VKCp8HyYk4VVjDfB70UBs2WcxXC8tw1dNZJrjKauoZYcJ4Fi2DMrrYwt9DN813C3DF4)C3neqwUtwegeqZxaL5Bud3SDkFbD70IVR)8Ku6d00TtdOZjzr8TtFZN)42PWxdFkF5zH9rLX6VHKMgMK2pynRpzDe8hycoWNC(VSK4EpheDkjMfbGna(CcQQqqcKGGK4Fb(Ws6JmNTtFhHtUXae6(NF4lGqwW5Rz30V)9H8fzZqu3xBQ9azciLo6vVy08bKx(QxeaI93tsIcs2eZqDF)9rGvcoekdu17Oe(ITt)AiBbOG7O(lJOmwm8pqRKiga1z0fHXaSd5W3HrQTtzuopm(EyfjZNdZ4XsVeARt2qPRHHHpXtdxsrdffGW9Ms8db5cs)TrjjW3((S0hHf9wAkJMUmxQ)RSu6sc(HOSyk6G(y49l49aB5taIIcJrtGMc)LjGvwCa6NeA4Zj8We0wXi17OZPXSWhOL2o6NVJkmiCHmmIKed(mW9b2bNKEpLdQEwcRqgXjChi)lnzEyeKDs8fY3zDkfIaZi8XZYXon1lfYIFE48XCsenM7eUcw1d0ap1z4qJjZIaf)h7jRNnUVpjkYlFaVOqg)54MIXWm8wNbJW4KyFQ5LodDPcma2LheB8U3py8qltMW5rup2IKmoI5lMLnFUJ836KT(OG4kWMlx4yZtMjczEWgLKuu74eEG6rJPRcPmjmBvD(bE7sMKMBaMq7TbZNbP2DoM34LsxrcJzVESWeRMItqwkbx5tkZ72U(f7ymn3N11Mu6pQxVEYGjvA)KaoDl25WCk246jpLo7nAEW2la)BVogTgzbCy7X4SlSiJJjSjfJIvS9gaNy3TAU2(XYBvIL7YVeg2(lT7f16d6OMKkgbYsvW3dH(8K0h9sZGCG5j(zAztqchS9Sa9OoRvJTb77hDvXo9)r9Z4WMKfegTt3lYLStvXHcdAzmeQEk3s1hdmwPvQ4hYxwzOwDWYKMb961riAytA66Knynjkj4rqYM)(DjrGDU7ZDevXIsUD8vvGPCD6aPAazqi7ylNXU4vU70Uv2bQ18GZq1H69uDoMo)m80MWdaJU)vahhonPoV9HRwOhbBFjjTQDJVSYShDvhj3byp7QFTFAtLdAZIW0OnWvU0Dqvdi84Q(MYbpki3R2cK1lnLZgIiRYbGLntkYUWalgcxRJpHXFTX5cosvl(hMQXLciLwg0dOfhjhlL(ipn0DuLOnCG29oG8G89iJ(NDP0ZJVff05rs1gLS62ACLToncrN9DS3o26w2oigwaV)R8YOJl)g4XZ0GFT7GNnW5sT7yUMssRUJ5zY702c)1NKFeaOO8VHJu7QyCp1DVCntr2B1dS1CKqJlHxaeCnkys5bzruYd6Em5mzCQYVaOApWlu3dapIpj0Fxy2Ua1c(LI7A4iv9hBlsllEITAi38ZJrfuiWxF9athXS7jYD7w72IYcsQdwM4BFtYboWUmFq7UbDmE3avTvnsEgsN9FMFzHIHhvWPgxsvG6sfhlFr(Z)9JiRvYorGWH)5jpJo1PHlk2yiVazIlWQjACnuN4kKM8sCGqH)YxFLcxiYKXm(axfX8Jw70WRv5OWRYy)fidvMUMARlhzrfGhdcc0uF6AED6PLhMxPTkMBgl2s6nh5aCFnzIUJQfCyYomm3cQommIk5nsyS6ScKCYgIYYf0auU)C3HY9hPousZznTzimFYhgDAZRazAFBTOcPWL5fHY3u203akXKvzdSqtZENDAAmnkXAL5EIwB1DqLOQlFF3ffxpqAa8ghQw9WR08y3o86REsZhEP8ZUvQeUhRT1wT0DcCphgieTg0Gu4Ye9dkVNbWh)KO)qfNz7(w3j(PHqfOqsoD7YedVJaEyoA0cNlzV8EijdjxoGanf0iHufzrrCPfruXeSmUBm1ZNrUNru(clOuoZqbNNykzZ5K(CtknATxPzTs74WKQsRxN0A7zy3oeL7V1q5QCMQIB94iYg19lTebLj22DI4cyiwGv8klRq5coYORwSHs86t2(pVueCSCe0iscS9OmJF)XYZ5Hi6e96dhyTm4rqHZ3voC(Xpa9DJr8dbKQDFLJRwoyO9ttRpwyPM0b1N(HRwRwOLE0McMAvPp70Sxdp7cB02P)LZ(KmMCDy7SBR1XRxnczQFcz5jIrKvQqUfea2go7fO40pp9VrLRmrv8rWvSWXPFzGFEIW50fBJy)JquY30glguuGCKikQFbTgSTRffOBgR)1cq9779TPkXzPpbIxZPFrPs8Q24Ggb9w4PZvU(XRh1XDNqZfo1UlC8Txqy(2EkTXtcp4buJSDWAbMLfMIziwS(jMsoyuow7bHu6V1WxExoeQr)qu7zvnVZenbckmWlqsJpiDxVoKbBvxoeYY2dnLBoG6jo1VD)Bx)p(o2aeHNXE96g2SJJl4ARkSCVnmU5cH)zPTjcEUSwCvMtTg6tQHHqqxC83vBXVRut0aUFLu9u6M9lT9OzauRtpMOb8W7aRHvoBB1m(JX1eHxTZkW27K72vIL145TfZBsCvsNg0G1YUIgCDYpA1qe3Mgl72LzL22R3MB)sCh3cJVQXuUhIlztDc7m2kS24aRAu1HrTHoJDgBnwB2GM3eRdIy9oLDgAvMPkcwrPudLuZp)gqCV5oNDUBDMP6yT28prRVMoPDkTsZuV00QhwCssBkkyJuKJ6hwGaoaGiz8fyn9)nDzyu42PDFFX)hIed7())d]]
+    20261107007,
+    [[Hekili:TZvBVTnos4Fl9dNpB0Uk2oXnT9Idq3R7IRh23qDb63STSeDmViljikfF5qG)TFZqQxiPjLLSvco0B)qsTfjN5zgoCMrCM05JM)15Z8DtjZ)TXdh)2rJgE9WHxpFw6JXK5ZID9U39o4dHUBHF)XKTS9l7VlAhJUL54fTDaoNhdIC9r6SkJgK(5W5RmsswmXB(SV9XV8Lp)7F5dUaTMpBd13NiwaH5zKdFy)Y0nK9lZF2fRJsipqs2V0NS2nliD)Yp(h)Y(LWJHpjwEg9cKzSl25MKqJsUWpMDHBCa8lycoWNC(xSOWbVbiDIBilaaRp85iKvuGcU((rH)v4d3tEK5SF5NCtD)Gbi0)x)8xbISjnnM9HlU4oA6MSviQVqBQdaAciLm(DxnE9q3RF3v(az)7rrb(r7cziVV7UaqkbfcHbS6te30n7x(nkBdWGVq8UpGWyHWpaxDdyauxr2qdbyttHNH7u7xYiPP0W7GveTEnmJhl1sOSoBhHedddFknHEpbfuKaC1BIRhfOlq9FmikcE6pNL8iSOFKKWij3lO6pLLqU3f)qqwibvq)c9UnPdaz5RiriH(3bwkaCq1on9ruv6gJa0f(5XOS9ldiUjHW3xrdOPucQE)9ys4pSlkjayBCwaIImgso3KakQN)cbXjhSWgl(pbCnrcyCcYksUKTObalf0dij)2gkQodaLFaxKXrxJGv8TSu)OOegkGO4ki0A3hGNbRkANG2oiRbjyfFRH4gG7jBZyPO2xSLcId(13o5V8347EG5C1uPWNbRHv5t8buLtr7Ga6DuGOofIg7EAmAUfcwdaTdie)FGUDlOKHTh3K7iPfBwRqbSy)nHswhGk51POAYfwBXQsim(Hdec)Xd)Kd)3GEnfv7pINxcaXuSPal9ZHafsYIl5ZNiRjHmkhYcJtghTPUbu3ukxNZndljuP1Sd4uijAnSbmFMRhoxMtCcrOiMUsyqrswGA43qxpfijjm1HUfw1de)fQZWHeI6F)9)ZdO1RNEHNBqWcXalcOS03GEQMcZybAiTaShc9iMx6QIn(3agBlaf6I788Nocre6Myr54lyURTrd300aycBadkCHVAv261oYp1jl(Kq(wqvuUWPSnusaOzCb3bf4l(bYcHTrpbrVDypX3D2boIOHt69Q8Vd4GbowM0ZNWbOhyZcNdaSP)KhgpDyjBbugNTDlj4LLNItpS0OqBBnMGHyvoXEP3m9sf6LR82bk8gtHXt61)vcs4ea4KBj57WpG(Kyxw6XzXdKzy1iNk(L4Ue6vyV8Z14)duV0OKhxKKbMlRJ8YyTG3xprMujvh4lPqe4cEb3DDZnceUqC8l9QOWZRM0dzjGmsizleu42PJBP()Suy(ei6biN)hWCS6W8ZKWETjHn)iXHaXbDPkJvZ(nyzH(GdtEyqo2v4W0r9EvFDXH)DGhjPCpodoot88xuKMGIYdsvzXoQW1uFEq2fjKTU0q2ntZfRIP44NLWTMEszE323lp6HP5(6(2OYfJhmyGQ9AvMsC40ppNiMtEkzlKNsVdgveXyHp(BWOYK0itGJlpgNDUezCmUmPiuS8e3aWXZBZGxfvdQrYRUiAexWoCP9FvT6GEQH04JuCEJBabzUasDO)t1tNN4KbcQLehTddTd5v9ytCCjpoyCdUJYvdi4RLLTrjCOzIQsG8VjEzPqS5nUmsLVMQuvY1mchocvM(ykEPuvOILvAZOoyP13Wbd6zrnA(5fwJGCw85E8CQcIUDQumMY1PdKQbuaXZXEF5WYrS633U6QhKR0doJuhAWt1PH79N7ZTzFg3P)FbCCCZK602M9FP4CqBhS9oj1dOFzLydzskPoa5PWJ6HMnvkODBOjb7OLz8uQGQgGRXv1nLdEsqEqTEARNAkAZJ8EvMsaTp)f1V5TdFsllLbfkYBMoAsV6EVmEWFq0fMfJRnbon3x6h7Ztgdh6G0VybUBfQxlUku0C5BF5dHRL)wp3yCUGAsD)87MGwLeGRsfRtwjxoz5PHQJQJrJg(8e2r3M5)FJ40nBsiH6gkPFkT2DnRQXghqOxZqynGQtCnC7uR(g6HyAd8(ULVLX0YNWIXRmS)Wxp05sTxEiM4Mu9YdDK2QTXpR)qWjaG8OOgYmPVIW9u)dSfnTtFR(gDnrwBCKWCGGRrbtkx2L7wCJj8UZ6ghu3p5KzB0d4U(MSTUHru)cHUKFhEXc8BOwBVt(mgov5xYS606vdv0wBijruVcdoRe0Q0QDZe9SF8r39PkeNkbX3o5eqO(bLsQ9(H4EG61wZpcNFz1dAycrfj38(Hhl3MvA30C)(16wP0HV6GLooS7K5i5nwEEslf1EgtrvLBvJioH1t5On)2UkD8o6KmPksJuovp9J)koh1V2SgBsQLazZnrZphkZzhgw2k9lbVrcCDmUV05ZNYZDQs2EsveKI9EPQQpDJaQEbUXkU)WDQu4NfYZOEvrUWlVa5cKyyhPoYzvvEZK2CFNoALlA6rY728nIDSdoDw2RMaowTOPEBWOcME51whD1clG9hkwOqpsCAD8PL5UwXTQByEk3v4I1yvOpKtMUw2QfC8lL1WCZVswdJOEjZsySk1hm(Ddrz5cAakpCUfO8WrQdLerD7Bgcft(4OtBE5it7P1IkSjcylcq6BYA6z4Q7LzzdKqtZUqonnM2v33kX9mL2Q4CsLuqCU7v5z7knaMaTQupAIMg72rVFYtA6WlLVmof)UhuaQZ1388zGNpgWhTUicRgfJ30sIgBb(4VXBIP8mVM)JfnDW8zsvnF(mVek45I6cdB7wOoww2nQs2ZtbeBbqIQP)YILl1WIKLhQ5kXMuv3BeavR3oYPRQFBal8ARPCT1H3yHGrKmPHYC1kBnWQVe9Ml5mcT3QbTwY2RNuHE5QLnFgpPqu6aMCTLDcPQ5FaNpLx7StRQFRlRVDL87Si)hwE9xa1WjuVFugEVDdfVwxB)kvGEL9fEuxiAWtzV1iggn0IISwQuf1JtdBENRkNVSW14(hOdBGaomT5ZwoUPcqpZa2nVZc66wlGlUnnSGEVhy3q8wURNr6rbSryL35qrX2vnKWXEblRVHfxo0JHCCVUJ09TxSeL3DvwuRfFCsQ7jV9AZUT(dNAbiAufiSSF0T1A(yfBURTJ0JfjV1yxHzPutVO1A67)96xSgC4yaP6GC54A(wSNoq97fMDwEu(nwpYVvhpAMhTXtUEArDDxtutBtWLrBzMuo7Zsye8WwAfwJjupB40SPXUlRMqJEnJQEWO1nHbhv6b(BqI1TSpmKtkd3CYnyhZzVT41yzzu3hBr1zBtNBWrHEkaFxhV2uD(pLc93TrChRNZ0FgXTl3TS1GhNaP0p)x757AYJQnTZqN29h1cy9i2ppoK6K(fHFpH2ExFTgiPrqVfAEbZ1dfFsPBC06V1AW14Um50BZeU4BllbJzIC0eeUupbHcYLJzzIPig8fB7ACl7CKgfA)y3z2P2XkCiQhRxYgarR1Mur6eQvlmrBWWzZrUR2g1Nawpk3MwxPj4wPHb4WVM4GNCFTCAir33DRsyT(EKHtFBUAxj1AjQ5buVt2NVUN5fS9zqnZv6o1R0bnPvzoPD7RSwoo5Bx(KomP92cn)WvnnDdhY6(FLEDSAyIsd2yOdBQTfBonDRnp7YDuJXyfODrN0SoCyyTuFw2IRJpNxLIb4KI)9MN)hw98AkhS6Fx5YWt3LN5)c05z1zH21wqeT(lI7Y6C8iAXnOTnfBEbn(hRosiBVkDZesSrHe7kkwd1vNElwnDKLHeSmacR5bW7MQ5N7fTzWMXghlBTkZmTTVYOq(Lkgxle(QUGsblnTTR6W(UQnkWQUI64O2qBy1H9HvBoIl6yQJIy92YQd6lltonSIsPUxs1(8zOoOMBtRUUpTm5QR1I)zk9v5CDqBBDo9TLPg3sZFyESO24uW2Dw2vne7jFTFczdKo3S0nymK)b5EAaD)Y()C())lXhE()n]]
 )
 
 -- The hand-built lists the wowsims.com packs replace (wowsims packs plan, P9): a saved choice of one falls back to the

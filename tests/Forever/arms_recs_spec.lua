@@ -1,6 +1,6 @@
 -- tests/Forever/arms_recs_spec.lua (audit first wave, Task 3): every recommendation slot of every Update over the seeds
--- 1-3 Arms gate (both instances: ours and the oracle) equals the fixture recorded on the base commit, before the
--- upstream performance edits (State.lua's memo, query_time first). Record with ARMS_RECS=record (rewrites the fixture).
+-- 1-3 Arms gate (both instances: ours and the oracle) equals the recorded fixture.
+-- Record with ARMS_RECS=record after an intentional combat model change.
 -- The fixture is run-length: an entry { instance, update index, "name1 name2 ..." } only where an instance's queue
 -- changed from its previous Update, and the Update counts at the end, so equal fixtures mean equal full sequences.
 local ab = require("Game.harness.ab")
@@ -12,7 +12,7 @@ local gate = require("Forever.helpers.arms_gate")
 local PATH = "tests/Forever/fixtures/arms_recs_seeds1-3.lua"
 
 local function record()
-    local L = loop.new(ww)
+    local L = loop.new(ww.Raid)
     local out = { changes = {}, updates = {} }
     for name, H in pairs({ us = L.us, oracle = L.oracle }) do
         local hk, n, last = H.Hekili, 0, nil
@@ -55,7 +55,7 @@ local function write(rec)
 end
 
 describe("the seeds 1-3 Arms gate's recommendations #slow", function()
-    it("match the base commit's fixture at every slot of every Update, ours and the oracle's", function()
+    it("match the fixture at every slot of every Update, ours and the oracle's", function()
         local rec = record()
         if os.getenv("ARMS_RECS") == "record" then
             write(rec)

@@ -99,6 +99,7 @@ local function newState(class, race)
             end,
         }),
         equipped = every(false), -- State.lua's equipped[itemID] / equipped.shield: no gear headless
+        weapon = strict({ size = 0 }, "weapon"),
         set_bonus = every(0), -- State.lua's set_bonus: no gear headless
         boss = false,
         history = { casts = {}, units = {} },

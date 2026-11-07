@@ -1,6 +1,5 @@
--- tests/Forever/warrior_spec.lua: the Forever Warrior class file's registrations against the Forever DB2 (build
--- 1.60.1.70338, wowdb), loaded headless through a recording stand-in for Hekili (helpers/load_warrior.lua). What Hekili
--- does with them is verified in game (the plan's checkpoint).
+-- The Warrior registrations against the Forever DB2 (build 1.60.1.70338) and launch tuning.
+-- The headless loader records what the class file registers with Hekili.
 local lw = require("Forever.helpers.load_warrior")
 local alloc = require("Game.State.helpers.alloc")
 -- the project interpreter when bootstrapped, else the system one (as tools/list_api_reads.sh picks it)
@@ -46,7 +45,7 @@ local KIT = {
     slam = {
         { 1240193, 1464, 8820, 11604, 11605, 1310196, 1310197, 1310198, 1310199, 1310200 },
         15,
-        18,
+        15,
         "spell",
     },
     spearing_strike = { { 1310222 }, 15, 20, "spell" },
@@ -73,7 +72,7 @@ local TALENTS = {
     improved_overpower = { 12290, 2 },
     improved_rend = { 12286, 3 },
     improved_slam = { 12862, 2 },
-    improved_tactical_mastery = { 12295, 5 },
+    improved_tactical_mastery = { 12295, 3 },
     mortal_strike = { 12294, 1 },
     spearing_strike = { 1310222, 1 },
     sweeping_strikes = { 12292, 1 },
@@ -245,19 +244,21 @@ describe("Forever Warrior", function()
         assert.are.equal(17, lw.run(w.abilities.whirlwind.spend, ctx))
     end)
 
-    it("casts Slam in 1.0 s with a 1.0 s GCD on a 15 s cooldown with Improved Slam (Forever DB2 12862)", function()
+    it("applies the launch cast time, GCD, and cooldown for each Improved Slam rank", function()
         local e = lw.env(w)
         local slam = w.abilities.slam
         local function fields()
             return { lw.run(slam.cast, e), lw.run(slam.gcdTime, e), lw.run(slam.cooldown, e) }
         end
         e.talent = rank(0)
-        assert.are.same({ 1.5, nil, 18 }, fields()) -- no gcdTime: the "spell" GCD kind's 1.5 s
+        assert.are.same({ 1.5, nil, 15 }, fields()) -- no gcdTime: the "spell" GCD kind's 1.5 s
+        e.talent = rank(1)
+        assert.are.same({ 1.25, 1.25, 12.5 }, fields())
         e.talent = rank(2)
-        assert.are.same({ 1.0, 1.0, 15 }, fields())
+        assert.are.same({ 1.0, 1.0, 10 }, fields())
     end)
 
-    it("leaves the swing timer alone on a Slam (no handler: Improved Slam's 2/2 tooltip, the wowsims build)", function()
+    it("leaves the swing timer alone on a Slam with Improved Slam", function()
         assert.is_nil(w.abilities.slam.handler)
     end)
 
@@ -865,14 +866,22 @@ describe("Forever Warrior", function()
     end)
 
     it("keeps Tactical Mastery's rage on a stance swap", function()
-        local e = lw.env(w)
         w.game.known[1310185] = true
-        e.talent = rank(1)
-        e.swap_stance("berserker_stance")
-        assert.are.same({ 25 }, e.spent) -- 50 rage, 10 + 1 x 15 kept (DB2 12295: 15 a rank)
-        assert.are.same({ "berserker_stance" }, e.applied)
-        e.rage.current = 50
-        assert.are.equal(25, lw.run(w.exprs.stance_rage_kept, e)) -- the same rule, for a priority to read: 25 of 50
+        for _, case in ipairs({ { 0, 10 }, { 1, 15 }, { 2, 20 }, { 3, 25 }, { 5, 25 } }) do
+            local talentRank, kept = unpack(case)
+            local e = lw.env(w)
+            e.talent = rank(talentRank)
+            e.swap_stance("berserker_stance")
+            assert.are.same({ 50 - kept }, e.spent)
+            assert.are.same({ "berserker_stance" }, e.applied)
+            assert.are.equal(kept, lw.run(w.exprs.stance_rage_kept, e))
+            for _, stance in ipairs({ "battle_stance", "defensive_stance", "berserker_stance" }) do
+                e.spent = {}
+                lw.run(w.abilities[stance].now, e)
+                assert.are.same({ 50 - kept }, e.spent, stance)
+            end
+        end
+        local e = lw.env(w)
         e.rage.current = 8
         assert.are.equal(8, lw.run(w.exprs.stance_rage_kept, e)) -- under the cap, all of it
         e.rage.current = 50
@@ -949,11 +958,11 @@ describe("Forever Warrior", function()
             end
         end
         assert.are.same({
-            ["Arms (wowsims.com) rend"] = { 2, 2 }, -- re-pin e2842f0a78: the stance-dance swap's line and the plain one
+            ["Arms (wowsims.com) rend"] = { 2, 2, 2 }, -- solo opener, stance-dance swap and upkeep
             ["Arms (wowsims.com) overpower"] = { 1, 1 },
-            ["Arms (wowsims.com) heroic_strike"] = { 2, 2 },
+            ["Arms (wowsims.com) heroic_strike"] = { 2, 2, 2, 2 },
             ["Arms (wowsims.com) cleave"] = { 2 },
-            ["Arms (wowsims.com) victory_rush"] = { 1 },
+            ["Arms (wowsims.com) victory_rush"] = { 1, 1 },
             ["Fury (wowsims.com) overpower"] = { 1, 1 }, -- re-pin: Overpower Weaving's swap line and the plain one
             ["Fury (wowsims.com) heroic_strike"] = { 2 }, -- re-pin: wowsims's two Heroic Strike entries are one
             ["Fury (wowsims.com) cleave"] = { 2 },

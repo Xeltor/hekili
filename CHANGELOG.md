@@ -6,7 +6,7 @@
 
 ### Changed
 
-- Arms Warrior no longer recommends Hamstring in the default priority.
+- Arms Warrior prioritizes Hamstring when a non-boss PvE humanoid enters Execute range and is close enough to slow.
 
 ### Fixed
 

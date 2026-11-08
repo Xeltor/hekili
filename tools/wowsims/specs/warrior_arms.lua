@@ -83,6 +83,7 @@ return {
         "The endgame priority adapts as you learn abilities. Open-world pulls use earlier Rend and spend less rage on armor stacks.",
         "While leveling or fighting outdoors, Bloodrage favors low rage. Readable health must be at least 65%; hidden health in combat leaves it eligible.",
         "Rend skips known bleed-immune targets and backs off briefly after an immune result in PvE.",
+        "Hamstring slows non-boss PvE humanoids in melee range when they enter Execute range.",
         "PvE utility follows your Interrupts and Defensives toggles. Retaliation also follows Cooldowns.",
     },
     executePhase = "execute_phase",
@@ -148,6 +149,13 @@ return {
                 .. outdoorCombat
                 .. melee
                 .. "&toggle.defensives&health.pct<=75&active_enemies>=2&debuff.demoralizing_shout.down",
+        },
+        {
+            before = "call_action_list",
+            line = "hamstring,if="
+                .. pveCombat
+                .. melee
+                .. "&!boss&!target.is_boss&target.creature_type='humanoid'&execute_phase&debuff.hamstring.down",
         },
         -- Keep the upstream kill-window placement as well. The ability itself checks for Victorious.
         { before = "mortal_strike", line = "victory_rush,focus=1" },

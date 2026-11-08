@@ -24,8 +24,9 @@ local function warrior(level, rage, options)
     local H = headless.new({ character = character, pack = ww.PACK })
     assert.are.same({}, H.loadErrors)
     local ctl = H.ctl
-    ctl.level.target, ctl.distance.target = level, options.distance or 3
+    ctl.level.target, ctl.distance.target = options.boss and -1 or level, options.distance or 3
     ctl.guid.target = options.target or ctl.guid.target
+    ctl.creature.target = options.creature
     ctl.groupMembers = options.group or 0
     ctl.inRaid = options.raid == true
     ctl.unitHealth.player = options.health or 1000
@@ -162,6 +163,63 @@ describe("the shipped Arms leveling and PvE priority", function()
         assert.are.equal("victory_rush", read(warrior(20, 35, { health = 600, victorious = true }), 1.6)[1])
         assert.is_not_true(read(warrior(20, 35, { health = 600 }), 1.6)[1] == "victory_rush")
         assert.is_not_true(read(warrior(19, 35, { health = 600, victorious = true }), 1.6)[1] == "victory_rush")
+    end)
+
+    it("slows a humanoid as soon as it enters Execute range and skips an active Hamstring", function()
+        for _, options in ipairs({
+            { creature = "humanoid", shout = true },
+            { creature = "humanoid", shout = true, group = 2 },
+            { creature = "humanoid", shout = true, group = 5, instance = "party" },
+        }) do
+            local H = warrior(24, 35, options)
+            H.ctl.unitHealth.target = SECRET
+            H.ctl.unitHealthMax.target = SECRET
+            assert.is_not_true(read(H)[1] == "hamstring")
+            H.ctl.usable[5308] = { true, false }
+            H.Fire("SPELL_UPDATE_USABLE")
+            assert.are.equal("hamstring", read(H)[1])
+            H.Fire("UNIT_SPELLCAST_SENT", "player", "Unit", "Cast-hamstring", 1715)
+            H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-hamstring", 1715)
+            local nextAction = read(H, 1.6)[1]
+            assert.is_true(H.Hekili.State.debuff.hamstring.up)
+            assert.is_not_true(nextAction == "hamstring")
+            if not options.instance then
+                assert.are.equal("execute", nextAction)
+            end
+        end
+    end)
+
+    it("uses the known Execute rank in Berserker Stance and waits until Hamstring is affordable", function()
+        for _, rage in ipairs({ 5, 12 }) do
+            local H = warrior(32, rage, { creature = "humanoid", form = 3, health = 600, shout = true })
+            H.ctl.usable[20658] = { false, true }
+            H.Fire("SPELL_UPDATE_USABLE")
+            if rage == 12 then
+                assert.are.equal("hamstring", read(H)[1])
+            elseif read(H)[1] == "hamstring" then
+                assert.is_true(H.Hekili.Engine.Output.Primary.recs[1].time > 0)
+            end
+        end
+    end)
+
+    it("skips Hamstring when the Execute window, target, or cast requirements cannot be confirmed", function()
+        for _, options in ipairs({
+            { "unlearned Execute", level = 23 },
+            { "beast", creature = "beast" },
+            { "secret creature type", creature = SECRET },
+            { "unknown creature type", creature = "unknown" },
+            { "boss", boss = true },
+            { "out of melee range", distance = 20 },
+            { "Defensive Stance", form = 2 },
+            { "PvP", instance = "pvp" },
+            { "unarmed", unarmed = true },
+        }) do
+            options.creature = options.creature or "humanoid"
+            local H = warrior(options.level or 24, 35, options)
+            H.ctl.usable[5308] = { true, false }
+            H.Fire("SPELL_UPDATE_USABLE")
+            assert.is_not_true(read(H)[1] == "hamstring", options[1])
+        end
     end)
 
     it("uses Shield Bash only with a shield and an interruptible cast in range", function()

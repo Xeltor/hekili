@@ -14,6 +14,26 @@
 
 ### Upgrade notes
 
+## v0.6.2
+
+_Released 2026-11-08_
+
+This hotfix makes Hekili Forever recognize when you are in melee range, so melee abilities now appear and disappear correctly for Druids, Hunters and Warriors.
+
+### Druid
+- Feral: Shred, Claw and your other damage abilities are now recommended in melee range; before, only Prowl or Faerie Fire was shown.
+- Maul is no longer recommended once your target is beyond melee range.
+
+### Hunter
+- Survival: Mongoose Bite, Wing Clip and Strider Kick should now be recommended correctly in melee range. This has not yet been confirmed in game.
+- Raptor Strike is no longer recommended once your target is beyond melee range.
+
+### Warrior
+- Heroic Strike is no longer recommended once your target is beyond melee range.
+
+### Known issues
+- Feral: when you stand in front of your target, Shred is still recommended even though the game refuses it, and Claw is not offered in its place.
+
 ## v0.6.1
 
 _Released 2026-11-07_

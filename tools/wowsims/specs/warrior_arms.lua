@@ -162,13 +162,6 @@ return {
             line = "rend,focus=2,if=" .. outdoorCombat .. "&!arms_skip_rend&!execute_phase&debuff.rend.down",
         },
         {
-            before = "cleave",
-            line = "hamstring,if="
-                .. outdoorCombat
-                .. melee
-                .. "&execute_phase&arms_moving_humanoid&debuff.hamstring.down",
-        },
-        {
             before = "heroic_strike",
             line = "heroic_strike,use_off_gcd=1,focus=2,if="
                 .. outdoorCombat

@@ -6,6 +6,8 @@
 
 ### Changed
 
+- Arms Warrior no longer recommends Hamstring in the default priority.
+
 ### Fixed
 
 ### Known issues

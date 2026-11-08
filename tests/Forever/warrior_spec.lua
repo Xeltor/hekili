@@ -16,7 +16,7 @@ local KIT = {
     bloodrage = { { 2687 }, 0, 60, "off" },
     bloodthirst = { { 23881, 23892, 23893, 23894 }, 30, 6, "spell" },
     challenging_shout = { { 1161 }, 5, 600, "spell" },
-    charge = { { 100, 6178, 11578 }, 0, 15, "off" },
+    charge = { { 100, 1240287, 6178, 1240288, 11578, 1240289 }, 0, 15, "off" },
     cleave = { { 845, 7369, 11608, 11609, 20569 }, 20, 0, "off" },
     concussion_blow = { { 12809 }, 10, 45, "off" },
     death_wish = { { 12328 }, 10, 180, "spell" },
@@ -962,17 +962,17 @@ describe("Forever Warrior", function()
             ["Arms (wowsims.com) overpower"] = { 1, 1 },
             ["Arms (wowsims.com) heroic_strike"] = { 2, 2, 2, 2 },
             ["Arms (wowsims.com) cleave"] = { 2 },
-            ["Arms (wowsims.com) victory_rush"] = { 1, 1 },
+            ["Arms (wowsims.com) victory_rush"] = { 1, 1, 1 },
             ["Fury (wowsims.com) overpower"] = { 1, 1 }, -- re-pin: Overpower Weaving's swap line and the plain one
             ["Fury (wowsims.com) heroic_strike"] = { 2 }, -- re-pin: wowsims's two Heroic Strike entries are one
             ["Fury (wowsims.com) cleave"] = { 2 },
             ["Fury (wowsims.com) rend"] = { 2, 2 },
             ["Fury (wowsims.com) battle_stance"] = { 1, 1 },
             ["Fury (wowsims.com) victory_rush"] = { 1 },
-            ["Protection (wowsims.com) revenge"] = { 1 },
-            ["Protection (wowsims.com) heroic_strike"] = { 2 },
-            ["Protection (wowsims.com) cleave"] = { 2 },
-            ["Protection (wowsims.com) victory_rush"] = { 1 },
+            ["Protection (wowsims.com) revenge"] = { 1, 1 },
+            ["Protection (wowsims.com) heroic_strike"] = { 2, 2 },
+            ["Protection (wowsims.com) cleave"] = { 2, 2 },
+            ["Protection (wowsims.com) victory_rush"] = { 1, 1 },
         }, focus) -- the user's tiers (2026-10-21; Heroic Strike and Cleave always 2, Victory Rush 1: 2026-10-22): the main strikes (Mortal Strike, Slam, Execute, Bloodthirst, Whirlwind,
         -- Shield Slam) are rotational, untiered, and so is Protection's Sunder Armor
     end)

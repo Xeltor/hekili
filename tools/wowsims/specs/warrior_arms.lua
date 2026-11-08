@@ -83,6 +83,7 @@ return {
         "The endgame priority adapts as you learn abilities. Open-world pulls use earlier Rend and spend less rage on armor stacks.",
         "While leveling or fighting outdoors, Bloodrage favors low rage. Readable health must be at least 65%; hidden health in combat leaves it eligible.",
         "Rend skips known bleed-immune targets and backs off briefly after an immune result in PvE.",
+        "With Defensives enabled, use Demoralizing Shout early on outdoor pulls.",
         "Hamstring slows non-boss PvE humanoids in melee range when they enter Execute range.",
         "PvE utility follows your Interrupts and Defensives toggles. Retaliation also follows Cooldowns.",
     },
@@ -127,28 +128,40 @@ return {
             before = "call_action_list",
             line = "pummel,if=" .. pveCombat .. melee .. "&debuff.casting.up&debuff.casting.v2=0",
         },
-        { before = "call_action_list", line = "healthstone,use_off_gcd=1,if=" .. pveCombat .. "&health.pct<=30" },
-        { before = "call_action_list", line = "shield_wall,if=" .. pveCombat .. "&health.pct<=25" .. noLastStand },
+        { before = "call_action_list", line = "healthstone,use_off_gcd=1,display_below=30,if=" .. pveCombat },
+        { before = "call_action_list", line = "shield_wall,display_below=25,if=" .. pveCombat .. noLastStand },
         {
             before = "call_action_list",
-            line = "last_stand,use_off_gcd=1,if=" .. pveCombat .. "&health.pct<=35" .. noShieldWall,
+            line = "last_stand,use_off_gcd=1,display_below=35,if=" .. pveCombat .. noShieldWall,
         },
-        { before = "call_action_list", line = "victory_rush,focus=1,if=" .. pveCombat .. "&health.pct<=75" },
         {
             before = "call_action_list",
-            line = "retaliation,if="
+            line = "victory_rush,focus=1,if=" .. outdoorCombat,
+        },
+        {
+            before = "call_action_list",
+            line = "victory_rush,focus=1,display_below=75,if=" .. pveCombat .. "&!arms_open_world",
+        },
+        {
+            -- Icy Veins advises keeping a healing potion ready for dangerous leveling pulls.
+            before = "call_action_list",
+            line = "healing_potion,use_off_gcd=1,display_below=40,if=" .. pveCombat .. "&(level<60|arms_open_world)",
+        },
+        {
+            before = "call_action_list",
+            line = "retaliation,display_below=45,if="
                 .. outdoorCombat
                 .. melee
-                .. "&toggle.defensives&health.pct<=45&active_enemies>=2"
+                .. "&toggle.defensives&active_enemies>=2"
                 .. noLastStand
                 .. noShieldWall,
         },
         {
             before = "call_action_list",
+            -- Icy Veins' Forever leveling priority puts the shout after Victory Rush and before Rend.
             line = "demoralizing_shout,if="
                 .. outdoorCombat
-                .. melee
-                .. "&toggle.defensives&health.pct<=75&active_enemies>=2&debuff.demoralizing_shout.down",
+                .. "&target.within10&!target.outside10&toggle.defensives&!execute_phase&debuff.demoralizing_shout.down",
         },
         {
             before = "call_action_list",

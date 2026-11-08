@@ -446,8 +446,11 @@ function M.context(set, r, log, player)
         ranges = r.ranges or {}, -- rule 19: { [action key] = { min, max } yards }, the DB2's, where the APL gives none
         maintenance = {}, -- rule 15: { { action key, setting key } }, by action key
     }
-    for key, setting in pairs(r.maintenance or {}) do
-        c.maintenance[#c.maintenance + 1] = { key, setting }
+    for key, rule in pairs(r.maintenance or {}) do
+        if type(rule) == "string" then
+            rule = { setting = rule }
+        end
+        c.maintenance[#c.maintenance + 1] = { key, rule.setting, rule.orWhen }
     end
     table.sort(c.maintenance, function(x, y)
         return x[1] < y[1]
@@ -1381,6 +1384,9 @@ local function maintained(c, body, cast)
     local action = body:match("^[%w_]+")
     for _, m in ipairs(c.maintenance) do
         local key, s = m[1], "settings." .. m[2]
+        if m[3] then
+            s = "(" .. s .. "|" .. m[3] .. ")"
+        end
         if action == key then
             cast[key] = true
             cond = cond

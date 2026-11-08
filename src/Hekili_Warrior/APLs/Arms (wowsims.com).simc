@@ -4,6 +4,7 @@
 # The endgame priority adapts as you learn abilities. Open-world pulls use earlier Rend and spend less rage on armor stacks.
 # While leveling or fighting outdoors, Bloodrage favors low rage. Readable health must be at least 65%; hidden health in combat leaves it eligible.
 # Rend skips known bleed-immune targets and backs off briefly after an immune result in PvE.
+# With Defensives enabled, use Demoralizing Shout early on outdoor pulls.
 # Hamstring slows non-boss PvE humanoids in melee range when they enter Execute range.
 # PvE utility follows your Interrupts and Defensives toggles. Retaliation also follows Cooldowns.
 
@@ -42,12 +43,14 @@ actions.precombat+=/battle_shout,if=!buff.battle_shout.up
 actions.precombat+=/call_action_list,name=pre_pull_move
 actions=shield_bash,if=arms_pve_target&combat>0&target.within5&!target.outside5&debuff.casting.up&debuff.casting.v2=0
 actions+=/pummel,if=arms_pve_target&combat>0&target.within5&!target.outside5&debuff.casting.up&debuff.casting.v2=0
-actions+=/healthstone,use_off_gcd=1,if=arms_pve_target&combat>0&health.pct<=30
-actions+=/shield_wall,if=arms_pve_target&combat>0&health.pct<=25&(!action.last_stand.known|!buff.last_stand.up)
-actions+=/last_stand,use_off_gcd=1,if=arms_pve_target&combat>0&health.pct<=35&(!action.shield_wall.known|!buff.shield_wall.up)
-actions+=/victory_rush,focus=1,if=arms_pve_target&combat>0&health.pct<=75
-actions+=/retaliation,if=arms_open_world&combat>0&target.within5&!target.outside5&toggle.defensives&health.pct<=45&active_enemies>=2&(!action.last_stand.known|!buff.last_stand.up)&(!action.shield_wall.known|!buff.shield_wall.up)
-actions+=/demoralizing_shout,if=arms_open_world&combat>0&target.within5&!target.outside5&toggle.defensives&health.pct<=75&active_enemies>=2&debuff.demoralizing_shout.down
+actions+=/healthstone,use_off_gcd=1,display_below=30,if=arms_pve_target&combat>0
+actions+=/shield_wall,display_below=25,if=arms_pve_target&combat>0&(!action.last_stand.known|!buff.last_stand.up)
+actions+=/last_stand,use_off_gcd=1,display_below=35,if=arms_pve_target&combat>0&(!action.shield_wall.known|!buff.shield_wall.up)
+actions+=/victory_rush,focus=1,if=arms_open_world&combat>0
+actions+=/victory_rush,focus=1,display_below=75,if=arms_pve_target&combat>0&!arms_open_world
+actions+=/healing_potion,use_off_gcd=1,display_below=40,if=arms_pve_target&combat>0&(level<60|arms_open_world)
+actions+=/retaliation,display_below=45,if=arms_open_world&combat>0&target.within5&!target.outside5&toggle.defensives&active_enemies>=2&(!action.last_stand.known|!buff.last_stand.up)&(!action.shield_wall.known|!buff.shield_wall.up)
+actions+=/demoralizing_shout,if=arms_open_world&combat>0&target.within10&!target.outside10&toggle.defensives&!execute_phase&debuff.demoralizing_shout.down
 actions+=/hamstring,if=arms_pve_target&combat>0&target.within5&!target.outside5&!boss&!target.is_boss&target.creature_type='humanoid'&execute_phase&debuff.hamstring.down
 actions+=/call_action_list,name=sunder_armor,if=active_enemies=1&!(arms_open_world&arms_short_pull)
 actions+=/call_action_list,name=cd_racials

@@ -1106,6 +1106,24 @@ function Hekili:GetPredictionFromAPL( dispName, packName, listName, slot, action
 
                                                 Timer:Track("Post Recheck")
 
+                                                if aScriptPass and entry.display_below then
+                                                    -- Keep the readable-health recommendation. With hidden HP only
+                                                    -- the ready candidate goes to the Primary renderer.
+                                                    local cues = slot.healthCues
+                                                    if cues and state.offset == 0 and state.delay == 0 then
+                                                        local previous = cues[ cues.n ]
+                                                        local floor = cues.n > 0 and previous.percent or 0
+                                                        -- Higher APL entries already cover every value through floor.
+                                                        if entry.display_below > floor then
+                                                            local i = cues.n + 1
+                                                            local cue = cues[ i ] or {}
+                                                            cue.action, cue.percent = action, entry.display_below
+                                                            cues[ i ], cues.n = cue, i
+                                                        end
+                                                    end
+                                                    aScriptPass = state.health.pct <= entry.display_below
+                                                end
+
                                                 if aScriptPass then
                                                     --[[ if action == "potion" then
                                                         local item = class.abilities.potion.item
@@ -1619,7 +1637,8 @@ function Hekili.Update()
 
         if wanted and rule( settings ) then
             -- Only the scratch set is written until Publish: every yield below leaves out.recs the last complete set.
-            local Queue = Output.Begin( dispName )
+            local Queue, healthCues = Output.Begin( dispName )
+            Queue[ 1 ].healthCues = healthCues
             local numFilled = 0
 
             for i = #Stack, 1, -1 do tinsert( StackPool, tremove( Stack, i ) ) end
@@ -1959,6 +1978,13 @@ function Hekili.Update()
                     Hekili:Debug( "Recommendation #%d is %s at %.2fs (%.2fs).", i, action or "NO ACTION", wait or state.delayMax, state.offset + state.delay )
                 end
 
+                if slot.healthCues then
+                    for j = 1, slot.healthCues.n do
+                        local cue = slot.healthCues[ j ]
+                        cue.texture = pickTexture( cue.action, class.abilities[ cue.action ], nil, abilityOpts )
+                    end
+                end
+
                 if action then
                     numFilled = i
                     slot.time = state.offset + wait
@@ -2164,7 +2190,7 @@ function Hekili.Update()
 
         else
             -- Subscribed but its rule is off: publish an empty set (once). Unsubscribed: skipped untouched.
-            if wanted and out.count > 0 then
+            if wanted and ( out.count > 0 or ( out.healthCues and out.healthCues.n > 0 ) ) then
                 Output.Begin( dispName )
                 Output.Publish( dispName, 0 )
             end

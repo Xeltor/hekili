@@ -8456,6 +8456,15 @@ do
             if result.max_energy then result.max_energy = tonumber( result.max_energy ) end
 
             if result.use_off_gcd then result.use_off_gcd = tonumber( result.use_off_gcd ) end
+            if result.display_below then
+                local percent = tonumber( result.display_below )
+                if not percent or percent <= 0 or percent >= 100 or percent % 1 ~= 0 then
+                    result.enabled = false
+                    result.display_below = nil
+                else
+                    result.display_below = percent
+                end
+            end
             if result.focus then
                 local tier = tonumber( result.focus )
                 if not tier or tier < 0 or tier % 1 ~= 0 then

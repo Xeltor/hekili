@@ -35,6 +35,15 @@
 -- Measured after 5049ede22 (the replay's GCD end): 0.990 (98); ready-time real 3, all early (wowsims's queued Shield
 -- Block holds the GCD; wowsims.lua M.READY); live 6.0 / 17.2 / 17.2 (was 10.2 / 14.6 at L40 / L60; rage-starved, gap
 -- CK; L60 at its limit; the seeds 1-20 sweep behind the limits predates this export).
+local melee = "&target.within5&!target.outside5"
+local adventure = "prot_adventuring"
+local combat = adventure .. "&combat>0"
+local leveling = "prot_leveling&combat>0"
+local revengeLeveling = leveling .. "&action.revenge.known"
+local baselineDamage = "(!prot_leveling|!action.revenge.known)" -- Retain the original fillers before Revenge is trained.
+local noMajorDefense = "(!action.last_stand.known|!buff.last_stand.up)&(!action.shield_wall.known|!buff.shield_wall.up)"
+local charge = adventure .. "&combat=0&prot_charge_range"
+
 return {
     class = "WARRIOR",
     pack = "Protection (wowsims.com)",
@@ -66,10 +75,12 @@ return {
     -- player-facing lines of the in-game description (the user's audit rulings, 2026-10-21)
     notes = {
         "Cooldowns toggle hides: Death Wish, Sweeping Strikes and the racials (Blood Fury, Berserking, Eureka, Elune's Light).",
-        "Defensives toggle hides: Shield Wall, Last Stand, Healthstone and the racials Stoneform and Shatter Curse. No line here sits under the Potions toggle.",
-        "Last Stand, Shield Wall, Stoneform, Shatter Curse and Healthstone wait for low health, and the game hides your health from addons in combat, so they never show there: use them by hand.",
-        "Demoralizing Shout is off unless you turn on Maintain Demoralizing Shout. To keep it (when on) and Thunder Clap for bosses, tick Boss Encounter Only on those abilities, or put them under the Custom 1 toggle.",
-        "Rend is used on every target, boss or not.",
+        "Classic Primary can show low-health defensives even when the client hides your health. Healing potions use the Defensives toggle.",
+        "Leveling opens with Charge and uses Defensive Stance with a shield. Vanguard lets you Charge without swapping stances.",
+        "Leveling uses Revenge after a block, dodge or parry and favors Shield Slam once you can afford it. Shield Block and damage-reducing shouts favor melee pulls.",
+        "Shield Bash stops casts in range. If it is unavailable, Concussion Blow can stop a cast on a non-boss after you learn it.",
+        "Disarm is a defensive for dangerous humanoid melee pulls.",
+        "At level 60 the simulator's damage priority takes over. Enable Maintain Demoralizing Shout to use its normal maintenance line.",
     },
     -- a tank: the raid's tank (the target swings at it) and presets.ts:127-142's healing model (apply_defaults.ts:108-122)
     tank = true,
@@ -91,10 +102,131 @@ return {
     focus = { revenge = 1, heroic_strike = 2, cleave = 2 },
     -- Rule 15: the raid debuff, a setting off in game and on in the harness (the user's ruling, 2026-10-21); Thunder
     -- Clap stays always on here, as wowsims has it (the user's ruling: not a Protection option)
-    maintenance = { demoralizing_shout = "maintain_demoralizing_shout" },
-    leveling = {},
-    -- extra (content outside wowsims's model): Victory Rush; wowsims never goes mob to mob, so its kill window never
-    -- opens there. The user's ruling (2026-10-21): "just above bloodthirst (since it's a mini bloodthirst)". The bare
-    -- line: the kit's usable already refuses it outside Victorious.
-    extra = { { before = "bloodthirst", line = "victory_rush,focus=1" } },
+    maintenance = { demoralizing_shout = { setting = "maintain_demoralizing_shout", orWhen = "prot_leveling" } },
+    condition = {
+        last_stand = false,
+        shield_wall = false,
+        stoneform = false,
+        shatter_curse = false,
+        healthstone = false,
+    },
+    guard = {
+        bloodrage = "(!prot_leveling|prot_bloodrage_safe)",
+        shield_block = "!prot_leveling",
+        shield_slam = baselineDamage,
+        revenge = "!prot_leveling",
+        thunder_clap = baselineDamage,
+        demoralizing_shout = "!prot_leveling",
+        rend = baselineDamage .. "&(!prot_leveling|!arms_skip_rend)",
+        sunder_armor = baselineDamage,
+        heroic_strike = baselineDamage,
+        cleave = baselineDamage,
+    },
+    levelingFirst = {
+        "defensive_stance,use_off_gcd=1,if="
+            .. charge
+            .. "&equipped.shield&talent.vanguard.enabled&action.charge.known&cooldown.charge.ready"
+            .. "&!buff.defensive_stance.up&!buff.battle_stance.up&rage.lo<=stance_rage_kept",
+        "battle_stance,use_off_gcd=1,if="
+            .. charge
+            .. "&action.charge.known&cooldown.charge.ready&!buff.battle_stance.up&!talent.vanguard.enabled&rage.lo<=stance_rage_kept",
+        "charge,use_off_gcd=1,if=" .. charge,
+    },
+    extra = {
+        {
+            before = "death_wish",
+            line = "shield_bash,if=" .. combat .. melee .. "&debuff.casting.up&debuff.casting.v2=0",
+        },
+        { before = "death_wish", line = "pummel,if=" .. combat .. melee .. "&debuff.casting.up&debuff.casting.v2=0" },
+        {
+            before = "death_wish",
+            line = "concussion_blow,use_off_gcd=1,if="
+                .. combat
+                .. melee
+                .. "&toggle.interrupts&debuff.casting.up&debuff.concussion_blow.down&!boss&!target.is_boss"
+                .. "&(!action.shield_bash.known|!action.shield_bash.ready|debuff.casting.v2=1)"
+                .. "&(!action.pummel.known|!action.pummel.ready|debuff.casting.v2=1)",
+        },
+        -- The translated defensives use the same conditions and HP cutoffs as the simulator, with a Primary cue.
+        {
+            before = "death_wish",
+            line = "last_stand,use_off_gcd=1,display_below=40,if=!buff.last_stand.up&(!action.shield_wall.known|!buff.shield_wall.up)",
+        },
+        {
+            before = "death_wish",
+            line = "shield_wall,display_below=35,if=!buff.shield_wall.up&(!action.last_stand.known|!buff.last_stand.up)",
+        },
+        { before = "death_wish", line = "stoneform,display_below=50,if=" .. noMajorDefense },
+        { before = "death_wish", line = "shatter_curse,display_below=50,if=" .. noMajorDefense },
+        { before = "death_wish", line = "healthstone,use_off_gcd=1,display_below=30" },
+        { before = "death_wish", line = "healing_potion,use_off_gcd=1,display_below=40,if=" .. combat },
+        {
+            before = "death_wish",
+            line = "defensive_stance,use_off_gcd=1,if=" .. combat .. "&equipped.shield&!buff.defensive_stance.up",
+        },
+        { before = "death_wish", line = "bloodrage,use_off_gcd=1,if=" .. revengeLeveling .. "&prot_bloodrage_safe" },
+        {
+            before = "death_wish",
+            line = "disarm,if=" .. combat .. "&prot_disarm_target&!execute_phase&debuff.disarm.down",
+        },
+        { before = "sweeping_strikes", line = "victory_rush,focus=1,if=" .. leveling .. melee },
+        {
+            before = "sweeping_strikes",
+            line = "battle_shout,if=" .. leveling .. "&buff.battle_shout.down",
+        },
+        {
+            before = "sweeping_strikes",
+            line = "demoralizing_shout,if="
+                .. leveling
+                .. "&toggle.defensives&target.within10&!target.outside10&!execute_phase&debuff.demoralizing_shout.down"
+                .. "&(active_enemies>1|prot_melee_target)",
+        },
+        {
+            before = "sweeping_strikes",
+            line = "thunder_clap,if="
+                .. revengeLeveling
+                .. "&target.within8&!target.outside8&debuff.thunder_clap.down"
+                .. "&(active_enemies>1|(prot_melee_target&!arms_short_pull))",
+        },
+        {
+            before = "sweeping_strikes",
+            line = "shield_slam,if="
+                .. revengeLeveling
+                .. melee
+                .. "&(!buff.revenge_usable.up|cooldown.revenge.remains>0|rage.lo>=action.shield_slam.cost+action.revenge.cost)",
+        },
+        { before = "sweeping_strikes", line = "revenge,focus=1,if=" .. leveling .. melee },
+        {
+            before = "sweeping_strikes",
+            line = "shield_block,use_off_gcd=1,if="
+                .. leveling
+                .. "&toggle.defensives&prot_melee_target&buff.shield_block.down"
+                .. "&(!buff.revenge_usable.up|active_enemies>1|rage.lo>=40)",
+        },
+        {
+            before = "sweeping_strikes",
+            line = "rend,if=" .. revengeLeveling .. melee .. "&!arms_skip_rend&!execute_phase&debuff.rend.down",
+        },
+        {
+            before = "sweeping_strikes",
+            line = "sunder_armor,if="
+                .. revengeLeveling
+                .. melee
+                .. "&!execute_phase&((arms_open_world&arms_short_pull&debuff.sunder_armor.stack=0&rage.lo>=25)"
+                .. "|((!arms_open_world|!arms_short_pull)&debuff.sunder_armor.stack<5))",
+        },
+        {
+            before = "sweeping_strikes",
+            line = "cleave,use_off_gcd=1,focus=2,if=" .. revengeLeveling .. melee .. "&active_enemies>1&rage.lo>=40",
+        },
+        {
+            before = "sweeping_strikes",
+            line = "heroic_strike,use_off_gcd=1,focus=2,if="
+                .. leveling
+                .. melee
+                .. "&active_enemies=1&((action.revenge.known&rage.lo>=40)|(!action.revenge.known&(!action.rend.known|arms_skip_rend)))",
+        },
+        -- The simulator has no kill window. Keep the original max-level placement before Bloodthirst.
+        { before = "bloodthirst", line = "victory_rush,focus=1,if=!prot_leveling" },
+    },
 }

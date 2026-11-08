@@ -1048,7 +1048,8 @@ local HekiliSpecMixin = {
                     if name then
                         if not a.name or a.name == a.key then a.name = name end
                         if not a.link or a.link == a.key then a.link = link end
-                        if not a.funcs.texture then a.texture = a.texture or texture end
+                        -- Ranked bag items use the currently selected item's icon unless the pack sets one.
+                        if not a.funcs.texture and not data.items then a.texture = a.texture or texture end
 
                         if a.suffix then
                             a.actualName = name
@@ -1100,7 +1101,7 @@ local HekiliSpecMixin = {
 
                         if not a.unlisted then
                             class.abilityList[ ability ] = a.listName or ( "|T" .. ( a.texture or texture ) .. ":0|t " .. link )
-                            class.itemList[ item ] = a.listName or ( "|T" .. a.texture .. ":0|t " .. link )
+                            class.itemList[ item ] = a.listName or ( "|T" .. ( a.texture or texture ) .. ":0|t " .. link )
                             class.abilityByName[ a.name ] = a
                         end
 

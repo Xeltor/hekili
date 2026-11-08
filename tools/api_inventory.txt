@@ -10,6 +10,7 @@ C_ClassTalents.GetHeroTalentSpecsForClassSpec	passthrough
 C_CooldownViewer.GetCooldownViewerCategorySet	passthrough
 C_CooldownViewer.GetCooldownViewerCooldownInfo	passthrough
 C_CooldownViewer.IsCooldownViewerAvailable	passthrough
+C_CurveUtil.CreateCurve	display
 C_DamageMeter.GetCombatSessionFromType	passthrough
 C_DamageMeter.IsDamageMeterAvailable	passthrough
 C_Item.GetDetailedItemLevelInfo	passthrough
@@ -158,6 +159,7 @@ UnitGetTotalAbsorbs	virtual
 UnitHasVehicleUI	passthrough
 UnitHealth	virtual
 UnitHealthMax	hybrid
+UnitHealthPercent	display
 UnitInParty	passthrough
 UnitInRaid	passthrough
 UnitInRange	virtual

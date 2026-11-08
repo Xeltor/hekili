@@ -33,11 +33,12 @@ local OPTIONS = {
     buff_name = "buff_name",
     use_off_gcd = "use_off_gcd",
     focus = "focus",
+    display_below = "display_below",
 } -- plus if=, which runs to the end of the line
 
 -- SimC-style lines into their lists and entries:
 -- actions[.list](=|+=/)action[,name=list][,buff_name=aura][,use_off_gcd=N][,focus=N][,if=criteria];
--- focus is a tier, 1 highest; buff_name is cancel_buff's aura.
+-- focus is a tier, 1 highest; buff_name is cancel_buff's aura; display_below is a whole HP percent for a ready cue.
 local function parse(simc)
     local lists = {}
     for line in simc:gmatch("[^\n]+") do
@@ -63,6 +64,9 @@ local function parse(simc)
             local value = (k == "name" or k == "buff_name") and v or tonumber(v)
             if k == "focus" and not v:match("^[1-9]%d*$") then
                 value = nil -- a focus tier is a positive integer, 1 highest
+            end
+            if k == "display_below" and (not value or value <= 0 or value >= 100 or value % 1 ~= 0) then
+                value = nil
             end
             if value == nil then
                 error("bad value " .. opt .. " in: " .. line, 0)
@@ -97,6 +101,7 @@ local function unparse(lists)
                 .. (e.buff_name and ",buff_name=" .. e.buff_name or "")
                 .. (e.use_off_gcd and ",use_off_gcd=" .. e.use_off_gcd or "")
                 .. (e.focus and ",focus=" .. e.focus or "")
+                .. (e.display_below and ",display_below=" .. e.display_below or "")
                 .. (e.criteria and ",if=" .. e.criteria:gsub("||", "|") or "")
         end
     end

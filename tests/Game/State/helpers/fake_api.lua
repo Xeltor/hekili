@@ -94,6 +94,7 @@ function M.new()
         petPower = 0, -- UnitPower("pet") of the pet's power type `petPowerType` while exists.pet (SECRET: a secret read)
         petPowerType = 0,
         itemCount = {}, -- [itemID] = C_Item.GetItemCount (default 0)
+        itemCooldown = {}, -- [itemID] = { start, duration }
         -- [index] = UnitStat's value (its first two returns; default 0); .armor UnitArmor's, .block GetShieldBlock's
         stats = {},
         powerMax = {}, -- [powerType] = max
@@ -501,7 +502,7 @@ function M.new()
         return ctl.dead[u] == true
     end
     function api.UnitClassification()
-        return "normal"
+        return ctl.classification or "normal"
     end
     function api.UnitCreatureType(unit)
         local key = ctl.creature[unit] or "beast"
@@ -603,10 +604,14 @@ function M.new()
         GetItemInfoInstant = function(id)
             local i = ctl.items[id]
             if i then
-                return id, nil, nil, i[2]
+                return id, nil, nil, i[2], i[3]
             end
         end,
-        GetItemCooldown = function()
+        GetItemCooldown = function(id)
+            local cd = ctl.itemCooldown[id]
+            if cd then
+                return cd[1], cd[2], 1
+            end
             return 0, 0, 1
         end,
         IsEquippedItem = function(id) -- any slot holds it (ctl.inventory); no item cache needed

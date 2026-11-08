@@ -85,6 +85,9 @@ local Displays = {
     },
 }
 
+Displays.Primary.healthCues = { n = 0 }
+Displays.Primary.scratchHealthCues = { n = 0 }
+
 -- Hekili.Engine.Output is the display table only; ns.Output (engine-private) holds the functions below and reads the
 -- displays through __index, so ns.Output.Primary still works while Begin/Publish stay off the public port.
 Engine.Output = Displays
@@ -145,7 +148,8 @@ end
 
 --- Clears `name`'s scratch set (every non-table field of every record, and each record's belief) and returns it.
 function Output.Begin(name)
-    local scratch = Displays[name].scratch
+    local o = Displays[name]
+    local scratch, cues = o.scratch, o.scratchHealthCues
     for i = 1, SLOTS do
         local rec = scratch[i]
         for k, v in pairs(rec) do
@@ -159,7 +163,10 @@ function Output.Begin(name)
         end
         rec.alts.n = 0
     end
-    return scratch
+    if cues then
+        cues.n = 0
+    end
+    return scratch, cues
 end
 
 -- Drops the blanked (false) subscriber slots, keeping the others' order.
@@ -190,6 +197,11 @@ function Output.Publish(name, count)
     local o = Displays[name]
     local built = o.scratch
     if built then
+        if o.scratchHealthCues then
+            -- Live cues publish independently of the forecast and its icon holds.
+            built[1].healthCues = nil
+            o.healthCues, o.scratchHealthCues = o.scratchHealthCues, o.healthCues
+        end
         for a = 1, annotators.n do
             local fn = annotators[a]
             for i = 1, count do

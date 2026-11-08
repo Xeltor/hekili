@@ -133,10 +133,13 @@ local SET_ONE = { { "slam", 0.3 } }
 local ACTIVE = { isActive = true, isOnGCD = false, startTime = fake.SECRET, duration = fake.SECRET }
 local ON_GCD = { isActive = true, isOnGCD = true, startTime = fake.SECRET, duration = fake.SECRET }
 
-local function publish(H, set)
+local function publish(H, set, choices)
     local abilities = H.Hekili.Engine.Registry.Abilities()
     local now = H.ctl.now
-    local s = H.ns.Output.Begin("Primary")
+    local s, cues = H.ns.Output.Begin("Primary")
+    for i, choice in ipairs(choices or {}) do
+        cues[i], cues.n = choice, i
+    end
     for i, e in ipairs(set) do
         local r = s[i]
         r.actionName, r.actionID = e[1], abilities[e[1]].id
@@ -617,7 +620,7 @@ describe("Modern's real cooldown swipe (R2, §3.4)", function()
         assert.are.same({}, H.errors)
     end)
 
-    it("passes the duration object only to the swipe: one read site, no error on the secret sentinel", function()
+    it("keeps the display-only reads in Truth and passes the duration object only to the swipe", function()
         local reads = {}
         for l in io.lines("src/Hekili/UI/Truth.lua") do
             local code = l:gsub("%-%-.*$", "")
@@ -625,9 +628,11 @@ describe("Modern's real cooldown swipe (R2, §3.4)", function()
                 reads[#reads + 1] = code:match("^%s*(.-)%s*$")
             end
         end
-        assert.are.equal(2, #reads)
+        assert.are.equal(4, #reads)
         assert.is_truthy(reads[1]:match("^local Display = ns%.Facade%.Display$"), reads[1])
         assert.is_truthy(reads[2]:match("^ov%.dur = Display%.C_Spell%.GetSpellCooldownDuration%(.*%)$"), reads[2])
+        assert.are.equal("curve = Display.C_CurveUtil.CreateCurve()", reads[3])
+        assert.are.equal('local ok, alpha = pcall( Display.UnitHealthPercent, "player", false, layer.curve )', reads[4])
         local H, d = boot("classic", true)
         local A = ids(H)
         usableAll(H)
@@ -640,6 +645,82 @@ describe("Modern's real cooldown swipe (R2, §3.4)", function()
             H.Fire("SPELL_UPDATE_COOLDOWN")
             H.Fire("SPELL_UPDATE_USABLE")
         end
+        assert.are.same({}, H.errors)
+    end)
+
+    it("draws exactly one health band over Classic Primary and forwards the protected alpha", function()
+        local H, d = boot("classic")
+        local api = H.ns.Facade.Display
+        H.env.Enum.LuaCurveType = { Step = 1 }
+        api.C_CurveUtil.CreateCurve = function()
+            return {
+                points = {},
+                SetType = function(_, kind)
+                    assert.are.equal(1, kind)
+                end,
+                AddPoint = function(self, x, y)
+                    self.points[#self.points + 1] = { x, y }
+                end,
+            }
+        end
+        local hp = 1
+        api.UnitHealthPercent = function(unit, predicted, curve)
+            assert.are.equal("player", unit)
+            assert.is_false(predicted)
+            if rawequal(hp, fake.SECRET) then
+                return hp
+            end
+            local alpha
+            for _, point in ipairs(curve.points) do
+                if hp < point[1] then
+                    break
+                end
+                alpha = point[2]
+            end
+            return alpha
+        end
+
+        local shieldWall, potion = { texture = 132362, percent = 25 }, { texture = 134831, percent = 40 }
+        publish(H, SET, { shieldWall, potion })
+        frame(H, d, 0.2)
+        local cue = assert(d.healthCue)
+        local first, second = cue.layers[1], cue.layers[2]
+        assert.are.equal(d.Buttons[1], cue.button)
+        assert.are.equal(132362, first.texture)
+        assert.are.equal(134831, second.texture)
+        assert.is_true(cue:IsEventRegistered("UNIT_HEALTH"))
+        assert.are.equal("tex1", d.Buttons[1].Texture.__tex)
+        instrument(cue)
+        instrument(first)
+        instrument(second)
+
+        for _, band in ipairs({ { 0.45, 0, 0 }, { 0.4, 0, 1 }, { 0.251, 0, 1 }, { 0.25, 1, 0 }, { 0.1, 1, 0 } }) do
+            hp = band[1]
+            H.Fire("UNIT_HEALTH", "player")
+            assert.are.same({ band[2], band[3] }, { first.__alpha, second.__alpha })
+        end
+        hp = fake.SECRET
+        H.Fire("UNIT_HEALTH", "player")
+        assert.is_true(rawequal(fake.SECRET, first.__alpha))
+        assert.is_true(rawequal(fake.SECRET, second.__alpha))
+
+        hp = 0.2
+        publish(H, SET, { potion })
+        frame(H, d, 0.2)
+        assert.are.equal(134831, first.texture)
+        assert.are.equal(1, first.__alpha)
+        assert.is_false(second.__shown)
+        api.UnitHealthPercent = function()
+            error("restricted health read")
+        end
+        H.Fire("UNIT_HEALTH", "player")
+        assert.are.equal(0, first.__alpha)
+
+        publish(H, SET)
+        frame(H, d, 0.2)
+        assert.is_false(cue:IsEventRegistered("UNIT_HEALTH"))
+        assert.is_false(cue.__shown)
+        assert.are.equal("tex1", d.Buttons[1].Texture.__tex)
         assert.are.same({}, H.errors)
     end)
     it(

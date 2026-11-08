@@ -13690,6 +13690,28 @@ options.items.disable_items	desc	If checked, no equipped trinkets, weapons, or a
 options.items.disable_items	desc	If checked, no equipped trinkets, weapons, or armor with |cFF00FF00Use:|r effects will be recommended for |cFFFFD100|W|T136096:0::::64:64:4:60:4:60|t Balance|w|r, regardless of any other options selected below.
 options.items.disable_items	desc	If checked, no equipped trinkets, weapons, or armor with |cFF00FF00Use:|r effects will be recommended for |cFFFFD100|W|T136145:0::::64:64:4:60:4:60|t Affliction|w|r, regardless of any other options selected below.
 options.items.disable_items	name	Disable Gear and Items
+options.items.healing_potion	name	Healing Potion
+options.items.healing_potion.boss	desc	If checked, the addon will not recommend [Item 118] via [Use Items] unless you are in a boss fight (or encounter).  If left unchecked, [Item 118] can be recommended in any type of fight.
+options.items.healing_potion.boss	name	Boss Encounter Only
+options.items.healing_potion.disabled	desc	If checked, this ability will |cffff0000NEVER|r be recommended by the addon.  This can cause issues for some specializations, if other abilities depend on you using [Item 118].
+options.items.healing_potion.disabled	name	Disable [Item 118]
+options.items.healing_potion.keybind	desc	If specified, the addon will show this text in place of the auto-detected keybind text when recommending this ability.  This can be helpful if the addon incorrectly detects your keybindings.
+options.items.healing_potion.keybind	name	Override Keybind Text
+options.items.healing_potion.targetMax	desc	If set above zero, the addon will only allow [Item 118] to be recommended via [Use Items] if there are this many detected enemies (or fewer).\nSet to zero to ignore.
+options.items.healing_potion.targetMax	name	Maximum Targets
+options.items.healing_potion.targetMin	desc	If set above zero, the addon will only allow [Item 118] to be recommended via [Use Items] if there are at least this many detected enemies.\nSet to zero to ignore.
+options.items.healing_potion.targetMin	name	Minimum Targets
+options.items.healing_potion.toggle	desc	Specify a required toggle for this action to be used in the addon action list.  When toggled off, abilities are treated as unusable and the addon will pretend they are on cooldown (unless specified otherwise).
+options.items.healing_potion.toggle	name	Require Toggle
+options.items.healing_potion.toggle	values.cooldowns	Cooldowns
+options.items.healing_potion.toggle	values.custom1	Custom 1
+options.items.healing_potion.toggle	values.custom2	Custom 2
+options.items.healing_potion.toggle	values.default	Default |cffffd100(defensives)|r
+options.items.healing_potion.toggle	values.defensives	Defensives
+options.items.healing_potion.toggle	values.interrupts	Interrupts
+options.items.healing_potion.toggle	values.minor_cooldowns	Minor CDs
+options.items.healing_potion.toggle	values.none	None
+options.items.healing_potion.toggle	values.potions	Potions
 options.items.healthstone	name	Healthstone
 options.items.healthstone.boss	desc	If checked, the addon will not recommend [Item 5512] via [Use Items] unless you are in a boss fight (or encounter).  If left unchecked, [Item 5512] can be recommended in any type of fight.
 options.items.healthstone.boss	name	Boss Encounter Only
@@ -13876,6 +13898,7 @@ options.packs.affliction.Affliction (wowsims.com).lists.action	values.demonic_ru
 options.packs.affliction.Affliction (wowsims.com).lists.action	values.demonic_sacrifice	|T136000:0|t Spell 18788
 options.packs.affliction.Affliction (wowsims.com).lists.action	values.drain_life	|T136000:0|t Spell 689
 options.packs.affliction.Affliction (wowsims.com).lists.action	values.drain_soul	|T136000:0|t Spell 1120
+options.packs.affliction.Affliction (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.affliction.Affliction (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.affliction.Affliction (wowsims.com).lists.action	values.hellfire	|T136000:0|t Spell 1949
 options.packs.affliction.Affliction (wowsims.com).lists.action	values.immolate	|T136000:0|t Spell 348
@@ -13944,6 +13967,7 @@ options.packs.affliction.Affliction (wowsims.com).lists.action_name	values.demon
 options.packs.affliction.Affliction (wowsims.com).lists.action_name	values.demonic_sacrifice	|T136000:0|t Spell 18788
 options.packs.affliction.Affliction (wowsims.com).lists.action_name	values.drain_life	|T136000:0|t Spell 689
 options.packs.affliction.Affliction (wowsims.com).lists.action_name	values.drain_soul	|T136000:0|t Spell 1120
+options.packs.affliction.Affliction (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.affliction.Affliction (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.affliction.Affliction (wowsims.com).lists.action_name	values.hellfire	|T136000:0|t Spell 1949
 options.packs.affliction.Affliction (wowsims.com).lists.action_name	values.immolate	|T136000:0|t Spell 348
@@ -14130,6 +14154,7 @@ options.packs.affliction.SM Ruin (wowsims.com).lists.action	values.demonic_rune	
 options.packs.affliction.SM Ruin (wowsims.com).lists.action	values.demonic_sacrifice	|T136000:0|t Spell 18788
 options.packs.affliction.SM Ruin (wowsims.com).lists.action	values.drain_life	|T136000:0|t Spell 689
 options.packs.affliction.SM Ruin (wowsims.com).lists.action	values.drain_soul	|T136000:0|t Spell 1120
+options.packs.affliction.SM Ruin (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.affliction.SM Ruin (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.affliction.SM Ruin (wowsims.com).lists.action	values.hellfire	|T136000:0|t Spell 1949
 options.packs.affliction.SM Ruin (wowsims.com).lists.action	values.immolate	|T136000:0|t Spell 348
@@ -14195,6 +14220,7 @@ options.packs.affliction.SM Ruin (wowsims.com).lists.action_name	values.demonic_
 options.packs.affliction.SM Ruin (wowsims.com).lists.action_name	values.demonic_sacrifice	|T136000:0|t Spell 18788
 options.packs.affliction.SM Ruin (wowsims.com).lists.action_name	values.drain_life	|T136000:0|t Spell 689
 options.packs.affliction.SM Ruin (wowsims.com).lists.action_name	values.drain_soul	|T136000:0|t Spell 1120
+options.packs.affliction.SM Ruin (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.affliction.SM Ruin (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.affliction.SM Ruin (wowsims.com).lists.action_name	values.hellfire	|T136000:0|t Spell 1949
 options.packs.affliction.SM Ruin (wowsims.com).lists.action_name	values.immolate	|T136000:0|t Spell 348
@@ -14461,6 +14487,7 @@ options.packs.arcane.Arcane (wowsims.com).lists.action	values.fire_blast	|T13600
 options.packs.arcane.Arcane (wowsims.com).lists.action	values.fireball	|T136000:0|t Spell 133
 options.packs.arcane.Arcane (wowsims.com).lists.action	values.frostbolt	|T136000:0|t Spell 116
 options.packs.arcane.Arcane (wowsims.com).lists.action	values.frostfire_bolt	|T136000:0|t Spell 401502
+options.packs.arcane.Arcane (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.arcane.Arcane (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.arcane.Arcane (wowsims.com).lists.action	values.main_hand	|T136243:0|t |cff00ccff[INVTYPE_WEAPONMAINHAND]|r
 options.packs.arcane.Arcane (wowsims.com).lists.action	values.major_mana_potion	|T0:0|t [Item 13444]
@@ -14509,6 +14536,7 @@ options.packs.arcane.Arcane (wowsims.com).lists.action_name	values.fire_blast	|T
 options.packs.arcane.Arcane (wowsims.com).lists.action_name	values.fireball	|T136000:0|t Spell 133
 options.packs.arcane.Arcane (wowsims.com).lists.action_name	values.frostbolt	|T136000:0|t Spell 116
 options.packs.arcane.Arcane (wowsims.com).lists.action_name	values.frostfire_bolt	|T136000:0|t Spell 401502
+options.packs.arcane.Arcane (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.arcane.Arcane (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.arcane.Arcane (wowsims.com).lists.action_name	values.main_hand	|T136243:0|t |cff00ccff[INVTYPE_WEAPONMAINHAND]|r
 options.packs.arcane.Arcane (wowsims.com).lists.action_name	values.major_mana_potion	|T0:0|t [Item 13444]
@@ -14753,6 +14781,7 @@ options.packs.arms.Arms (wowsims.com).lists.action	values.demoralizing_shout	|T1
 options.packs.arms.Arms (wowsims.com).lists.action	values.disarm	|T136000:0|t Spell 676
 options.packs.arms.Arms (wowsims.com).lists.action	values.execute	|T136000:0|t Spell 5308
 options.packs.arms.Arms (wowsims.com).lists.action	values.hamstring	|T136000:0|t Spell 1715
+options.packs.arms.Arms (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.arms.Arms (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.arms.Arms (wowsims.com).lists.action	values.heroic_strike	|T136000:0|t Spell 78
 options.packs.arms.Arms (wowsims.com).lists.action	values.intercept	|T136000:0|t Spell 20252
@@ -14796,48 +14825,50 @@ options.packs.arms.Arms (wowsims.com).lists.actionID	desc	Select the entry to mo
 options.packs.arms.Arms (wowsims.com).lists.actionID	name	Entry
 options.packs.arms.Arms (wowsims.com).lists.actionID	values.0001	|cFFFFD1001.|r Spell 72 - |cFFFFD100|cffffd100arms_pve_target&combat>0&target.within5&!target.outside5&debuff.casting.up&debuff.casting.v2=0|r|r
 options.packs.arms.Arms (wowsims.com).lists.actionID	values.0002	|cFFFFD1002.|r Spell 6552 - |cFFFFD100|cffffd100arms_pve_target&combat>0&target.within5&!target.outside5&debuff.casting.up&debuff.casting.v2=0|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0003	|cFFFFD1003.|r |cff00ccff[Healthstone]|r - |cFFFFD100|cffffd100arms_pve_target&combat>0&health.pct<=30|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0004	|cFFFFD1004.|r Spell 871 - |cFFFFD100|cffffd100arms_pve_target&combat>0&health.pct<=25&(!action.last_stand.known||!buff.last_stand.up)|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0005	|cFFFFD1005.|r Spell 12975 - |cFFFFD100|cffffd100arms_pve_target&combat>0&health.pct<=35&(!action.shield_wall.known||!buff.shield_wall.up)|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0006	|cFFFFD1006.|r Spell 402927 - |cFFFFD100|cffffd100arms_pve_target&combat>0&health.pct<=75|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0007	|cFFFFD1007.|r Spell 20230 - |cFFFFD100|cffffd100arms_open_world&combat>0&target.within5&!target.outside5&toggle.defensives&health.pct<=45&active_enemies>=2&(!action.last_stand.known||!buff.last_stand.up)&(!action.shield_wall.known||!buff.shield_wall.up)|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0008	|cFFFFD1008.|r Spell 1160 - |cFFFFD100|cffffd100arms_open_world&combat>0&target.within5&!target.outside5&toggle.defensives&health.pct<=75&active_enemies>=2&debuff.demoralizing_shout.down|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0009	|cFFFFD1009.|r Spell 1715 - |cFFFFD100|cffffd100arms_pve_target&combat>0&target.within5&!target.outside5&!boss&!target.is_boss&target.creature_type='humanoid'&execute_phase&debuff.hamstring.down|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0010	|cFFFFD10010.|r |cff00ccff[Call Action List]|r - |cFFFFD100|cff00ccffsunder_armor|r, if |cffffd100active_enemies=1&!(arms_open_world&arms_short_pull)|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0011	|cFFFFD10011.|r |cff00ccff[Call Action List]|r - |cFFFFD100|cff00ccffcd_racials|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0012	|cFFFFD10012.|r Spell 12328 - |cFFFFD100|cffffd100(fight_remains<=buff.death_wish.duration||fight_remains>(cooldown.death_wish.duration+(buff.death_wish.duration/2)))|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0013	|cFFFFD10013.|r Spell 1719 - |cFFFFD100|cffffd100((settings.wowsims_recklessness&settings.wowsims_stance_dance)&(fight_remains<=buff.recklessness.duration||fight_remains>(cooldown.recklessness.duration+(buff.recklessness.duration/2))))|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0014	|cFFFFD10014.|r Spell 12292 - |cFFFFD100|cffffd100active_enemies>1|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0015	|cFFFFD10015.|r Spell 2457 - |cFFFFD100|cffffd100(!settings.wowsims_stance_dance&!buff.battle_stance.up)&(!arms_skip_rend||!settings.wowsims_stance_dance||buff.overpower_ready.up)|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0016	|cFFFFD10016.|r Spell 402927
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0017	|cFFFFD10017.|r Spell 12294 - |cFFFFD100|cffffd100settings.wowsims_stance_dance|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0018	|cFFFFD10018.|r Spell 2457 - |cFFFFD100|cffffd100((settings.wowsims_stance_dance&!execute_phase&(!action.berserker_stance.known||buff.berserker_stance.up)&(!action.battle_stance.known||cooldown.battle_stance.remains<=0))&buff.overpower_ready.up&buff.overpower_ready.remains>gcd.remains&rage.lo>=5&(!action.overpower.known||cooldown.overpower.remains<=0))&(!arms_skip_rend||!settings.wowsims_stance_dance||buff.overpower_ready.up)|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0019	|cFFFFD10019.|r Spell 7384 - |cFFFFD100|cffffd100((action.battle_stance.known&prev.1.battle_stance)||(!action.battle_stance.known&((settings.wowsims_stance_dance&!execute_phase&(!action.berserker_stance.known||buff.berserker_stance.up)&(!action.battle_stance.known||cooldown.battle_stance.remains<=0))&buff.overpower_ready.up&buff.overpower_ready.remains>gcd.remains&rage.lo>=5&(!action.overpower.known||cooldown.overpower.remains<=0))))&(buff.overpower_ready.up&buff.overpower_ready.remains>gcd.remains&rage.lo>=5&(!action.overpower.known||cooldown.overpower.remains<=0))|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0020	|cFFFFD10020.|r Spell 7384 - |cFFFFD100|cffffd100(!action.battle_stance.known||buff.battle_stance.up)|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0021	|cFFFFD10021.|r Spell 2458 - |cFFFFD100|cffffd100(!settings.wowsims_stance_dance&active_enemies>=3&rage.lo>=25&gcd.remains<=0&!buff.berserker_stance.up&(!action.whirlwind.known||cooldown.whirlwind.ready))|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0022	|cFFFFD10022.|r Spell 1680 - |cFFFFD100|cffffd100(!settings.wowsims_stance_dance&active_enemies>=3)|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0023	|cFFFFD10023.|r Spell 12294 - |cFFFFD100|cffffd100!settings.wowsims_stance_dance|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0024	|cFFFFD10024.|r Spell 2687 - |cFFFFD100|cffffd100arms_pve_target&combat>0&(level<60||arms_open_world)&rage.lo<=15&arms_bloodrage_safe|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0025	|cFFFFD10025.|r Spell 772 - |cFFFFD100|cffffd100arms_open_world&combat>0&!arms_skip_rend&!execute_phase&debuff.rend.down|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0026	|cFFFFD10026.|r Spell 1240193 - |cFFFFD100|cffffd100(!execute_phase&(!action.mortal_strike.known||action.slam.cast<action.mortal_strike.gcd))|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0027	|cFFFFD10027.|r Spell 2457 - |cFFFFD100|cffffd100((settings.wowsims_stance_dance&!execute_phase&(!action.berserker_stance.known||buff.berserker_stance.up)&(!action.battle_stance.known||cooldown.battle_stance.remains<=0))&(!action.rend.known||debuff.rend.remains<=action.rend.gcd)&rage.lo>=10)&(!arms_skip_rend||!settings.wowsims_stance_dance||buff.overpower_ready.up)|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0028	|cFFFFD10028.|r Spell 772 - |cFFFFD100|cffffd100((action.battle_stance.known&prev.1.battle_stance)||(!action.battle_stance.known&((settings.wowsims_stance_dance&!execute_phase&(!action.berserker_stance.known||buff.berserker_stance.up)&(!action.battle_stance.known||cooldown.battle_stance.remains<=0))&(!action.rend.known||debuff.rend.remains<=action.rend.gcd)&rage.lo>=10)))&((!action.rend.known||debuff.rend.remains<=action.rend.gcd)&rage.lo>=10)&!arms_skip_rend|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0029	|cFFFFD10029.|r Spell 772 - |cFFFFD100|cffffd100(!execute_phase&(!action.battle_stance.known||buff.battle_stance.up)&debuff.rend.remains<=action.rend.gcd)&!arms_skip_rend|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0030	|cFFFFD10030.|r Spell 1240193 - |cFFFFD100|cffffd100(!execute_phase&(!action.mortal_strike.known||action.slam.cast>=action.mortal_strike.gcd)&mainhand_remains>=mainhand_speed-(0+0.3))|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0031	|cFFFFD10031.|r Spell 1310222 - |cFFFFD100|cffffd100(!execute_phase&(!action.battle_stance.known||buff.battle_stance.up))|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0032	|cFFFFD10032.|r Spell 2458 - |cFFFFD100|cffffd100(settings.wowsims_stance_dance&(!action.battle_stance.known||buff.battle_stance.up)&!buff.overpower_ready.up&(execute_phase||(action.rend.known&debuff.rend.remains>action.rend.gcd)))|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0033	|cFFFFD10033.|r Spell 1680 - |cFFFFD100|cffffd100settings.wowsims_stance_dance|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0034	|cFFFFD10034.|r Spell 5308 - |cFFFFD100|cffffd100execute_phase|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0035	|cFFFFD10035.|r Spell 845 - |cFFFFD100|cffffd100(active_enemies>1&rage.lo>=40)|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0036	|cFFFFD10036.|r Spell 78 - |cFFFFD100|cffffd100arms_open_world&combat>0&arms_short_pull&action.mortal_strike.known&!execute_phase&active_enemies=1&rage.lo>=65|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0037	|cFFFFD10037.|r Spell 78 - |cFFFFD100|cffffd100(!execute_phase&rage.lo>=90&!talent.improved_slam.enabled)|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0038	|cFFFFD10038.|r Spell 2687 - |cFFFFD100|cffffd100rage.lo<90&arms_bloodrage_safe|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0039	|cFFFFD10039.|r Spell 6673 - |cFFFFD100|cffffd100(((!action.mortal_strike.known||cooldown.mortal_strike.remains>=action.mortal_strike.gcd)&(!settings.wowsims_stance_dance||(action.whirlwind.known&cooldown.whirlwind.remains>=action.whirlwind.gcd)))&buff.battle_shout.remains<=10)|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0040	|cFFFFD10040.|r Spell 78 - |cFFFFD100|cffffd100level<60&combat>0&!action.rend.known|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0041	|cFFFFD10041.|r Spell 7386 - |cFFFFD100|cffffd100arms_open_world&combat>0&arms_short_pull&arms_skip_rend&!action.mortal_strike.known&!execute_phase&debuff.sunder_armor.stack=0|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0042	|cFFFFD10042.|r Spell 78 - |cFFFFD100|cffffd100!action.mortal_strike.known&(rage.lo>=40||(!arms_open_world||arms_skip_rend)&rage.lo>=30)|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0043	|cFFFFD10043.|r Spell 6343 - |cFFFFD100|cffffd100settings.maintain_thunder_clap&!action.mortal_strike.known&!debuff.thunder_clap.up|r|r
-options.packs.arms.Arms (wowsims.com).lists.actionID	values.0044	|cFFFFD10044.|r Spell 7386 - |cFFFFD100|cffffd100!action.mortal_strike.known&debuff.sunder_armor.stack<5&!(arms_open_world&arms_short_pull)|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0003	|cFFFFD1003.|r |cff00ccff[Healthstone]|r - |cFFFFD100|cffffd100arms_pve_target&combat>0|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0004	|cFFFFD1004.|r Spell 871 - |cFFFFD100|cffffd100arms_pve_target&combat>0&(!action.last_stand.known||!buff.last_stand.up)|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0005	|cFFFFD1005.|r Spell 12975 - |cFFFFD100|cffffd100arms_pve_target&combat>0&(!action.shield_wall.known||!buff.shield_wall.up)|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0006	|cFFFFD1006.|r Spell 402927 - |cFFFFD100|cffffd100arms_open_world&combat>0|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0007	|cFFFFD1007.|r Spell 402927 - |cFFFFD100|cffffd100arms_pve_target&combat>0&!arms_open_world|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0008	|cFFFFD1008.|r [Item 118] - |cFFFFD100|cffffd100arms_pve_target&combat>0&(level<60||arms_open_world)|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0009	|cFFFFD1009.|r Spell 20230 - |cFFFFD100|cffffd100arms_open_world&combat>0&target.within5&!target.outside5&toggle.defensives&active_enemies>=2&(!action.last_stand.known||!buff.last_stand.up)&(!action.shield_wall.known||!buff.shield_wall.up)|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0010	|cFFFFD10010.|r Spell 1160 - |cFFFFD100|cffffd100arms_open_world&combat>0&target.within10&!target.outside10&toggle.defensives&!execute_phase&debuff.demoralizing_shout.down|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0011	|cFFFFD10011.|r Spell 1715 - |cFFFFD100|cffffd100arms_pve_target&combat>0&target.within5&!target.outside5&!boss&!target.is_boss&target.creature_type='humanoid'&execute_phase&debuff.hamstring.down|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0012	|cFFFFD10012.|r |cff00ccff[Call Action List]|r - |cFFFFD100|cff00ccffsunder_armor|r, if |cffffd100active_enemies=1&!(arms_open_world&arms_short_pull)|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0013	|cFFFFD10013.|r |cff00ccff[Call Action List]|r - |cFFFFD100|cff00ccffcd_racials|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0014	|cFFFFD10014.|r Spell 12328 - |cFFFFD100|cffffd100(fight_remains<=buff.death_wish.duration||fight_remains>(cooldown.death_wish.duration+(buff.death_wish.duration/2)))|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0015	|cFFFFD10015.|r Spell 1719 - |cFFFFD100|cffffd100((settings.wowsims_recklessness&settings.wowsims_stance_dance)&(fight_remains<=buff.recklessness.duration||fight_remains>(cooldown.recklessness.duration+(buff.recklessness.duration/2))))|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0016	|cFFFFD10016.|r Spell 12292 - |cFFFFD100|cffffd100active_enemies>1|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0017	|cFFFFD10017.|r Spell 2457 - |cFFFFD100|cffffd100(!settings.wowsims_stance_dance&!buff.battle_stance.up)&(!arms_skip_rend||!settings.wowsims_stance_dance||buff.overpower_ready.up)|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0018	|cFFFFD10018.|r Spell 402927
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0019	|cFFFFD10019.|r Spell 12294 - |cFFFFD100|cffffd100settings.wowsims_stance_dance|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0020	|cFFFFD10020.|r Spell 2457 - |cFFFFD100|cffffd100((settings.wowsims_stance_dance&!execute_phase&(!action.berserker_stance.known||buff.berserker_stance.up)&(!action.battle_stance.known||cooldown.battle_stance.remains<=0))&buff.overpower_ready.up&buff.overpower_ready.remains>gcd.remains&rage.lo>=5&(!action.overpower.known||cooldown.overpower.remains<=0))&(!arms_skip_rend||!settings.wowsims_stance_dance||buff.overpower_ready.up)|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0021	|cFFFFD10021.|r Spell 7384 - |cFFFFD100|cffffd100((action.battle_stance.known&prev.1.battle_stance)||(!action.battle_stance.known&((settings.wowsims_stance_dance&!execute_phase&(!action.berserker_stance.known||buff.berserker_stance.up)&(!action.battle_stance.known||cooldown.battle_stance.remains<=0))&buff.overpower_ready.up&buff.overpower_ready.remains>gcd.remains&rage.lo>=5&(!action.overpower.known||cooldown.overpower.remains<=0))))&(buff.overpower_ready.up&buff.overpower_ready.remains>gcd.remains&rage.lo>=5&(!action.overpower.known||cooldown.overpower.remains<=0))|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0022	|cFFFFD10022.|r Spell 7384 - |cFFFFD100|cffffd100(!action.battle_stance.known||buff.battle_stance.up)|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0023	|cFFFFD10023.|r Spell 2458 - |cFFFFD100|cffffd100(!settings.wowsims_stance_dance&active_enemies>=3&rage.lo>=25&gcd.remains<=0&!buff.berserker_stance.up&(!action.whirlwind.known||cooldown.whirlwind.ready))|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0024	|cFFFFD10024.|r Spell 1680 - |cFFFFD100|cffffd100(!settings.wowsims_stance_dance&active_enemies>=3)|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0025	|cFFFFD10025.|r Spell 12294 - |cFFFFD100|cffffd100!settings.wowsims_stance_dance|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0026	|cFFFFD10026.|r Spell 2687 - |cFFFFD100|cffffd100arms_pve_target&combat>0&(level<60||arms_open_world)&rage.lo<=15&arms_bloodrage_safe|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0027	|cFFFFD10027.|r Spell 772 - |cFFFFD100|cffffd100arms_open_world&combat>0&!arms_skip_rend&!execute_phase&debuff.rend.down|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0028	|cFFFFD10028.|r Spell 1240193 - |cFFFFD100|cffffd100(!execute_phase&(!action.mortal_strike.known||action.slam.cast<action.mortal_strike.gcd))|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0029	|cFFFFD10029.|r Spell 2457 - |cFFFFD100|cffffd100((settings.wowsims_stance_dance&!execute_phase&(!action.berserker_stance.known||buff.berserker_stance.up)&(!action.battle_stance.known||cooldown.battle_stance.remains<=0))&(!action.rend.known||debuff.rend.remains<=action.rend.gcd)&rage.lo>=10)&(!arms_skip_rend||!settings.wowsims_stance_dance||buff.overpower_ready.up)|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0030	|cFFFFD10030.|r Spell 772 - |cFFFFD100|cffffd100((action.battle_stance.known&prev.1.battle_stance)||(!action.battle_stance.known&((settings.wowsims_stance_dance&!execute_phase&(!action.berserker_stance.known||buff.berserker_stance.up)&(!action.battle_stance.known||cooldown.battle_stance.remains<=0))&(!action.rend.known||debuff.rend.remains<=action.rend.gcd)&rage.lo>=10)))&((!action.rend.known||debuff.rend.remains<=action.rend.gcd)&rage.lo>=10)&!arms_skip_rend|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0031	|cFFFFD10031.|r Spell 772 - |cFFFFD100|cffffd100(!execute_phase&(!action.battle_stance.known||buff.battle_stance.up)&debuff.rend.remains<=action.rend.gcd)&!arms_skip_rend|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0032	|cFFFFD10032.|r Spell 1240193 - |cFFFFD100|cffffd100(!execute_phase&(!action.mortal_strike.known||action.slam.cast>=action.mortal_strike.gcd)&mainhand_remains>=mainhand_speed-(0+0.3))|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0033	|cFFFFD10033.|r Spell 1310222 - |cFFFFD100|cffffd100(!execute_phase&(!action.battle_stance.known||buff.battle_stance.up))|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0034	|cFFFFD10034.|r Spell 2458 - |cFFFFD100|cffffd100(settings.wowsims_stance_dance&(!action.battle_stance.known||buff.battle_stance.up)&!buff.overpower_ready.up&(execute_phase||(action.rend.known&debuff.rend.remains>action.rend.gcd)))|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0035	|cFFFFD10035.|r Spell 1680 - |cFFFFD100|cffffd100settings.wowsims_stance_dance|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0036	|cFFFFD10036.|r Spell 5308 - |cFFFFD100|cffffd100execute_phase|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0037	|cFFFFD10037.|r Spell 845 - |cFFFFD100|cffffd100(active_enemies>1&rage.lo>=40)|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0038	|cFFFFD10038.|r Spell 78 - |cFFFFD100|cffffd100arms_open_world&combat>0&arms_short_pull&action.mortal_strike.known&!execute_phase&active_enemies=1&rage.lo>=65|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0039	|cFFFFD10039.|r Spell 78 - |cFFFFD100|cffffd100(!execute_phase&rage.lo>=90&!talent.improved_slam.enabled)|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0040	|cFFFFD10040.|r Spell 2687 - |cFFFFD100|cffffd100rage.lo<90&arms_bloodrage_safe|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0041	|cFFFFD10041.|r Spell 6673 - |cFFFFD100|cffffd100(((!action.mortal_strike.known||cooldown.mortal_strike.remains>=action.mortal_strike.gcd)&(!settings.wowsims_stance_dance||(action.whirlwind.known&cooldown.whirlwind.remains>=action.whirlwind.gcd)))&buff.battle_shout.remains<=10)|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0042	|cFFFFD10042.|r Spell 78 - |cFFFFD100|cffffd100level<60&combat>0&!action.rend.known|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0043	|cFFFFD10043.|r Spell 7386 - |cFFFFD100|cffffd100arms_open_world&combat>0&arms_short_pull&arms_skip_rend&!action.mortal_strike.known&!execute_phase&debuff.sunder_armor.stack=0|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0044	|cFFFFD10044.|r Spell 78 - |cFFFFD100|cffffd100!action.mortal_strike.known&(rage.lo>=40||(!arms_open_world||arms_skip_rend)&rage.lo>=30)|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0045	|cFFFFD10045.|r Spell 6343 - |cFFFFD100|cffffd100settings.maintain_thunder_clap&!action.mortal_strike.known&!debuff.thunder_clap.up|r|r
+options.packs.arms.Arms (wowsims.com).lists.actionID	values.0046	|cFFFFD10046.|r Spell 7386 - |cFFFFD100|cffffd100!action.mortal_strike.known&debuff.sunder_armor.stack<5&!(arms_open_world&arms_short_pull)|r|r
 options.packs.arms.Arms (wowsims.com).lists.action_name	desc	Specify the action to cancel; the result is that the addon will allow the channel to be removed immediately.
 options.packs.arms.Arms (wowsims.com).lists.action_name	name	Action Name
 options.packs.arms.Arms (wowsims.com).lists.action_name	values.battle_shout	|T136000:0|t Spell 6673
@@ -14861,6 +14892,7 @@ options.packs.arms.Arms (wowsims.com).lists.action_name	values.demoralizing_shou
 options.packs.arms.Arms (wowsims.com).lists.action_name	values.disarm	|T136000:0|t Spell 676
 options.packs.arms.Arms (wowsims.com).lists.action_name	values.execute	|T136000:0|t Spell 5308
 options.packs.arms.Arms (wowsims.com).lists.action_name	values.hamstring	|T136000:0|t Spell 1715
+options.packs.arms.Arms (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.arms.Arms (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.arms.Arms (wowsims.com).lists.action_name	values.heroic_strike	|T136000:0|t Spell 78
 options.packs.arms.Arms (wowsims.com).lists.action_name	values.intercept	|T136000:0|t Spell 20252
@@ -15156,6 +15188,7 @@ options.packs.assassination.Assassination (wowsims.com).lists.action	values.evis
 options.packs.assassination.Assassination (wowsims.com).lists.action	values.expose_armor	|T136000:0|t Spell 8647
 options.packs.assassination.Assassination (wowsims.com).lists.action	values.garrote	|T136000:0|t Spell 703
 options.packs.assassination.Assassination (wowsims.com).lists.action	values.ghostly_strike	|T136000:0|t Spell 14278
+options.packs.assassination.Assassination (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.assassination.Assassination (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.assassination.Assassination (wowsims.com).lists.action	values.hemorrhage	|T136000:0|t Spell 16511
 options.packs.assassination.Assassination (wowsims.com).lists.action	values.instant_poison	|T0:0|t [Item 6947]
@@ -15226,6 +15259,7 @@ options.packs.assassination.Assassination (wowsims.com).lists.action_name	values
 options.packs.assassination.Assassination (wowsims.com).lists.action_name	values.expose_armor	|T136000:0|t Spell 8647
 options.packs.assassination.Assassination (wowsims.com).lists.action_name	values.garrote	|T136000:0|t Spell 703
 options.packs.assassination.Assassination (wowsims.com).lists.action_name	values.ghostly_strike	|T136000:0|t Spell 14278
+options.packs.assassination.Assassination (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.assassination.Assassination (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.assassination.Assassination (wowsims.com).lists.action_name	values.hemorrhage	|T136000:0|t Spell 16511
 options.packs.assassination.Assassination (wowsims.com).lists.action_name	values.instant_poison	|T0:0|t [Item 6947]
@@ -15484,6 +15518,7 @@ options.packs.balance.Balance (wowsims.com).lists.action	values.ferocious_bite	|
 options.packs.balance.Balance (wowsims.com).lists.action	values.frenzied_regeneration	|T136000:0|t Spell 22842
 options.packs.balance.Balance (wowsims.com).lists.action	values.gift_of_the_wild	|T136000:0|t Spell 21849
 options.packs.balance.Balance (wowsims.com).lists.action	values.growl	|T136000:0|t Spell 6795
+options.packs.balance.Balance (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.balance.Balance (wowsims.com).lists.action	values.healing_touch	|T136000:0|t Spell 5185
 options.packs.balance.Balance (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.balance.Balance (wowsims.com).lists.action	values.hurricane	|T136000:0|t Spell 16914
@@ -15559,6 +15594,7 @@ options.packs.balance.Balance (wowsims.com).lists.action_name	values.ferocious_b
 options.packs.balance.Balance (wowsims.com).lists.action_name	values.frenzied_regeneration	|T136000:0|t Spell 22842
 options.packs.balance.Balance (wowsims.com).lists.action_name	values.gift_of_the_wild	|T136000:0|t Spell 21849
 options.packs.balance.Balance (wowsims.com).lists.action_name	values.growl	|T136000:0|t Spell 6795
+options.packs.balance.Balance (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.balance.Balance (wowsims.com).lists.action_name	values.healing_touch	|T136000:0|t Spell 5185
 options.packs.balance.Balance (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.balance.Balance (wowsims.com).lists.action_name	values.hurricane	|T136000:0|t Spell 16914
@@ -15836,6 +15872,7 @@ options.packs.beast_mastery.Beast Mastery (wowsims.com).lists.action	values.canc
 options.packs.beast_mastery.Beast Mastery (wowsims.com).lists.action	values.cancel_buff	|T136243:0|t |cff00ccff[Cancel Buff]|r
 options.packs.beast_mastery.Beast Mastery (wowsims.com).lists.action	values.close_window	|T136243:0|t |cff00ccff[Close Window]|r
 options.packs.beast_mastery.Beast Mastery (wowsims.com).lists.action	values.demonic_rune	|T0:0|t [Item 12662]
+options.packs.beast_mastery.Beast Mastery (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.beast_mastery.Beast Mastery (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.beast_mastery.Beast Mastery (wowsims.com).lists.action	values.hunters_mark	|T136000:0|t Spell 1130
 options.packs.beast_mastery.Beast Mastery (wowsims.com).lists.action	values.immolation_trap	|T136000:0|t Spell 13795
@@ -15914,6 +15951,7 @@ options.packs.beast_mastery.Beast Mastery (wowsims.com).lists.action_name	values
 options.packs.beast_mastery.Beast Mastery (wowsims.com).lists.action_name	values.cancel_buff	|T136243:0|t |cff00ccff[Cancel Buff]|r
 options.packs.beast_mastery.Beast Mastery (wowsims.com).lists.action_name	values.close_window	|T136243:0|t |cff00ccff[Close Window]|r
 options.packs.beast_mastery.Beast Mastery (wowsims.com).lists.action_name	values.demonic_rune	|T0:0|t [Item 12662]
+options.packs.beast_mastery.Beast Mastery (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.beast_mastery.Beast Mastery (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.beast_mastery.Beast Mastery (wowsims.com).lists.action_name	values.hunters_mark	|T136000:0|t Spell 1130
 options.packs.beast_mastery.Beast Mastery (wowsims.com).lists.action_name	values.immolation_trap	|T136000:0|t Spell 13795
@@ -16159,6 +16197,7 @@ options.packs.combat.Combat (wowsims.com).lists.action	values.eviscerate	|T13600
 options.packs.combat.Combat (wowsims.com).lists.action	values.expose_armor	|T136000:0|t Spell 8647
 options.packs.combat.Combat (wowsims.com).lists.action	values.garrote	|T136000:0|t Spell 703
 options.packs.combat.Combat (wowsims.com).lists.action	values.ghostly_strike	|T136000:0|t Spell 14278
+options.packs.combat.Combat (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.combat.Combat (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.combat.Combat (wowsims.com).lists.action	values.hemorrhage	|T136000:0|t Spell 16511
 options.packs.combat.Combat (wowsims.com).lists.action	values.instant_poison	|T0:0|t [Item 6947]
@@ -16230,6 +16269,7 @@ options.packs.combat.Combat (wowsims.com).lists.action_name	values.eviscerate	|T
 options.packs.combat.Combat (wowsims.com).lists.action_name	values.expose_armor	|T136000:0|t Spell 8647
 options.packs.combat.Combat (wowsims.com).lists.action_name	values.garrote	|T136000:0|t Spell 703
 options.packs.combat.Combat (wowsims.com).lists.action_name	values.ghostly_strike	|T136000:0|t Spell 14278
+options.packs.combat.Combat (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.combat.Combat (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.combat.Combat (wowsims.com).lists.action_name	values.hemorrhage	|T136000:0|t Spell 16511
 options.packs.combat.Combat (wowsims.com).lists.action_name	values.instant_poison	|T0:0|t [Item 6947]
@@ -16482,6 +16522,7 @@ options.packs.demonology.Demonology (wowsims.com).lists.action	values.demonic_ru
 options.packs.demonology.Demonology (wowsims.com).lists.action	values.demonic_sacrifice	|T136000:0|t Spell 18788
 options.packs.demonology.Demonology (wowsims.com).lists.action	values.drain_life	|T136000:0|t Spell 689
 options.packs.demonology.Demonology (wowsims.com).lists.action	values.drain_soul	|T136000:0|t Spell 1120
+options.packs.demonology.Demonology (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.demonology.Demonology (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.demonology.Demonology (wowsims.com).lists.action	values.hellfire	|T136000:0|t Spell 1949
 options.packs.demonology.Demonology (wowsims.com).lists.action	values.immolate	|T136000:0|t Spell 348
@@ -16549,6 +16590,7 @@ options.packs.demonology.Demonology (wowsims.com).lists.action_name	values.demon
 options.packs.demonology.Demonology (wowsims.com).lists.action_name	values.demonic_sacrifice	|T136000:0|t Spell 18788
 options.packs.demonology.Demonology (wowsims.com).lists.action_name	values.drain_life	|T136000:0|t Spell 689
 options.packs.demonology.Demonology (wowsims.com).lists.action_name	values.drain_soul	|T136000:0|t Spell 1120
+options.packs.demonology.Demonology (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.demonology.Demonology (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.demonology.Demonology (wowsims.com).lists.action_name	values.hellfire	|T136000:0|t Spell 1949
 options.packs.demonology.Demonology (wowsims.com).lists.action_name	values.immolate	|T136000:0|t Spell 348
@@ -16743,6 +16785,7 @@ options.packs.demonology.Shadow Brand (wowsims.com).lists.action	values.demonic_
 options.packs.demonology.Shadow Brand (wowsims.com).lists.action	values.demonic_sacrifice	|T136000:0|t Spell 18788
 options.packs.demonology.Shadow Brand (wowsims.com).lists.action	values.drain_life	|T136000:0|t Spell 689
 options.packs.demonology.Shadow Brand (wowsims.com).lists.action	values.drain_soul	|T136000:0|t Spell 1120
+options.packs.demonology.Shadow Brand (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.demonology.Shadow Brand (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.demonology.Shadow Brand (wowsims.com).lists.action	values.hellfire	|T136000:0|t Spell 1949
 options.packs.demonology.Shadow Brand (wowsims.com).lists.action	values.immolate	|T136000:0|t Spell 348
@@ -16810,6 +16853,7 @@ options.packs.demonology.Shadow Brand (wowsims.com).lists.action_name	values.dem
 options.packs.demonology.Shadow Brand (wowsims.com).lists.action_name	values.demonic_sacrifice	|T136000:0|t Spell 18788
 options.packs.demonology.Shadow Brand (wowsims.com).lists.action_name	values.drain_life	|T136000:0|t Spell 689
 options.packs.demonology.Shadow Brand (wowsims.com).lists.action_name	values.drain_soul	|T136000:0|t Spell 1120
+options.packs.demonology.Shadow Brand (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.demonology.Shadow Brand (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.demonology.Shadow Brand (wowsims.com).lists.action_name	values.hellfire	|T136000:0|t Spell 1949
 options.packs.demonology.Shadow Brand (wowsims.com).lists.action_name	values.immolate	|T136000:0|t Spell 348
@@ -17087,6 +17131,7 @@ options.packs.destruction.Destruction (wowsims.com).lists.action	values.demonic_
 options.packs.destruction.Destruction (wowsims.com).lists.action	values.demonic_sacrifice	|T136000:0|t Spell 18788
 options.packs.destruction.Destruction (wowsims.com).lists.action	values.drain_life	|T136000:0|t Spell 689
 options.packs.destruction.Destruction (wowsims.com).lists.action	values.drain_soul	|T136000:0|t Spell 1120
+options.packs.destruction.Destruction (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.destruction.Destruction (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.destruction.Destruction (wowsims.com).lists.action	values.hellfire	|T136000:0|t Spell 1949
 options.packs.destruction.Destruction (wowsims.com).lists.action	values.immolate	|T136000:0|t Spell 348
@@ -17154,6 +17199,7 @@ options.packs.destruction.Destruction (wowsims.com).lists.action_name	values.dem
 options.packs.destruction.Destruction (wowsims.com).lists.action_name	values.demonic_sacrifice	|T136000:0|t Spell 18788
 options.packs.destruction.Destruction (wowsims.com).lists.action_name	values.drain_life	|T136000:0|t Spell 689
 options.packs.destruction.Destruction (wowsims.com).lists.action_name	values.drain_soul	|T136000:0|t Spell 1120
+options.packs.destruction.Destruction (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.destruction.Destruction (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.destruction.Destruction (wowsims.com).lists.action_name	values.hellfire	|T136000:0|t Spell 1949
 options.packs.destruction.Destruction (wowsims.com).lists.action_name	values.immolate	|T136000:0|t Spell 348
@@ -17412,6 +17458,7 @@ options.packs.discipline.Smite (wowsims.com).lists.action	values.close_window	|T
 options.packs.discipline.Smite (wowsims.com).lists.action	values.dark_sacrifice	|T136000:0|t Spell 1277324
 options.packs.discipline.Smite (wowsims.com).lists.action	values.demonic_rune	|T0:0|t [Item 12662]
 options.packs.discipline.Smite (wowsims.com).lists.action	values.devouring_plague	|T136000:0|t Spell 2944
+options.packs.discipline.Smite (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.discipline.Smite (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.discipline.Smite (wowsims.com).lists.action	values.holy_fire	|T136000:0|t Spell 14914
 options.packs.discipline.Smite (wowsims.com).lists.action	values.holy_nova	|T136000:0|t Spell 15237
@@ -17462,6 +17509,7 @@ options.packs.discipline.Smite (wowsims.com).lists.action_name	values.close_wind
 options.packs.discipline.Smite (wowsims.com).lists.action_name	values.dark_sacrifice	|T136000:0|t Spell 1277324
 options.packs.discipline.Smite (wowsims.com).lists.action_name	values.demonic_rune	|T0:0|t [Item 12662]
 options.packs.discipline.Smite (wowsims.com).lists.action_name	values.devouring_plague	|T136000:0|t Spell 2944
+options.packs.discipline.Smite (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.discipline.Smite (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.discipline.Smite (wowsims.com).lists.action_name	values.holy_fire	|T136000:0|t Spell 14914
 options.packs.discipline.Smite (wowsims.com).lists.action_name	values.holy_nova	|T136000:0|t Spell 15237
@@ -17720,6 +17768,7 @@ options.packs.elemental.Elemental (wowsims.com).lists.action	values.frost_resist
 options.packs.elemental.Elemental (wowsims.com).lists.action	values.frostbrand_weapon	|T136000:0|t Spell 8033
 options.packs.elemental.Elemental (wowsims.com).lists.action	values.grace_of_air_totem	|T136000:0|t Spell 8835
 options.packs.elemental.Elemental (wowsims.com).lists.action	values.grounding_totem	|T136000:0|t Spell 8177
+options.packs.elemental.Elemental (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.elemental.Elemental (wowsims.com).lists.action	values.healing_stream_totem	|T136000:0|t Spell 5394
 options.packs.elemental.Elemental (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.elemental.Elemental (wowsims.com).lists.action	values.lava_burst	|T136000:0|t Spell 408490
@@ -17795,6 +17844,7 @@ options.packs.elemental.Elemental (wowsims.com).lists.action_name	values.frost_r
 options.packs.elemental.Elemental (wowsims.com).lists.action_name	values.frostbrand_weapon	|T136000:0|t Spell 8033
 options.packs.elemental.Elemental (wowsims.com).lists.action_name	values.grace_of_air_totem	|T136000:0|t Spell 8835
 options.packs.elemental.Elemental (wowsims.com).lists.action_name	values.grounding_totem	|T136000:0|t Spell 8177
+options.packs.elemental.Elemental (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.elemental.Elemental (wowsims.com).lists.action_name	values.healing_stream_totem	|T136000:0|t Spell 5394
 options.packs.elemental.Elemental (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.elemental.Elemental (wowsims.com).lists.action_name	values.lava_burst	|T136000:0|t Spell 408490
@@ -18052,6 +18102,7 @@ options.packs.enhancement.Enhancement (wowsims.com).lists.action	values.frost_re
 options.packs.enhancement.Enhancement (wowsims.com).lists.action	values.frostbrand_weapon	|T136000:0|t Spell 8033
 options.packs.enhancement.Enhancement (wowsims.com).lists.action	values.grace_of_air_totem	|T136000:0|t Spell 8835
 options.packs.enhancement.Enhancement (wowsims.com).lists.action	values.grounding_totem	|T136000:0|t Spell 8177
+options.packs.enhancement.Enhancement (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.enhancement.Enhancement (wowsims.com).lists.action	values.healing_stream_totem	|T136000:0|t Spell 5394
 options.packs.enhancement.Enhancement (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.enhancement.Enhancement (wowsims.com).lists.action	values.lava_burst	|T136000:0|t Spell 408490
@@ -18125,6 +18176,7 @@ options.packs.enhancement.Enhancement (wowsims.com).lists.action_name	values.fro
 options.packs.enhancement.Enhancement (wowsims.com).lists.action_name	values.frostbrand_weapon	|T136000:0|t Spell 8033
 options.packs.enhancement.Enhancement (wowsims.com).lists.action_name	values.grace_of_air_totem	|T136000:0|t Spell 8835
 options.packs.enhancement.Enhancement (wowsims.com).lists.action_name	values.grounding_totem	|T136000:0|t Spell 8177
+options.packs.enhancement.Enhancement (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.enhancement.Enhancement (wowsims.com).lists.action_name	values.healing_stream_totem	|T136000:0|t Spell 5394
 options.packs.enhancement.Enhancement (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.enhancement.Enhancement (wowsims.com).lists.action_name	values.lava_burst	|T136000:0|t Spell 408490
@@ -18391,6 +18443,7 @@ options.packs.feral.Feral (wowsims.com).lists.action	values.ferocious_bite	|T136
 options.packs.feral.Feral (wowsims.com).lists.action	values.frenzied_regeneration	|T136000:0|t Spell 22842
 options.packs.feral.Feral (wowsims.com).lists.action	values.gift_of_the_wild	|T136000:0|t Spell 21849
 options.packs.feral.Feral (wowsims.com).lists.action	values.growl	|T136000:0|t Spell 6795
+options.packs.feral.Feral (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.feral.Feral (wowsims.com).lists.action	values.healing_touch	|T136000:0|t Spell 5185
 options.packs.feral.Feral (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.feral.Feral (wowsims.com).lists.action	values.hurricane	|T136000:0|t Spell 16914
@@ -18472,6 +18525,7 @@ options.packs.feral.Feral (wowsims.com).lists.action_name	values.ferocious_bite	
 options.packs.feral.Feral (wowsims.com).lists.action_name	values.frenzied_regeneration	|T136000:0|t Spell 22842
 options.packs.feral.Feral (wowsims.com).lists.action_name	values.gift_of_the_wild	|T136000:0|t Spell 21849
 options.packs.feral.Feral (wowsims.com).lists.action_name	values.growl	|T136000:0|t Spell 6795
+options.packs.feral.Feral (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.feral.Feral (wowsims.com).lists.action_name	values.healing_touch	|T136000:0|t Spell 5185
 options.packs.feral.Feral (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.feral.Feral (wowsims.com).lists.action_name	values.hurricane	|T136000:0|t Spell 16914
@@ -18754,6 +18808,7 @@ options.packs.fire.Fire (wowsims.com).lists.action	values.fire_blast	|T136000:0|
 options.packs.fire.Fire (wowsims.com).lists.action	values.fireball	|T136000:0|t Spell 133
 options.packs.fire.Fire (wowsims.com).lists.action	values.frostbolt	|T136000:0|t Spell 116
 options.packs.fire.Fire (wowsims.com).lists.action	values.frostfire_bolt	|T136000:0|t Spell 401502
+options.packs.fire.Fire (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.fire.Fire (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.fire.Fire (wowsims.com).lists.action	values.main_hand	|T136243:0|t |cff00ccff[INVTYPE_WEAPONMAINHAND]|r
 options.packs.fire.Fire (wowsims.com).lists.action	values.major_mana_potion	|T0:0|t [Item 13444]
@@ -18802,6 +18857,7 @@ options.packs.fire.Fire (wowsims.com).lists.action_name	values.fire_blast	|T1360
 options.packs.fire.Fire (wowsims.com).lists.action_name	values.fireball	|T136000:0|t Spell 133
 options.packs.fire.Fire (wowsims.com).lists.action_name	values.frostbolt	|T136000:0|t Spell 116
 options.packs.fire.Fire (wowsims.com).lists.action_name	values.frostfire_bolt	|T136000:0|t Spell 401502
+options.packs.fire.Fire (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.fire.Fire (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.fire.Fire (wowsims.com).lists.action_name	values.main_hand	|T136243:0|t |cff00ccff[INVTYPE_WEAPONMAINHAND]|r
 options.packs.fire.Fire (wowsims.com).lists.action_name	values.major_mana_potion	|T0:0|t [Item 13444]
@@ -18967,6 +19023,7 @@ options.packs.fire.Frostfire (wowsims.com).lists.action	values.fire_blast	|T1360
 options.packs.fire.Frostfire (wowsims.com).lists.action	values.fireball	|T136000:0|t Spell 133
 options.packs.fire.Frostfire (wowsims.com).lists.action	values.frostbolt	|T136000:0|t Spell 116
 options.packs.fire.Frostfire (wowsims.com).lists.action	values.frostfire_bolt	|T136000:0|t Spell 401502
+options.packs.fire.Frostfire (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.fire.Frostfire (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.fire.Frostfire (wowsims.com).lists.action	values.main_hand	|T136243:0|t |cff00ccff[INVTYPE_WEAPONMAINHAND]|r
 options.packs.fire.Frostfire (wowsims.com).lists.action	values.major_mana_potion	|T0:0|t [Item 13444]
@@ -19012,6 +19069,7 @@ options.packs.fire.Frostfire (wowsims.com).lists.action_name	values.fire_blast	|
 options.packs.fire.Frostfire (wowsims.com).lists.action_name	values.fireball	|T136000:0|t Spell 133
 options.packs.fire.Frostfire (wowsims.com).lists.action_name	values.frostbolt	|T136000:0|t Spell 116
 options.packs.fire.Frostfire (wowsims.com).lists.action_name	values.frostfire_bolt	|T136000:0|t Spell 401502
+options.packs.fire.Frostfire (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.fire.Frostfire (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.fire.Frostfire (wowsims.com).lists.action_name	values.main_hand	|T136243:0|t |cff00ccff[INVTYPE_WEAPONMAINHAND]|r
 options.packs.fire.Frostfire (wowsims.com).lists.action_name	values.major_mana_potion	|T0:0|t [Item 13444]
@@ -19263,6 +19321,7 @@ options.packs.fury.Fury (wowsims.com).lists.action	values.demoralizing_shout	|T1
 options.packs.fury.Fury (wowsims.com).lists.action	values.disarm	|T136000:0|t Spell 676
 options.packs.fury.Fury (wowsims.com).lists.action	values.execute	|T136000:0|t Spell 5308
 options.packs.fury.Fury (wowsims.com).lists.action	values.hamstring	|T136000:0|t Spell 1715
+options.packs.fury.Fury (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.fury.Fury (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.fury.Fury (wowsims.com).lists.action	values.heroic_strike	|T136000:0|t Spell 78
 options.packs.fury.Fury (wowsims.com).lists.action	values.intercept	|T136000:0|t Spell 20252
@@ -19347,6 +19406,7 @@ options.packs.fury.Fury (wowsims.com).lists.action_name	values.demoralizing_shou
 options.packs.fury.Fury (wowsims.com).lists.action_name	values.disarm	|T136000:0|t Spell 676
 options.packs.fury.Fury (wowsims.com).lists.action_name	values.execute	|T136000:0|t Spell 5308
 options.packs.fury.Fury (wowsims.com).lists.action_name	values.hamstring	|T136000:0|t Spell 1715
+options.packs.fury.Fury (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.fury.Fury (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.fury.Fury (wowsims.com).lists.action_name	values.heroic_strike	|T136000:0|t Spell 78
 options.packs.fury.Fury (wowsims.com).lists.action_name	values.intercept	|T136000:0|t Spell 20252
@@ -19649,6 +19709,7 @@ options.packs.guardian.Guardian (wowsims.com).lists.action	values.ferocious_bite
 options.packs.guardian.Guardian (wowsims.com).lists.action	values.frenzied_regeneration	|T136000:0|t Spell 22842
 options.packs.guardian.Guardian (wowsims.com).lists.action	values.gift_of_the_wild	|T136000:0|t Spell 21849
 options.packs.guardian.Guardian (wowsims.com).lists.action	values.growl	|T136000:0|t Spell 6795
+options.packs.guardian.Guardian (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.guardian.Guardian (wowsims.com).lists.action	values.healing_touch	|T136000:0|t Spell 5185
 options.packs.guardian.Guardian (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.guardian.Guardian (wowsims.com).lists.action	values.hurricane	|T136000:0|t Spell 16914
@@ -19725,6 +19786,7 @@ options.packs.guardian.Guardian (wowsims.com).lists.action_name	values.ferocious
 options.packs.guardian.Guardian (wowsims.com).lists.action_name	values.frenzied_regeneration	|T136000:0|t Spell 22842
 options.packs.guardian.Guardian (wowsims.com).lists.action_name	values.gift_of_the_wild	|T136000:0|t Spell 21849
 options.packs.guardian.Guardian (wowsims.com).lists.action_name	values.growl	|T136000:0|t Spell 6795
+options.packs.guardian.Guardian (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.guardian.Guardian (wowsims.com).lists.action_name	values.healing_touch	|T136000:0|t Spell 5185
 options.packs.guardian.Guardian (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.guardian.Guardian (wowsims.com).lists.action_name	values.hurricane	|T136000:0|t Spell 16914
@@ -20014,6 +20076,7 @@ options.packs.marksmanship.Marksmanship (wowsims.com).lists.action	values.cancel
 options.packs.marksmanship.Marksmanship (wowsims.com).lists.action	values.cancel_buff	|T136243:0|t |cff00ccff[Cancel Buff]|r
 options.packs.marksmanship.Marksmanship (wowsims.com).lists.action	values.close_window	|T136243:0|t |cff00ccff[Close Window]|r
 options.packs.marksmanship.Marksmanship (wowsims.com).lists.action	values.demonic_rune	|T0:0|t [Item 12662]
+options.packs.marksmanship.Marksmanship (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.marksmanship.Marksmanship (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.marksmanship.Marksmanship (wowsims.com).lists.action	values.hunters_mark	|T136000:0|t Spell 1130
 options.packs.marksmanship.Marksmanship (wowsims.com).lists.action	values.immolation_trap	|T136000:0|t Spell 13795
@@ -20080,6 +20143,7 @@ options.packs.marksmanship.Marksmanship (wowsims.com).lists.action_name	values.c
 options.packs.marksmanship.Marksmanship (wowsims.com).lists.action_name	values.cancel_buff	|T136243:0|t |cff00ccff[Cancel Buff]|r
 options.packs.marksmanship.Marksmanship (wowsims.com).lists.action_name	values.close_window	|T136243:0|t |cff00ccff[Close Window]|r
 options.packs.marksmanship.Marksmanship (wowsims.com).lists.action_name	values.demonic_rune	|T0:0|t [Item 12662]
+options.packs.marksmanship.Marksmanship (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.marksmanship.Marksmanship (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.marksmanship.Marksmanship (wowsims.com).lists.action_name	values.hunters_mark	|T136000:0|t Spell 1130
 options.packs.marksmanship.Marksmanship (wowsims.com).lists.action_name	values.immolation_trap	|T136000:0|t Spell 13795
@@ -20364,6 +20428,7 @@ options.packs.protection.Protection (wowsims.com).lists.action	values.execute	|T
 options.packs.protection.Protection (wowsims.com).lists.action	values.exorcism	|T136000:0|t Spell 879
 options.packs.protection.Protection (wowsims.com).lists.action	values.hammer_of_wrath	|T136000:0|t Spell 24275
 options.packs.protection.Protection (wowsims.com).lists.action	values.hamstring	|T136000:0|t Spell 1715
+options.packs.protection.Protection (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.protection.Protection (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.protection.Protection (wowsims.com).lists.action	values.heroic_strike	|T136000:0|t Spell 78
 options.packs.protection.Protection (wowsims.com).lists.action	values.holy_shield	|T136000:0|t Spell 20925
@@ -20416,38 +20481,59 @@ options.packs.protection.Protection (wowsims.com).lists.action	values.wait	|T136
 options.packs.protection.Protection (wowsims.com).lists.action	values.whirlwind	|T136000:0|t Spell 1680
 options.packs.protection.Protection (wowsims.com).lists.actionID	desc	Select the entry to modify in this action list.\n\nEntries in red are disabled, have no action set, have a conditional error, or use actions that are disabled/toggled off.
 options.packs.protection.Protection (wowsims.com).lists.actionID	name	Entry
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0001	|cFFFFD1001.|r Spell 12975 - |cFFFFD100|cffffd100(!(buff.last_stand.up||(action.shield_wall.known&buff.shield_wall.up))&health.pct<=40)|r|r
 options.packs.protection.Protection (wowsims.com).lists.actionID	values.0001	|cFFFFD1001.|r Spell 20271
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0001	|cFFFFD1001.|r Spell 71 - |cFFFFD100|cffffd100prot_adventuring&combat=0&prot_charge_range&equipped.shield&talent.vanguard.enabled&action.charge.known&cooldown.charge.ready&!buff.defensive_stance.up&!buff.battle_stance.up&rage.lo<=stance_rage_kept|r|r
 options.packs.protection.Protection (wowsims.com).lists.actionID	values.0002	|cFFFFD1002.|r Spell 1310994 - |cFFFFD100|cffffd100(!action.judgement.known||cooldown.judgement.remains<=(cooldown.judgement.duration-0))|r|r
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0002	|cFFFFD1002.|r Spell 871 - |cFFFFD100|cffffd100(health.pct<=35&!((action.last_stand.known&buff.last_stand.up)||buff.shield_wall.up))|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0002	|cFFFFD1002.|r Spell 2457 - |cFFFFD100|cffffd100prot_adventuring&combat=0&prot_charge_range&action.charge.known&cooldown.charge.ready&!buff.battle_stance.up&!talent.vanguard.enabled&rage.lo<=stance_rage_kept|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0003	|cFFFFD1003.|r Spell 100 - |cFFFFD100|cffffd100prot_adventuring&combat=0&prot_charge_range|r|r
 options.packs.protection.Protection (wowsims.com).lists.actionID	values.0003	|cFFFFD1003.|r Spell 1311649 - |cFFFFD100|cffffd100(buff.seal_of_fury.remains<mainhand_remains&!buff.seal_of_fury.up)|r|r
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0003	|cFFFFD1003.|r Spell 20594 - |cFFFFD100|cffffd100((!(action.last_stand.known||action.shield_wall.known)||!((action.last_stand.known&buff.last_stand.up)||(action.shield_wall.known&buff.shield_wall.up)))&health.pct<=50)|r|r
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0004	|cFFFFD1004.|r Spell 1299026 - |cFFFFD100|cffffd100((!(action.last_stand.known||action.shield_wall.known)||!((action.last_stand.known&buff.last_stand.up)||(action.shield_wall.known&buff.shield_wall.up)))&health.pct<=50)|r|r
 options.packs.protection.Protection (wowsims.com).lists.actionID	values.0004	|cFFFFD1004.|r Spell 26573
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0004	|cFFFFD1004.|r Spell 72 - |cFFFFD100|cffffd100prot_adventuring&combat>0&target.within5&!target.outside5&debuff.casting.up&debuff.casting.v2=0|r|r
 options.packs.protection.Protection (wowsims.com).lists.actionID	values.0005	|cFFFFD1005.|r Spell 1311606 - |cFFFFD100|cffffd100(!talent.consecrated_ground.enabled||debuff.consecrated_ground.up)|r|r
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0005	|cFFFFD1005.|r |cff00ccff[Healthstone]|r - |cFFFFD100|cffffd100health.pct<=30|r|r
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0006	|cFFFFD1006.|r Spell 12328
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0005	|cFFFFD1005.|r Spell 6552 - |cFFFFD100|cffffd100prot_adventuring&combat>0&target.within5&!target.outside5&debuff.casting.up&debuff.casting.v2=0|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0006	|cFFFFD1006.|r Spell 12809 - |cFFFFD100|cffffd100prot_adventuring&combat>0&target.within5&!target.outside5&toggle.interrupts&debuff.casting.up&debuff.concussion_blow.down&!boss&!target.is_boss&(!action.shield_bash.known||!action.shield_bash.ready||debuff.casting.v2=1)&(!action.pummel.known||!action.pummel.ready||debuff.casting.v2=1)|r|r
 options.packs.protection.Protection (wowsims.com).lists.actionID	values.0006	|cFFFFD1006.|r Spell 20925
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0007	|cFFFFD1007.|r Spell 12975 - |cFFFFD100|cffffd100!buff.last_stand.up&(!action.shield_wall.known||!buff.shield_wall.up)|r|r
 options.packs.protection.Protection (wowsims.com).lists.actionID	values.0007	|cFFFFD1007.|r Spell 679
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0007	|cFFFFD1007.|r |cff00ccff[Call Action List]|r - |cFFFFD100|cff00ccffcd_racials|r|r
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0008	|cFFFFD1008.|r Spell 2565 - |cFFFFD100|cffffd100(rage.lo>=40||(!buff.revenge_usable.up&(!action.revenge.known||cooldown.revenge.remains<=1.5)))|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0008	|cFFFFD1008.|r Spell 871 - |cFFFFD100|cffffd100!buff.shield_wall.up&(!action.last_stand.known||!buff.last_stand.up)|r|r
 options.packs.protection.Protection (wowsims.com).lists.actionID	values.0008	|cFFFFD1008.|r Spell 879
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0009	|cFFFFD1009.|r Spell 12292 - |cFFFFD100|cffffd100active_enemies>1|r|r
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0010	|cFFFFD10010.|r Spell 6343 - |cFFFFD100|cffffd100active_enemies>2|r|r
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0011	|cFFFFD10011.|r Spell 23922
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0012	|cFFFFD10012.|r Spell 402927
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0013	|cFFFFD10013.|r Spell 23881
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0014	|cFFFFD10014.|r Spell 12294
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0015	|cFFFFD10015.|r Spell 6572
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0016	|cFFFFD10016.|r Spell 6343 - |cFFFFD100|cffffd100active_enemies>1|r|r
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0017	|cFFFFD10017.|r Spell 1160 - |cFFFFD100|cffffd100settings.maintain_demoralizing_shout&debuff.demoralizing_shout.remains<=6|r|r
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0018	|cFFFFD10018.|r Spell 6343 - |cFFFFD100|cffffd100debuff.thunder_clap.remains<=6|r|r
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0019	|cFFFFD10019.|r Spell 6673 - |cFFFFD100|cffffd100buff.battle_shout.remains<=10|r|r
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0020	|cFFFFD10020.|r Spell 772 - |cFFFFD100|cffffd100(!debuff.rend.up&(!(offhand_speed=0)||(offhand_speed=0&(!action.shield_slam.known||cooldown.shield_slam.remains>=1.5))))|r|r
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0021	|cFFFFD10021.|r Spell 7386 - |cFFFFD100|cffffd100(debuff.sunder_armor.stack<5||((!action.shield_slam.known||cooldown.shield_slam.remains>=1.5)&debuff.sunder_armor.remains<=10))|r|r
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0022	|cFFFFD10022.|r Spell 845 - |cFFFFD100|cffffd100(active_enemies>1&rage.lo>=40)|r|r
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0023	|cFFFFD10023.|r Spell 78 - |cFFFFD100|cffffd100(active_enemies=1&rage.lo>=40)|r|r
-options.packs.protection.Protection (wowsims.com).lists.actionID	values.0024	|cFFFFD10024.|r Spell 2687 - |cFFFFD100|cffffd100rage.lo<90|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0009	|cFFFFD1009.|r Spell 20594 - |cFFFFD100|cffffd100(!action.last_stand.known||!buff.last_stand.up)&(!action.shield_wall.known||!buff.shield_wall.up)|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0010	|cFFFFD10010.|r Spell 1299026 - |cFFFFD100|cffffd100(!action.last_stand.known||!buff.last_stand.up)&(!action.shield_wall.known||!buff.shield_wall.up)|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0011	|cFFFFD10011.|r |cff00ccff[Healthstone]|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0012	|cFFFFD10012.|r [Item 118] - |cFFFFD100|cffffd100prot_adventuring&combat>0|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0013	|cFFFFD10013.|r Spell 71 - |cFFFFD100|cffffd100prot_adventuring&combat>0&equipped.shield&!buff.defensive_stance.up|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0014	|cFFFFD10014.|r Spell 2687 - |cFFFFD100|cffffd100prot_leveling&combat>0&action.revenge.known&prot_bloodrage_safe|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0015	|cFFFFD10015.|r Spell 676 - |cFFFFD100|cffffd100prot_adventuring&combat>0&prot_disarm_target&!execute_phase&debuff.disarm.down|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0016	|cFFFFD10016.|r Spell 12328
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0017	|cFFFFD10017.|r |cff00ccff[Call Action List]|r - |cFFFFD100|cff00ccffcd_racials|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0018	|cFFFFD10018.|r Spell 2565 - |cFFFFD100|cffffd100(rage.lo>=40||(!buff.revenge_usable.up&(!action.revenge.known||cooldown.revenge.remains<=1.5)))&!prot_leveling|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0019	|cFFFFD10019.|r Spell 402927 - |cFFFFD100|cffffd100prot_leveling&combat>0&target.within5&!target.outside5|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0020	|cFFFFD10020.|r Spell 6673 - |cFFFFD100|cffffd100prot_leveling&combat>0&buff.battle_shout.down|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0021	|cFFFFD10021.|r Spell 1160 - |cFFFFD100|cffffd100(settings.maintain_demoralizing_shout||prot_leveling)&(prot_leveling&combat>0&toggle.defensives&target.within10&!target.outside10&!execute_phase&debuff.demoralizing_shout.down&(active_enemies>1||prot_melee_target))|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0022	|cFFFFD10022.|r Spell 6343 - |cFFFFD100|cffffd100prot_leveling&combat>0&action.revenge.known&target.within8&!target.outside8&debuff.thunder_clap.down&(active_enemies>1||(prot_melee_target&!arms_short_pull))|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0023	|cFFFFD10023.|r Spell 23922 - |cFFFFD100|cffffd100prot_leveling&combat>0&action.revenge.known&target.within5&!target.outside5&(!buff.revenge_usable.up||cooldown.revenge.remains>0||rage.lo>=action.shield_slam.cost+action.revenge.cost)|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0024	|cFFFFD10024.|r Spell 6572 - |cFFFFD100|cffffd100prot_leveling&combat>0&target.within5&!target.outside5|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0025	|cFFFFD10025.|r Spell 2565 - |cFFFFD100|cffffd100prot_leveling&combat>0&toggle.defensives&prot_melee_target&buff.shield_block.down&(!buff.revenge_usable.up||active_enemies>1||rage.lo>=40)|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0026	|cFFFFD10026.|r Spell 772 - |cFFFFD100|cffffd100prot_leveling&combat>0&action.revenge.known&target.within5&!target.outside5&!arms_skip_rend&!execute_phase&debuff.rend.down|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0027	|cFFFFD10027.|r Spell 7386 - |cFFFFD100|cffffd100prot_leveling&combat>0&action.revenge.known&target.within5&!target.outside5&!execute_phase&((arms_open_world&arms_short_pull&debuff.sunder_armor.stack=0&rage.lo>=25)||((!arms_open_world||!arms_short_pull)&debuff.sunder_armor.stack<5))|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0028	|cFFFFD10028.|r Spell 845 - |cFFFFD100|cffffd100prot_leveling&combat>0&action.revenge.known&target.within5&!target.outside5&active_enemies>1&rage.lo>=40|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0029	|cFFFFD10029.|r Spell 78 - |cFFFFD100|cffffd100prot_leveling&combat>0&target.within5&!target.outside5&active_enemies=1&((action.revenge.known&rage.lo>=40)||(!action.revenge.known&(!action.rend.known||arms_skip_rend)))|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0030	|cFFFFD10030.|r Spell 12292 - |cFFFFD100|cffffd100active_enemies>1|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0031	|cFFFFD10031.|r Spell 6343 - |cFFFFD100|cffffd100active_enemies>2&(!prot_leveling||!action.revenge.known)|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0032	|cFFFFD10032.|r Spell 23922 - |cFFFFD100|cffffd100(!prot_leveling||!action.revenge.known)|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0033	|cFFFFD10033.|r Spell 402927 - |cFFFFD100|cffffd100!prot_leveling|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0034	|cFFFFD10034.|r Spell 23881
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0035	|cFFFFD10035.|r Spell 12294
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0036	|cFFFFD10036.|r Spell 6572 - |cFFFFD100|cffffd100!prot_leveling|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0037	|cFFFFD10037.|r Spell 6343 - |cFFFFD100|cffffd100active_enemies>1&(!prot_leveling||!action.revenge.known)|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0038	|cFFFFD10038.|r Spell 1160 - |cFFFFD100|cffffd100(settings.maintain_demoralizing_shout||prot_leveling)&debuff.demoralizing_shout.remains<=6&!prot_leveling|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0039	|cFFFFD10039.|r Spell 6343 - |cFFFFD100|cffffd100debuff.thunder_clap.remains<=6&(!prot_leveling||!action.revenge.known)|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0040	|cFFFFD10040.|r Spell 6673 - |cFFFFD100|cffffd100buff.battle_shout.remains<=10|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0041	|cFFFFD10041.|r Spell 772 - |cFFFFD100|cffffd100(!debuff.rend.up&(!(offhand_speed=0)||(offhand_speed=0&(!action.shield_slam.known||cooldown.shield_slam.remains>=1.5))))&((!prot_leveling||!action.revenge.known)&(!prot_leveling||!arms_skip_rend))|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0042	|cFFFFD10042.|r Spell 7386 - |cFFFFD100|cffffd100(debuff.sunder_armor.stack<5||((!action.shield_slam.known||cooldown.shield_slam.remains>=1.5)&debuff.sunder_armor.remains<=10))&(!prot_leveling||!action.revenge.known)|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0043	|cFFFFD10043.|r Spell 845 - |cFFFFD100|cffffd100(active_enemies>1&rage.lo>=40)&(!prot_leveling||!action.revenge.known)|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0044	|cFFFFD10044.|r Spell 78 - |cFFFFD100|cffffd100(active_enemies=1&rage.lo>=40)&(!prot_leveling||!action.revenge.known)|r|r
+options.packs.protection.Protection (wowsims.com).lists.actionID	values.0045	|cFFFFD10045.|r Spell 2687 - |cFFFFD100|cffffd100rage.lo<90&(!prot_leveling||prot_bloodrage_safe)|r|r
 options.packs.protection.Protection (wowsims.com).lists.action_name	desc	Specify the action to cancel; the result is that the addon will allow the channel to be removed immediately.
 options.packs.protection.Protection (wowsims.com).lists.action_name	name	Action Name
 options.packs.protection.Protection (wowsims.com).lists.action_name	values.battle_shout	|T136000:0|t Spell 6673
@@ -20475,6 +20561,7 @@ options.packs.protection.Protection (wowsims.com).lists.action_name	values.execu
 options.packs.protection.Protection (wowsims.com).lists.action_name	values.exorcism	|T136000:0|t Spell 879
 options.packs.protection.Protection (wowsims.com).lists.action_name	values.hammer_of_wrath	|T136000:0|t Spell 24275
 options.packs.protection.Protection (wowsims.com).lists.action_name	values.hamstring	|T136000:0|t Spell 1715
+options.packs.protection.Protection (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.protection.Protection (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.protection.Protection (wowsims.com).lists.action_name	values.heroic_strike	|T136000:0|t Spell 78
 options.packs.protection.Protection (wowsims.com).lists.action_name	values.holy_shield	|T136000:0|t Spell 20925
@@ -20615,7 +20702,7 @@ options.packs.protection.Protection (wowsims.com).lists.modPooling.extra_amount	
 options.packs.protection.Protection (wowsims.com).lists.modPooling.extra_amount	name	Extra Pooling
 options.packs.protection.Protection (wowsims.com).lists.modPooling.for_next	desc	If checked, the addon will pool resources until the next entry has enough resources to use.
 options.packs.protection.Protection (wowsims.com).lists.modPooling.for_next	name	Pool for Next Entry (Spell 1310994)
-options.packs.protection.Protection (wowsims.com).lists.modPooling.for_next	name	Pool for Next Entry (Spell 871)
+options.packs.protection.Protection (wowsims.com).lists.modPooling.for_next	name	Pool for Next Entry (Spell 2457)
 options.packs.protection.Protection (wowsims.com).lists.modPooling.wait	desc	Specify the time, in seconds, as a number or as an expression that evaluates to a number.\nDefault is |cFFFFD1000.5|r.  An example expression would be |cFFFFD100energy.time_to_max|r.
 options.packs.protection.Protection (wowsims.com).lists.modPooling.wait	name	Pooling Time
 options.packs.protection.Protection (wowsims.com).lists.newActionGroup.createEntry	name	Create New Entry
@@ -20791,6 +20878,7 @@ options.packs.retribution.Retribution (wowsims.com).lists.action	values.demonic_
 options.packs.retribution.Retribution (wowsims.com).lists.action	values.divine_favor	|T136000:0|t Spell 20216
 options.packs.retribution.Retribution (wowsims.com).lists.action	values.exorcism	|T136000:0|t Spell 879
 options.packs.retribution.Retribution (wowsims.com).lists.action	values.hammer_of_wrath	|T136000:0|t Spell 24275
+options.packs.retribution.Retribution (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.retribution.Retribution (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.retribution.Retribution (wowsims.com).lists.action	values.holy_shield	|T136000:0|t Spell 20925
 options.packs.retribution.Retribution (wowsims.com).lists.action	values.holy_shock	|T136000:0|t Spell 1311606
@@ -20841,6 +20929,7 @@ options.packs.retribution.Retribution (wowsims.com).lists.action_name	values.dem
 options.packs.retribution.Retribution (wowsims.com).lists.action_name	values.divine_favor	|T136000:0|t Spell 20216
 options.packs.retribution.Retribution (wowsims.com).lists.action_name	values.exorcism	|T136000:0|t Spell 879
 options.packs.retribution.Retribution (wowsims.com).lists.action_name	values.hammer_of_wrath	|T136000:0|t Spell 24275
+options.packs.retribution.Retribution (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.retribution.Retribution (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.retribution.Retribution (wowsims.com).lists.action_name	values.holy_shield	|T136000:0|t Spell 20925
 options.packs.retribution.Retribution (wowsims.com).lists.action_name	values.holy_shock	|T136000:0|t Spell 1311606
@@ -21090,6 +21179,7 @@ options.packs.shadow.Shadow (wowsims.com).lists.action	values.close_window	|T136
 options.packs.shadow.Shadow (wowsims.com).lists.action	values.dark_sacrifice	|T136000:0|t Spell 1277324
 options.packs.shadow.Shadow (wowsims.com).lists.action	values.demonic_rune	|T0:0|t [Item 12662]
 options.packs.shadow.Shadow (wowsims.com).lists.action	values.devouring_plague	|T136000:0|t Spell 2944
+options.packs.shadow.Shadow (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.shadow.Shadow (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.shadow.Shadow (wowsims.com).lists.action	values.holy_fire	|T136000:0|t Spell 14914
 options.packs.shadow.Shadow (wowsims.com).lists.action	values.holy_nova	|T136000:0|t Spell 15237
@@ -21147,6 +21237,7 @@ options.packs.shadow.Shadow (wowsims.com).lists.action_name	values.close_window	
 options.packs.shadow.Shadow (wowsims.com).lists.action_name	values.dark_sacrifice	|T136000:0|t Spell 1277324
 options.packs.shadow.Shadow (wowsims.com).lists.action_name	values.demonic_rune	|T0:0|t [Item 12662]
 options.packs.shadow.Shadow (wowsims.com).lists.action_name	values.devouring_plague	|T136000:0|t Spell 2944
+options.packs.shadow.Shadow (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.shadow.Shadow (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.shadow.Shadow (wowsims.com).lists.action_name	values.holy_fire	|T136000:0|t Spell 14914
 options.packs.shadow.Shadow (wowsims.com).lists.action_name	values.holy_nova	|T136000:0|t Spell 15237
@@ -21450,6 +21541,7 @@ options.packs.subtlety.Subtlety (wowsims.com).lists.action	values.eviscerate	|T1
 options.packs.subtlety.Subtlety (wowsims.com).lists.action	values.expose_armor	|T136000:0|t Spell 8647
 options.packs.subtlety.Subtlety (wowsims.com).lists.action	values.garrote	|T136000:0|t Spell 703
 options.packs.subtlety.Subtlety (wowsims.com).lists.action	values.ghostly_strike	|T136000:0|t Spell 14278
+options.packs.subtlety.Subtlety (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.subtlety.Subtlety (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.subtlety.Subtlety (wowsims.com).lists.action	values.hemorrhage	|T136000:0|t Spell 16511
 options.packs.subtlety.Subtlety (wowsims.com).lists.action	values.instant_poison	|T0:0|t [Item 6947]
@@ -21520,6 +21612,7 @@ options.packs.subtlety.Subtlety (wowsims.com).lists.action_name	values.eviscerat
 options.packs.subtlety.Subtlety (wowsims.com).lists.action_name	values.expose_armor	|T136000:0|t Spell 8647
 options.packs.subtlety.Subtlety (wowsims.com).lists.action_name	values.garrote	|T136000:0|t Spell 703
 options.packs.subtlety.Subtlety (wowsims.com).lists.action_name	values.ghostly_strike	|T136000:0|t Spell 14278
+options.packs.subtlety.Subtlety (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.subtlety.Subtlety (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.subtlety.Subtlety (wowsims.com).lists.action_name	values.hemorrhage	|T136000:0|t Spell 16511
 options.packs.subtlety.Subtlety (wowsims.com).lists.action_name	values.instant_poison	|T0:0|t [Item 6947]
@@ -21765,6 +21858,7 @@ options.packs.survival.Survival (wowsims.com).lists.action	values.cancel_action	
 options.packs.survival.Survival (wowsims.com).lists.action	values.cancel_buff	|T136243:0|t |cff00ccff[Cancel Buff]|r
 options.packs.survival.Survival (wowsims.com).lists.action	values.close_window	|T136243:0|t |cff00ccff[Close Window]|r
 options.packs.survival.Survival (wowsims.com).lists.action	values.demonic_rune	|T0:0|t [Item 12662]
+options.packs.survival.Survival (wowsims.com).lists.action	values.healing_potion	|T0:0|t [Item 118]
 options.packs.survival.Survival (wowsims.com).lists.action	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.survival.Survival (wowsims.com).lists.action	values.hunters_mark	|T136000:0|t Spell 1130
 options.packs.survival.Survival (wowsims.com).lists.action	values.immolation_trap	|T136000:0|t Spell 13795
@@ -21838,6 +21932,7 @@ options.packs.survival.Survival (wowsims.com).lists.action_name	values.cancel_ac
 options.packs.survival.Survival (wowsims.com).lists.action_name	values.cancel_buff	|T136243:0|t |cff00ccff[Cancel Buff]|r
 options.packs.survival.Survival (wowsims.com).lists.action_name	values.close_window	|T136243:0|t |cff00ccff[Close Window]|r
 options.packs.survival.Survival (wowsims.com).lists.action_name	values.demonic_rune	|T0:0|t [Item 12662]
+options.packs.survival.Survival (wowsims.com).lists.action_name	values.healing_potion	|T0:0|t [Item 118]
 options.packs.survival.Survival (wowsims.com).lists.action_name	values.healthstone	|T538745:0|t |cff00ccff[Healthstone]|r
 options.packs.survival.Survival (wowsims.com).lists.action_name	values.hunters_mark	|T136000:0|t Spell 1130
 options.packs.survival.Survival (wowsims.com).lists.action_name	values.immolation_trap	|T136000:0|t Spell 13795

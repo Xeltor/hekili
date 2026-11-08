@@ -20,6 +20,10 @@ local function warrior(level, rage, options)
     character.form = options.form or 1
     character.power.value = rage
     character.instanceType = options.instance
+    if options.lastStand then
+        character.talents[12975] = 1
+        character.known[#character.known + 1] = 12975
+    end
 
     local H = headless.new({ character = character, pack = ww.PACK })
     assert.are.same({}, H.loadErrors)
@@ -31,6 +35,10 @@ local function warrior(level, rage, options)
     ctl.inRaid = options.raid == true
     ctl.unitHealth.player = options.health or 1000
     ctl.itemCount[5512] = options.healthstone and 1 or 0
+    ctl.items[5512] = { "Minor Healthstone", nil, 538745 }
+    for id, icon in pairs(options.potions or {}) do
+        ctl.itemCount[id], ctl.items[id] = 1, { "Healing Potion", nil, icon }
+    end
     if level == 1 or options.shout then
         ctl.auras.player.HELPFUL[1] = { spellId = 6673, expirationTime = ctl.now + 100, applications = 0 }
         H.Fire("UNIT_AURA", "player")
@@ -104,6 +112,7 @@ describe("the shipped Arms leveling and PvE priority", function()
 
     it("uses one Sunder Armor on a bleed-immune short pull before Mortal Strike is learned", function()
         local H = warrior(15, 35, { target = HARVEST_WATCHER, shout = true, health = SECRET, group = 2 })
+        H.Hekili:FireToggle("defensives", "off")
         assert.are.equal("sunder_armor", read(H)[1])
         H.Fire("UNIT_SPELLCAST_SENT", "player", "Unit", "Cast-sunder", 7386)
         H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-sunder", 7386)
@@ -113,7 +122,7 @@ describe("the shipped Arms leveling and PvE priority", function()
 
     it("backs off Rend for the immune unit without treating an ordinary miss as immunity", function()
         for _, outcome in ipairs({ "IMMUNE", "MISS" }) do
-            local H = warrior(14, 25)
+            local H = warrior(13, 25)
             assert.are.equal("rend", read(H, 1.6)[1])
             H.Fire("UNIT_SPELLCAST_SENT", "player", "Unit", "Cast-1", 6546)
             H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-1", 6546)
@@ -139,6 +148,7 @@ describe("the shipped Arms leveling and PvE priority", function()
 
     it("keeps Bloodrage and the Rend immunity rule when joining an outdoor party at level 15", function()
         local H = warrior(15, 12, { target = HARVEST_WATCHER, health = SECRET })
+        H.Hekili:FireToggle("defensives", "off")
         assert.are.equal("bloodrage", read(H)[1])
         H.ctl.groupMembers = 2
         H.Fire("GROUP_ROSTER_UPDATE")
@@ -161,8 +171,45 @@ describe("the shipped Arms leveling and PvE priority", function()
 
     it("takes Victory Rush at its level-20 unlock only with the kill proc", function()
         assert.are.equal("victory_rush", read(warrior(20, 35, { health = 600, victorious = true }), 1.6)[1])
+        assert.are.equal("victory_rush", read(warrior(20, 35, { health = SECRET, victorious = true }), 1.6)[1])
         assert.is_not_true(read(warrior(20, 35, { health = 600 }), 1.6)[1] == "victory_rush")
         assert.is_not_true(read(warrior(19, 35, { health = 600, victorious = true }), 1.6)[1] == "victory_rush")
+    end)
+
+    it("opens outdoor pulls with Demoralizing Shout once trained, including with hidden health", function()
+        for _, options in ipairs({ { shout = true }, { shout = true, group = 2, health = SECRET } }) do
+            local H = warrior(14, 25, options)
+            assert.are.equal("demoralizing_shout", read(H)[1])
+            H.Fire("UNIT_SPELLCAST_SENT", "player", "Unit", "Cast-demo", 1160)
+            H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-demo", 1160)
+            assert.are.equal("rend", read(H, 1.6)[1])
+            assert.is_true(H.Hekili.State.debuff.demoralizing_shout.up)
+        end
+    end)
+
+    it("prioritizes Demoralizing Shout over damage on an outdoor multi-target pull", function()
+        local H = warrior(30, 45, { shout = true, health = SECRET })
+        H.Hekili:FireToggle("mode", "aoe")
+        assert.are.equal("demoralizing_shout", read(H)[1])
+        assert.is_true(H.Hekili.State.active_enemies >= 2)
+    end)
+
+    it("respects the spell requirements and player controls for Demoralizing Shout", function()
+        for _, options in ipairs({
+            { level = 13 },
+            { rage = 5 },
+            { distance = 20 },
+            { group = 5, instance = "party" },
+            { group = 5, raid = true },
+            { instance = "pvp" },
+        }) do
+            options.shout = true
+            local H = warrior(options.level or 14, options.rage or 25, options)
+            assert.is_not_true(read(H)[1] == "demoralizing_shout")
+        end
+        local H = warrior(14, 25, { shout = true })
+        H.Hekili:FireToggle("defensives", "off")
+        assert.are.equal("rend", read(H)[1])
     end)
 
     it("slows a humanoid as soon as it enters Execute range and skips an active Hamstring", function()
@@ -263,6 +310,20 @@ describe("the shipped Arms leveling and PvE priority", function()
         end
     end)
 
+    it("shows the leveling interrupt at the start of a normal cast, even with hidden cast timing", function()
+        for _, case in ipairs({
+            { level = 12, options = { shield = true }, action = "shield_bash" },
+            { level = 38, options = { form = 3, instance = "party" }, action = "pummel" },
+        }) do
+            local H = warrior(case.level, 35, case.options)
+            H.Fire("UNIT_SPELLCAST_START", "target", SECRET, SECRET, 77)
+            assert.are.equal(case.action, read(H)[1])
+            assert.are.equal(0, H.Hekili.Engine.Output.Primary.recs[1].time)
+            H.Fire("UNIT_SPELLCAST_STOP", "target", SECRET, SECRET, 77)
+            assert.is_not_equal(case.action, read(H)[1])
+        end
+    end)
+
     it("offers a Healthstone at low health in solo and group PvE and respects Defensives", function()
         local H = warrior(60, 35, { health = 250, healthstone = true })
         assert.are.equal("healthstone", read(H, 1.6)[1])
@@ -282,6 +343,111 @@ describe("the shipped Arms leveling and PvE priority", function()
         assert.is_not_true(read(warrior(30, 35, { health = 240, shield = true }), 1.6)[1] == "shield_wall")
     end)
 
+    it("prepares a Primary Shield Wall cue with hidden HP without consuming a recommendation", function()
+        local H = warrior(30, 35, { health = SECRET, shield = true, form = 2 })
+        local out = H.Hekili.Engine.Output.Primary
+        local picks = read(H, 1.6)
+        assert.are.equal(1, out.healthCues.n)
+        assert.are.equal(25, out.healthCues[1].percent)
+        assert.are.equal(H.ns.Facade.C_Spell.GetSpellTexture(871), out.healthCues[1].texture)
+        for _, action in ipairs(picks) do
+            assert.is_not_equal("shield_wall", action)
+        end
+
+        H.ctl.cooldown[871] = { isActive = true, isOnGCD = false }
+        H.Fire("SPELL_UPDATE_COOLDOWN")
+        read(H, 1.6)
+        assert.are.equal(0, out.healthCues.n)
+
+        H = warrior(30, 35, { health = SECRET, shield = true, form = 2 })
+        H.Hekili:FireToggle("defensives", "off")
+        read(H, 1.6)
+        assert.are.equal(0, H.Hekili.Engine.Output.Primary.healthCues.n)
+
+        for _, options in ipairs({ { form = 2 }, { shield = true }, { form = 2, shield = true, instance = "pvp" } }) do
+            options.health = SECRET
+            H = warrior(30, 35, options)
+            read(H, 1.6)
+            assert.are.equal(0, H.Hekili.Engine.Output.Primary.healthCues.n)
+        end
+    end)
+
+    it("uses the strongest usable healing potion for early outdoor PvE and honors the item cooldown", function()
+        local H = warrior(12, 35, { health = SECRET, potions = { [858] = 134830, [929] = 134831, [1710] = 134832 } })
+        local out = H.Hekili.Engine.Output.Primary
+        local picks = read(H, 1.6)
+        assert.are.equal(1, out.healthCues.n)
+        assert.are.same({ action = "healing_potion", percent = 40, texture = 134831 }, out.healthCues[1])
+        assert.is_not_equal("healing_potion", picks[1])
+
+        H.ctl.itemCount[929] = 0
+        H.Fire("BAG_UPDATE_COOLDOWN")
+        read(H, 1.6)
+        assert.are.equal(134830, out.healthCues[1].texture)
+        H.ctl.itemCooldown[858] = { H.ctl.now, 120 }
+        H.Fire("BAG_UPDATE_COOLDOWN")
+        read(H, 1.6)
+        assert.are.equal(0, out.healthCues.n)
+
+        local potions = { [118] = 134829 }
+        assert.are.equal("healing_potion", read(warrior(1, 35, { health = 300, potions = potions }), 1.6)[1])
+        H = warrior(12, 35, { health = SECRET, instance = "party", group = 5, potions = potions })
+        read(H, 1.6)
+        assert.are.equal("healing_potion", H.Hekili.Engine.Output.Primary.healthCues[1].action)
+        for _, context in ipairs({ { level = 12, instance = "pvp" }, { level = 60, instance = "raid" } }) do
+            H = warrior(context.level, 35, { health = SECRET, instance = context.instance, potions = potions })
+            read(H, 1.6)
+            assert.are.equal(0, H.Hekili.Engine.Output.Primary.healthCues.n)
+        end
+    end)
+
+    it("keeps the Last Stand talent, Retaliation pull, and Victory Rush proc requirements with hidden HP", function()
+        local function primaryCue(H)
+            read(H, 1.6)
+            return H.Hekili.Engine.Output.Primary.healthCues[1]
+        end
+        local H = warrior(20, 35, { health = SECRET, lastStand = true })
+        assert.are.equal("last_stand", primaryCue(H).action)
+        H.ctl.cooldown[12975] = { isActive = true, isOnGCD = false }
+        H.Fire("SPELL_UPDATE_COOLDOWN")
+        read(H, 1.6)
+        assert.are.equal(0, H.Hekili.Engine.Output.Primary.healthCues.n)
+
+        H = warrior(20, 35, { health = SECRET })
+        read(H, 1.6)
+        assert.are.equal(0, H.Hekili.Engine.Output.Primary.healthCues.n)
+        H.Hekili:FireToggle("mode", "aoe")
+        assert.are.equal("retaliation", primaryCue(H).action)
+        H.Hekili:FireToggle("cooldowns", "off")
+        read(H, 1.6)
+        assert.are.equal(0, H.Hekili.Engine.Output.Primary.healthCues.n)
+
+        H = warrior(20, 35, { health = SECRET, victorious = true, instance = "party" })
+        assert.are.equal("victory_rush", primaryCue(H).action)
+        H = warrior(20, 35, { health = SECRET, instance = "party" })
+        read(H, 1.6)
+        assert.are.equal(0, H.Hekili.Engine.Output.Primary.healthCues.n)
+    end)
+
+    it("keeps higher priority health cues and covers the remaining HP range with the next eligible action", function()
+        local H = warrior(30, 35, {
+            health = SECRET,
+            healthstone = true,
+            shield = true,
+            form = 2,
+            group = 2,
+            potions = { [929] = 134831 },
+        })
+        read(H, 1.6)
+        local cues = H.Hekili.Engine.Output.Primary.healthCues
+        assert.are.equal(2, cues.n)
+        assert.are.same({ action = "healthstone", percent = 30, texture = 538745 }, cues[1])
+        assert.are.same({ action = "healing_potion", percent = 40, texture = 134831 }, cues[2])
+        H.Hekili:FireToggle("defensives", "off")
+        read(H, 1.6)
+        assert.are.equal(0, H.Hekili.Engine.Output.Primary.healthCues.n)
+    end)
+
     it("requires a melee weapon for Heroic Strike, Rend, Sunder Armor, and Hamstring", function()
         local H = warrior(15, 35, { unarmed = true })
         read(H)
@@ -293,7 +459,7 @@ describe("the shipped Arms leveling and PvE priority", function()
     it("uses a ready Overpower in Battle Stance with a melee weapon", function()
         for _, options in ipairs({ {}, { unarmed = true }, { form = 2 } }) do
             options.target = HARVEST_WATCHER
-            local H = warrior(15, 35, options)
+            local H = warrior(13, 35, options)
             H.ctl.usable[7384] = { true, false }
             H.Fire("SPELL_UPDATE_USABLE")
             assert.are.equal(not options.unarmed and not options.form, read(H)[1] == "overpower")

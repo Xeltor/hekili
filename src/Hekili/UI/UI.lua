@@ -933,6 +933,7 @@ do
         d.blankVersion = ( out or noOutput ).version
         d.style.Clear( d )
         if d.truthOn then ns.UI.Truth.Clear( d ) end
+        ns.UI.Truth.ClearHealthCue( d )
     end
 
     local alphaUpdateEvents = {
@@ -1093,6 +1094,7 @@ do
         d.styleState = d.styleState or {} -- per-display scratch, shared by every style the display has bound
         d.styleFrames = d.styleFrames or {} -- per style name, the frames it built (WoW cannot free frames)
         if d.truthOn then ns.UI.Truth.Clear( d ) end -- what the layer drew on the old buttons goes with them
+        ns.UI.Truth.ClearHealthCue( d )
         -- A raising Build leaves no buttons and OnUpdate draws nothing; the original error still reaches the handler, once.
         local ok, built = xpcall( function() return d.style.Build( d, conf ) end, geterrorhandler() ) -- a rebuild, not a frame: the closure is fine
         d.buildFailed = not ok
@@ -1174,6 +1176,9 @@ do
                 self.timer = pulseDisplay
                 style.Draw( self, conf, out, Status )
                 if self.truthOn then ns.UI.Truth.Draw( self, conf, out ) end
+                if self.id == "Primary" and style == ns.UI.Styles.classic then
+                    ns.UI.Truth.DrawHealthCue( self, conf, out )
+                end
             end
         end
 
@@ -1304,6 +1309,7 @@ do
 
             self.style.Clear( self )
             if self.truthOn then ns.UI.Truth.Clear( self ) end
+            ns.UI.Truth.ClearHealthCue( self )
         end
 
 

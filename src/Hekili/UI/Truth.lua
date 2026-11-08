@@ -7,6 +7,7 @@ local _, ns = ...
 -- Its glow helper use follows Classic's (UI/Styles/Classic.lua): Hekili code by Hekili's authors and maintainers.
 -- Phase 1: lifecycle, overlays and events (Task 3), the real cooldown swipe (Task 4), the usability edge (Task 5) and
 -- the proc mark (Task 6).
+-- The Classic Primary health cue shares this display-only API boundary and runs independently of the Modern toggle.
 
 local Facade = ns.Facade
 local CreateFrame, C_Spell = Facade.CreateFrame, Facade.C_Spell
@@ -265,6 +266,103 @@ function Truth.Clear( d )
     for _, e in ipairs( Truth.EVENTS ) do d:UnregisterEvent( e ) end
     for c = 1, #S.ov do clearOv( S.ov[ c ] ) end
     S.cleared = true
+end
+
+local healthCurves = {}
+
+local function healthCurve( floor, percent )
+    local key = floor * 100 + percent
+    local curve = healthCurves[ key ]
+    if not curve and Enum.LuaCurveType then
+        curve = Display.C_CurveUtil.CreateCurve()
+        if curve then
+            curve:SetType( Enum.LuaCurveType.Step )
+            curve:AddPoint( 0, floor == 0 and 1 or 0 )
+            if floor > 0 then curve:AddPoint( floor / 100 + 0.000001, 1 ) end
+            curve:AddPoint( percent / 100 + 0.000001, 0 ) -- Include the threshold itself.
+            healthCurves[ key ] = curve
+        end
+    end
+    return curve
+end
+
+local function refreshHealthCue( cue )
+    for i = 1, cue.count do
+        local layer = cue.layers[ i ]
+        local ok, alpha = pcall( Display.UnitHealthPercent, "player", false, layer.curve )
+        if ok and ( Facade.issecretvalue( alpha ) or type( alpha ) == "number" ) then
+            layer:SetAlpha( alpha )
+        else
+            layer:SetAlpha( 0 )
+        end
+    end
+end
+
+function Truth.ClearHealthCue( d )
+    local cue = d.healthCue
+    if not cue or not cue.button then return end
+    cue:UnregisterEvent( "UNIT_HEALTH" )
+    cue:Hide()
+    cue.button = nil
+end
+
+function Truth.DrawHealthCue( d, conf, out )
+    local button, cues = d.Buttons[ 1 ], out.healthCues
+    if not button or not cues or cues.n == 0 or out.version == d.blankVersion or Hekili.Pause
+        or ( conf.classic.flash.enabled and conf.classic.flash.suppress ) then
+        Truth.ClearHealthCue( d )
+        return
+    end
+
+    local cue = d.healthCue
+    if not cue then
+        cue = CreateFrame( "Frame", nil, d )
+        cue.layers, cue.count = {}, 0
+        cue:SetScript( "OnEvent", refreshHealthCue )
+        d.healthCue = cue
+    end
+
+    local changed = cue.button ~= button
+    if changed then
+        cue.button = button
+        cue:ClearAllPoints()
+        cue:SetAllPoints( button )
+        cue:SetFrameLevel( button:GetFrameLevel() + 4 )
+        cue:RegisterUnitEvent( "UNIT_HEALTH", "player" )
+    end
+
+    local count, floor = 0, 0
+    for i = 1, cues.n do
+        local choice = cues[ i ]
+        local curve = choice.texture and healthCurve( floor, choice.percent )
+        if curve then
+            count = count + 1
+            floor = choice.percent
+            local layer = cue.layers[ count ]
+            if not layer then
+                layer = CreateFrame( "Frame", nil, cue )
+                layer:SetAllPoints( cue )
+                layer.icon = layer:CreateTexture( nil, "ARTWORK" )
+                layer.icon:SetAllPoints( layer )
+                cue.layers[ count ] = layer
+            end
+            if changed or layer.texture ~= choice.texture or layer.curve ~= curve or count > cue.count then
+                layer.texture, layer.curve = choice.texture, curve
+                layer.icon:SetTexture( choice.texture )
+                layer.icon:SetTexCoord( unpack( button.texCoords ) )
+                layer:Show()
+                changed = true
+            end
+        end
+    end
+    for i = count + 1, cue.count do cue.layers[ i ]:Hide() end
+    cue.count = count
+    if count == 0 then
+        Truth.ClearHealthCue( d )
+    elseif changed then
+        refreshHealthCue( cue )
+        cue:Show()
+    end
 end
 
 ns.UI.Truth = Truth

@@ -1,13 +1,12 @@
 -- Hekili_Shared/Shared/Consumables.lua
 -- The consumables every class shares on Forever (shared-content spec §4.3), through Engine/Schema/Shared.lua into `all`: the
 -- `potion` action and auras core reads by name, the Healthstone from Forever's items (DB2 1.60.1.70338: the five
--- ranks and their Improved Healthstone variants), and the mana and energy consumables as their own actions. No potion
--- is registered for the `potion` verb, nor flask or food: the default priorities leave them out.
--- Neither action has a `now`: the belief sees only spell casts (an item action has no spell ID), and a Healthstone's
--- heal is health, which the belief does not track (spec §4.3).
+-- ranks and their Improved Healthstone variants), and the healing, mana and energy consumables as their own actions.
+-- The generic `potion` verb has no configured buff potion. Healing is simulated only when the APL picks the item.
 
 local C_Item = Hekili.Client.C_Item
 local GetItemCount, IsUsableItem = C_Item.GetItemCount, C_Item.IsUsableItem
+local UnitLevel, PlayerHealthFraction = Hekili.Client.UnitLevel, Hekili.Client.PlayerHealthFraction
 
 local class = Hekili.Class
 local state = Hekili.State -- upvalue: Hekili setfenv's ability functions to `state`, where the name `state` is not a key
@@ -108,7 +107,7 @@ shared:RegisterAbility("healthstone", {
             return false, "requires healthstone in bags"
         elseif not IsUsableItem(item) then
             return false, "healthstone on CD"
-        elseif health.current >= health.max then
+        elseif health.current >= health.max and PlayerHealthFraction() == 1 then
             return false, "must be damaged"
         end
         return true
@@ -116,6 +115,47 @@ shared:RegisterAbility("healthstone", {
 
     handler = function()
         gain(0.25 * health.max, "health")
+    end,
+})
+
+-- The six standard Forever healing potions, strongest first. Their use levels and
+-- average heals are from the Forever item tooltips. They share a two-minute cooldown.
+local HEALING_POTIONS = { 13446, 3928, 1710, 929, 858, 118 }
+local POTION_LEVEL = { [13446] = 45, [3928] = 35, [1710] = 21, [929] = 12, [858] = 3, [118] = 1 }
+local POTION_HEAL = { [13446] = 1400, [3928] = 800, [1710] = 520, [929] = 320, [858] = 160, [118] = 80 }
+
+local function healingPotion()
+    local level
+    for _, item in ipairs(HEALING_POTIONS) do
+        if GetItemCount(item) > 0 then
+            level = level or UnitLevel("player") or 0
+            if level >= POTION_LEVEL[item] and IsUsableItem(item) then
+                return item, true
+            end
+        end
+    end
+    return HEALING_POTIONS[#HEALING_POTIONS], false
+end
+
+shared:RegisterAbility("healing_potion", {
+    name = "Healing Potion", -- l10n: verbatim
+    cast = 0,
+    cooldown = 120,
+    gcd = "off",
+
+    item = healingPotion,
+    items = HEALING_POTIONS,
+    bagItem = true,
+    startsCombat = false,
+    toggle = "defensives",
+
+    usable = function()
+        local _, have = healingPotion()
+        return have, "requires a usable healing potion in bags"
+    end,
+
+    handler = function()
+        gain(POTION_HEAL[healingPotion()], "health")
     end,
 })
 

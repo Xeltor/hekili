@@ -1328,6 +1328,8 @@ display(
     "C_Spell.GetSpellCooldownDuration",
     "a duration object (userdata; its getters secret in combat), 56 B per call [W PR11, PR28]; MayReturnNothing [SP:327-343]; for a widget only (Cooldown:SetCooldownFromDurationObject), UI/Truth.lua"
 )
+display("C_CurveUtil.CreateCurve", "creates a curve for a widget in UI/Truth.lua")
+display("UnitHealthPercent", "secret health evaluated by the client for SetAlpha in UI/Truth.lua")
 
 ----------------------------------------------------------------------------------------------------------------------
 

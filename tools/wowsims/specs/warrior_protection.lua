@@ -20,6 +20,10 @@
 -- The replay does not replay the target's swings (replay limit: rage from damage taken reaches the belief only
 -- through the truth's after-values); Revenge's window (25288, 5302 since e2842f0a78) is a hidden aura in the replay knobs.
 -- Precombat calls no list (fix 16 does not reach this pack). Automatic cooldowns (rule 13): none in the log.
+-- Re-pin 4b0030a44b (0.7 warrior lane): talents 05-05050005-150531120300001351 (presets.ts:32, the owner's #841 build), the APL's
+-- precombat Bloodrage, Battle Shout, Battle Stance, Retaliation and Defensive Stance (Retaliation sits under the Cooldowns
+-- toggle and needs Battle Stance), Heroic Strike at 20 rage, Revenge moved up, Reckless Swings (no talent in this build:
+-- the line is never usable). Revenge's window is read by 25288 again (`auras` below).
 -- Re-pin e2842f0a78 (Task 14): talents from presets.ts:32 ProtectionTalents (35301003002-03-050530120301011351),
 -- hasBsT2 false (DefaultOptions; battle_shout.go:30-36: +30 attack power only), the APL's 5 changed lines (Revenge's
 -- window read as 5302 in Bloodrage's condition, mapped by `auras`; "Battle Shout: No Raid Buff" folds to true solo),
@@ -55,7 +59,7 @@ return {
         race = "RaceOrc",
         class = "ClassWarrior",
         gear = "ui/specs/warrior/protection/gear_sets/prebis.gear.json",
-        talentsString = "35301003002-03-050530120301011351",
+        talentsString = "05-05050005-150531120300001351",
         specKey = "protectionWarrior",
         options = {
             classOptions = {
@@ -74,7 +78,7 @@ return {
     },
     -- player-facing lines of the in-game description (the user's audit rulings, 2026-10-21)
     notes = {
-        "Cooldowns toggle hides: Death Wish, Sweeping Strikes and the racials (Blood Fury, Berserking, Eureka, Elune's Light).",
+        "Cooldowns toggle hides: Retaliation, Death Wish, Sweeping Strikes and the racials (Blood Fury, Berserking, Eureka, Elune's Light).",
         "Classic Primary can show low-health defensives even when the client hides your health. Healing potions use the Defensives toggle.",
         "Leveling opens with Charge and uses Defensive Stance with a shield. Vanguard lets you Charge without swapping stances.",
         "Leveling uses Revenge after a block, dodge or parry and favors Shield Slam once you can afford it. Shield Block and damage-reducing shouts favor melee pulls.",
@@ -93,8 +97,8 @@ return {
         inspirationUptime = 0.25,
     },
     -- the Revenge window (DB2 5302 Defensive State, 5 s), the kit's revenge_usable; wowsims logged and read it under
-    -- Revenge's own ID (25288) before e2842f0a78, and reads 5302 since (Bloodrage's condition, default #16)
-    auras = { [5302] = "revenge_usable" },
+    -- Revenge's own ID (25288) before e2842f0a78, read 5302 at e2842f0a78 and reads 25288 again at 4b0030a44b
+    auras = { [25288] = "revenge_usable" },
     exclusive = { [11556] = true }, -- Demoralizing Shout bids in wowsims's "Demoralizing" category (an exclusive effect)
     map = { [12723] = "sweeping_strikes" }, -- Sweeping Strikes's effect id (wowdb); the kit's ability is 12292
     -- the user's tiers (2026-10-21): Revenge 1 (its reactive window); Heroic Strike and Cleave always 2 (the owner's
@@ -111,6 +115,10 @@ return {
         healthstone = false,
     },
     guard = {
+        -- Keep the leveling Charge and shield rules. The simulator opens with a stance swap for Retaliation.
+        battle_stance = "!prot_leveling",
+        defensive_stance = "!prot_leveling|equipped.shield",
+        retaliation = "!prot_leveling",
         bloodrage = "(!prot_leveling|prot_bloodrage_safe)",
         shield_block = "!prot_leveling",
         shield_slam = baselineDamage,

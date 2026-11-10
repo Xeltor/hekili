@@ -389,7 +389,7 @@ describe("the row feed #slow", function()
                     return e.auras[1282733] ~= nil and e.form == 1, "no window"
                 end,
             },
-        }, { hidden = { [1282733] = true }, procs = {}, cooldowns = { slam = 15 } })
+        }, { hidden = { [1282733] = true }, procs = {} })
     end)
     it("mage_fire (caster)", function()
         local mw = require("Forever.helpers.mage_world")

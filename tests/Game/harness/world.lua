@@ -59,6 +59,13 @@ function M.new(seed)
     -- fn(us, preArmor, attackerLevel, flag) -> the swing-paid power a landed wound on us pays (scenarios' `takenRage`;
     -- nil: none, every world before it)
     W.takenRage = nil
+    -- The edge-anchor stress knobs (cdm-edge-anchor lane; nil in every world but its stress arms, loop.lua): castJitter,
+    -- our casts' events late by up to that many seconds (ev.jitter, the observer's cast-event latency; drawn from jrng);
+    -- durScale(id), the factor the truth applies to aura `id`'s duration (a talent or gear error the pack's model lacks)
+    W.castJitter, W.durScale = nil, nil
+    -- false (the verdict's non-landing arm, loop.lua): a press's own `aura` (W.effects) is not applied when its hit was
+    -- avoided; true, every world before it: applied either way (a press with no hit always applies it)
+    W.auraOnAvoid = true
 
     --- Runs `fn(W)` at time `t` (after everything already queued for `t`).
     function W.at(t, fn)
@@ -91,6 +98,9 @@ function M.new(seed)
             for _, e in ipairs(W.ents) do
                 ev.targets[e] = e.target or false
             end
+        end
+        if W.castJitter and ev.kind == "cast" and ev.src == me and me then
+            ev.jitter = W.jrng.next() * W.castJitter
         end
         if ev.kind == "prepull" and me then -- our form at the start (the client's first form answer)
             ev.form = me.form
@@ -205,12 +215,16 @@ function M.new(seed)
     --- an avoid gives back), outcomes (W.hit's avoid set, a M.OUTCOMES key; a queued strike's too). Checked against the true state in order: a
     --- cast in progress, the GCD, the cooldown, the range, the cost, a strike already queued, `requires`; a refusal
     --- returns false and its reason ("casting", "gcd", "cooldown", "range", "cost", "queued", "requires:<why>") and
-    --- changes nothing. An accept
+    --- changes nothing; a press at most W.QUEUE s before its cooldown's end is held (the client's spell queue) and
+    --- pressed again at that end, its refusal then unreported. An accept
     --- starts the GCD (its length plus `e.gcdLatency`, the client's flag) and the cooldown, then spends, emits the cast
     --- (with `order`, the GCD flag's: 1 after the success, 2 before; `e.gcdOrder` 1, 2 or "mixed", rolled from W.grng)
     --- and runs the effects (a cast time: a "castStart" event with the GCD at the press, all three when the cast
     --- completes; a channel: the cast with its end `chanEnds`, the ticks, a "channelStop" at its end or clip; a queued
     --- strike: queues it, paid at its swing); it returns true.
+    -- shortcut: Forever's spell queue window is unverified (no Forever CVar registry); assumed the retail default's
+    -- reach down to the driver's ready window (loop.REACT); measure it in game after launch
+    W.QUEUE = 0.05
     function W.press(e, key, p)
         local t = W.t
         local offGcd = p.offGcd or p.gcd == 0
@@ -219,7 +233,7 @@ function M.new(seed)
             return false, "casting"
         elseif not offGcd and t < e.gcdUntil - 1e-9 then -- the loop's ticks are a float sum: a 1.0 s GCD ends on one
             return false, "gcd"
-        elseif t < (e.cdUntil[key] or 0) then
+        elseif t < (e.cdUntil[key] or 0) - W.QUEUE then
             return false, "cooldown"
         elseif p.range and W.distance and (W.distance < p.range[1] or W.distance > p.range[2]) then
             return false, "range"
@@ -235,6 +249,13 @@ function M.new(seed)
             if not ok then
                 return false, "requires:" .. tostring(why)
             end
+        end
+        local cdEnd = e.cdUntil[key]
+        if cdEnd and t < cdEnd then -- the client's spell queue holds it: the whole press starts at the end
+            W.at(cdEnd, function()
+                W.press(e, key, p)
+            end)
+            return true
         end
         if clip then
             W.stopChannel(e)
@@ -370,7 +391,7 @@ function M.new(seed)
             W.emit({ kind = "gain", src = e, pt = p.drain, cost = W.res(e, p.drain) })
         end
         local a = p.aura
-        if a then
+        if a and (W.auraOnAvoid or not (e.lastHit and e.lastHit.act ~= "WOUND")) then
             W.applyAura(e, a.id, a.duration)
             local tk = a.tick
             -- shortcut: a refresh keeps the first application's ticks running beside its own (no content refreshes a
@@ -588,6 +609,9 @@ function M.new(seed)
     --- Puts aura `id` on `dst` (ours, from the player) for `duration` s, adding `stacks` [1] up to `maxStacks` [1];
     --- it expires on the world clock unless refreshed. Truth events "aura" { dst, aura, stacks (0: gone), expires }.
     function W.applyAura(dst, id, duration, stacks, maxStacks)
+        if W.durScale then
+            duration = duration * W.durScale(id)
+        end
         local a = dst.auras[id] or { stacks = 0 }
         a.stacks = math.min(maxStacks or 1, a.stacks + (stacks or 1))
         a.expires, a.duration = W.t + duration, duration

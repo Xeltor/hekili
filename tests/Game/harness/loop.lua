@@ -10,10 +10,48 @@ local headless = require("Game.harness.headless")
 local observer = require("Game.harness.observer")
 local scenarios = require("Game.harness.scenarios")
 local drive = require("Game.harness.drive")
+local fake = require("Game.State.helpers.fake_api")
 local flicker = require("Game.harness.flicker")
 local timing = require("Game.harness.timing")
+local rng = require("Game.harness.rng")
+local edgestats = require("Game.harness.edgestats")
 
 local M = {}
+M.VERDICT_ARM = {} -- the verdict arms (ab.VERDICT; a -novd twin by its base name): their layout line adds `wrong`
+for _, name in ipairs(ab.VERDICT) do
+    M.VERDICT_ARM[name] = true
+end
+
+--- The truth check of one tick (`vt` = { VI, seen }): each key whose verdict count rose since the last tick is a close
+--- folded in this tick's drain; one of an aura the world still has on that unit (us, or our target now) counts in
+--- run.verdictsWrong[u]. The belief's per-fight reset (a count falling) resets the tally with it.
+function M.verdictTruth(vt, run, us, t)
+    local VI = vt.VI
+    for k, n in pairs(VI.presenceVerdict) do
+        local was = vt.seen[k] or 0
+        if n < was then
+            run.verdictsWrong[1], run.verdictsWrong[2] = 0, 0
+        elseif n > was then
+            local u = k > VI.AURA_UNIT and 2 or 1
+            if M.auraUp(u == 1 and us or us.target, VI.def.auraIds[k - (u - 1) * VI.AURA_UNIT], t) then
+                run.verdictsWrong[u] = run.verdictsWrong[u] + n - was
+            end
+        end
+        vt.seen[k] = n
+    end
+end
+
+--- Whether `e` (an entity, or nil) carries one of `ids` (a belief aura's IDs) at world time `t` (expires 0: none); a
+--- dead mob carries none (the world leaves its auras to expire).
+function M.auraUp(e, ids, t)
+    for _, id in ipairs((e and not e.dead) and ids or {}) do
+        local a = e.auras[id]
+        if a and (a.stacks or 1) > 0 and (a.expires == 0 or a.expires > t) then
+            return true
+        end
+    end
+    return false
+end
 
 -- The CPU calibration (pack_gate.CPU_RATIO): a fixed pure-Lua workload, hash reads through a metatable chain over a
 -- preallocated working set (the engine's state reads, in miniature), timed once per counted run in the same process,
@@ -64,11 +102,9 @@ M.PULL = 3 -- the world starts this long before the pull, the target selected (p
 M.GAP = 30 -- out of combat between two fights on one boot (consecutive pulls)
 -- The display-side hold experiment (flicker.hold) on our instance's shown queue: o.hold, else this switch (off)
 M.HOLD = os.getenv("HEKILI_LOOP_HOLD") == "1"
--- The shipped steady icons (Engine/Output.lua, the spec's experimental steadyIcons) on our instance: o.steady, else
--- this switch (off; the flicker design study's hold3). o.steady is true (hold 1) or the updates to hold (1 to 3);
--- HEKILI_LOOP_STEADY=N sets the switch to N.
-M.STEADY = tonumber(os.getenv("HEKILI_LOOP_STEADY")) -- 0 is off
-    or os.getenv("HEKILI_LOOP_HOLD") == "3"
+-- The shipped steady icons (Engine/Output.lua, always on for players) on our instance: o.steady, else this switch
+-- (1, what players see, so the gates and make accuracy measure it; the oracle shadow stays plain). o.steady is true (hold 1) or the updates to hold (1 to 3); HEKILI_LOOP_STEADY=N sets the switch to N, 0 off.
+M.STEADY = tonumber(os.getenv("HEKILI_LOOP_STEADY")) or os.getenv("HEKILI_LOOP_HOLD") == "3" or 1
 -- The oracle's facade rows answered by the client (§4's override): the target's health, and the debuff row Hekili's
 -- aura scan reads (raw since VirtualState counted a modelled stack on top of a plain read that arrived before the
 -- cast's drain, fixed in Auras.lua's I.AuraModel and pinned in loop_warrior_spec). The buff row stays VirtualState's: our
@@ -121,6 +157,8 @@ local function feed(H, obs, t, base, sink)
                 a3 = base + a3
             end
             drive.op(sink, ctl, ev, a1, a2, a3, a4, s.a5[i])
+        elseif s.secretAmount and ev == "UNIT_COMBAT" then -- the secret arm (observer.secretAmount): as live
+            H.Fire(ev, s.a1[i], s.a2[i], s.a3[i], fake.SECRET, s.a5[i])
         else
             H.Fire(ev, s.a1[i], s.a2[i], s.a3[i], s.a4[i], s.a5[i])
         end
@@ -231,7 +269,7 @@ end
 --- first one's first icon pressed, each press resolved from the run's truth instance (the oracle when it is driven,
 --- else the first driver). `o`: duration (combat seconds [180]), mobHealth, hz [5], react [REACT], reaction
 --- (seconds an icon shows ready before the press [0]), others (archetypes on our target), trace (the facade's trace
---- each tick), on(run, steps, t) (a per-tick hook). Returns the run { W, us, ticks, presses, pressedBy (by key), refused (by reason),
+--- each tick), on(run, steps, t) (a per-tick hook), arm (an ab.ARMS name over HEKILI_AB's: a spec's own). Returns the run { W, us, ticks, presses, pressedBy (by key), refused (by reason),
 --- attempts, episodes, errors, raises, misses (unexpected run names), secrets (Facade.secrets), selfCheck (ticks where
 --- the oracle's belief missed the truth, by field), combat, full, idle, up (by debuff key: in-combat ticks), ours and
 --- theirs (first icons by in-combat tick), pressed and shadowPress (the driver's press, the shadow's would-be press, by
@@ -271,6 +309,10 @@ function M.run(L, seed, o, drivers)
         end
         wo.res = res
     end
+    local armName = o.arm or ab.arm()
+    local arm = ab.ARMS[armName] -- o.arm: a spec's own arm (its shapes; the floors stay the env's)
+    local aw = arm.world or {} -- a verdict arm's world knobs that shape the world's build (ab.lua; not a replay's)
+    wo.mobAvoid, wo.swapEvery, wo.extraMobs = aw.mobAvoid, aw.swapEvery, aw.extraMobs
     local W = R and R.world(wo, seed) or scenarios.world(wo, seed)
     local us = W.ents[1]
     local run = {
@@ -318,21 +360,48 @@ function M.run(L, seed, o, drivers)
     local res = L.power.token and L.power.token:lower()
     local pollEv, tickEv, nextEv = {}, {}, 1
     local steps = {}
-    local arm = ab.ARMS[ab.arm()]
+    if arm.world then -- an edge-anchor stress arm's world knobs (ab.lua), each from its own draw
+        W.auraOnAvoid = arm.world.auraOnAvoid ~= false
+        local jit, dur, drng, scale = arm.world.castJitter, arm.world.durError, rng.new(seed + 86028121), {}
+        W.castJitter, W.jrng = jit, rng.new(seed + 49979687)
+        W.lateLight = arm.world.lateLight -- a share of the viewer's lights late (observer.lua), its own draw
+        W.lrng = W.lateLight and rng.new(seed + 61031) or nil
+        W.durScale = dur
+                and function(id) -- per aura and fight, the truth's duration 1 - dur or 1 + dur of the pack's
+                    scale[id] = scale[id] or (drng.next() < 0.5 and 1 - dur or 1 + dur)
+                    return scale[id]
+                end
+            or nil
+    end
     for i, d in ipairs(drivers) do
-        local id = d.H.Hekili.State.spec.id
-        local sp = id and d.H.Hekili.DB.profile.specs[id]
-        if sp then
-            sp.steadyIcons = steady and not d.plain -- the oracle shadow never holds
-            sp.steadyHold = type(steady) == "number" and steady or 1
-        end
+        local out = d.H.ns.Output -- the steady icons (no player setting): this instance's measurement arm
+        out.steady = (steady and not d.plain) and true or false -- the oracle shadow never holds
+        out.hold = type(steady) == "number" and steady or 1
         -- Movement ON in a replay (wowsims's rotation moves: tested as it runs), OFF in a loop and ws.live
         d.H.Hekili.DB.profile.toggles.movement.value = (R ~= nil)
-        -- the A/B arm's experimental toggles (providers decision 82), applied out of combat as the option does
-        local perf = d.H.Hekili.DB.profile.performance
-        perf.damageMeter, perf.cooldownViewer = arm.outcomes == "meter", arm.viewer
-        d.H.Hekili:ProvidersChanged()
+        -- the A/B arm's providers, applied out of combat (no option since cdm-default Task 6): the viewer through the
+        -- debug session switch Hekili.cdmOff, the driver's only (the plain oracle shadow stays the viewer-off
+        -- reference); the meter, which no build selects any more, written into the build's providers (harness only)
         local ctl = d.H.ctl -- a fresh world: the client's answers about it start fresh too
+        local cdm = arm.viewer and not d.plain
+        local first = cdm and ctl.viewer.layout == nil -- this call builds the instance's frames (scenarios.viewerLayout)
+        local layout = cdm and M.viewerLayout(d.H, arm.layout, seed, wo) or nil
+        d.H.Hekili.cdmOff = not cdm
+        d.H.Hekili:ProvidersChanged()
+        local VI = d.H.ns.VirtualStateInternal
+        if VI and VI.def then -- (loop_spec's fake drivers have no belief)
+            VI.def.providers.outcomes = arm.outcomes
+        end
+        if VI then -- a *-novd verdict arm's driver: the belief's verdict off (verdict spec §6; harness only)
+            VI.verdictOff = (cdm and arm.novd) or nil
+        end
+        -- a verdict arm's full-update reshuffle at each target change (fake_api), its counter seeded by the fight
+        ctl.viewer.reshuffle, ctl.viewer.reshuffleN = (cdm and arm.reshuffle) or false, seed
+        ctl.viewer.reshuffleDark = (cdm and arm.reshuffleDark) or false -- a re-pointed frame dark for one poll (fake_api)
+        if first and layout then -- the viewer is on from boot (no option), so its map predates the instance's first
+            -- layout: the client's data-loaded event, once (as at login; later fights reuse the frames and the map)
+            d.H.Fire("COOLDOWN_VIEWER_DATA_LOADED")
+        end
         ctl.combat, ctl.form, ctl.stealthed = false, L.form, false
         local fresh = {
             ctl.dead,
@@ -365,7 +434,7 @@ function M.run(L, seed, o, drivers)
         }, {
             __index = observer.DEFAULTS,
         })
-        k.meter, k.viewer = arm.outcomes == "meter", arm.viewer -- the arm's shapes (none in the default arm)
+        k.meter, k.viewer = arm.outcomes == "meter", cdm -- the arm's shapes (none in the default arm)
         ab.observe(k) -- and its other knobs (the meter arm's taken lead, as the gates' streams)
         for key, v in pairs(content.OBSERVE or {}) do -- the content's client knobs (other powers' reads, forms)
             k[key] = v
@@ -403,6 +472,9 @@ function M.run(L, seed, o, drivers)
             q = { name = {}, time = {}, cost = {} },
             plain = d.plain,
             hold = (hold and not d.plain) and flicker.newHold() or nil,
+            layout = layout, -- the viewer arm's fight events and the next one's index (M.viewerLayout)
+            li = 1,
+            edge = (arm.world or arm.edge) and layout and VI and VI.presence and edgestats.start(d.H, VI) or nil, -- a stress arm's record
         }
     end
     local errors0 = {}
@@ -412,6 +484,27 @@ function M.run(L, seed, o, drivers)
     local stopAt = W.stopAt
     local t = 0
     local lastRefused, readySince = false, {}
+    -- a verdict arm's recast (ab.lua world.recast): an uptime aura's press whose hit was avoided is pressed again at
+    -- the next free GCD, whatever the driver shows (the recast inside the verdict's drain, review M1)
+    local recastOf, recastKey = nil, nil
+    if aw.recast then
+        recastOf = {}
+        for _, u in ipairs(L.uptime) do
+            recastOf[u[1]] = true
+        end
+    end
+    run.recasts = 0
+    -- a verdict arm's truth check: each close the driver's belief folds, against the world's aura at that tick
+    -- (run.verdictsWrong[u]: closes of an aura truly up; the layout line's `wrong p/t`)
+    run.verdictsWrong = { 0, 0 }
+    local vt = nil
+    local VI1 = steps[1].H.ns.VirtualStateInternal
+    if steps[1].layout and VI1 and VI1.presenceVerdict and M.VERDICT_ARM[(armName:gsub("%-novd$", ""))] then
+        vt = { VI = VI1, seen = {} }
+        for k, n in pairs(VI1.presenceVerdict) do
+            vt.seen[k] = n
+        end
+    end
     local traced = {}
     run.cal = not o.trace and M.calibrate() or nil
     run.bytes, run.sampled = 0, 0
@@ -448,6 +541,18 @@ function M.run(L, seed, o, drivers)
             end
         end
         for i, st in ipairs(steps) do
+            local lay = st.layout
+            if lay then -- a viewer arm (outside the sampled bytes): the last poll's lagged lights land now (one poll
+                -- late, I-B), then the layout's own events up to this poll
+                if st.H.ctl.viewer.pending[1] then
+                    st.H.ctl.ViewerFlush()
+                end
+                while lay[st.li] and lay[st.li][1] <= tc do
+                    local e = lay[st.li]
+                    drive.op(st.sink, st.H.ctl, e[2], e[3], e[4], e[5], e[6])
+                    st.li = st.li + 1
+                end
+            end
             feed(st.H, st.obs, tc, st.base, st.sink)
             st.H.Hekili.ActiveDebug = o.trace or false
             local counted = i == 1 and not o.trace -- the traced fight's debug pass is not runtime cost
@@ -472,6 +577,9 @@ function M.run(L, seed, o, drivers)
                 run.raises = run.raises + 1
             end
             queue(st.H, st.q, 3, res)
+            if st.edge then
+                edgestats.tick(st.H, st.H.ns.VirtualStateInternal, st.base + tc, tick, tc >= wo.pull)
+            end
             if st.hold then
                 flicker.hold(st.hold, st.q, o.react or M.REACT, pollEv.cast)
             end
@@ -505,6 +613,17 @@ function M.run(L, seed, o, drivers)
         end
         t = t + tick
         step(t)
+        if vt then -- this tick's closes against the world as the drain saw it: before this tick's press
+            if not vt.pulled and t >= wo.pull then -- the belief zeroed its counts at this tick's PLAYER_REGEN_DISABLED:
+                -- a close in the same drain would leave the count where the last fight left it
+                vt.pulled = true
+                for k in pairs(vt.seen) do
+                    vt.seen[k] = 0
+                end
+                run.verdictsWrong[1], run.verdictsWrong[2] = 0, 0
+            end
+            M.verdictTruth(vt, run, us, t)
+        end
         if R then
             lastGcd, tickPolled = firstGcd(steps[1].H), true
         end
@@ -556,11 +675,26 @@ function M.run(L, seed, o, drivers)
                 readySince[k] = nil
             end
         end
-        if shown and t - readySince[key] >= (o.reaction or 0) - 1e-9 then -- one attempt a tick
+        local press, forced = shown and t - readySince[key] >= (o.reaction or 0) - 1e-9, false -- one attempt a tick
+        if recastKey and gcdFree then -- one attempt, pressed or refused
+            key, press, forced, recastKey = recastKey, true, true, nil
+        end
+        if press then
             truth.Hekili.State.reset("Primary", true) -- Update leaves its last prediction (a predicted buff, query_time ahead of now)
             local p = content.resolve(key, truth)
             local pre = W.res(us, p.pt)
+            local n0 = #W.truth
             local ok, why = W.press(us, key, p)
+            if ok and forced then
+                run.recasts = run.recasts + 1
+            elseif ok and recastOf and recastOf[key] then
+                for i = n0 + 1, #W.truth do
+                    local ev = W.truth[i]
+                    if ev.kind == "spell" and ev.src == us and ev.act ~= "WOUND" then
+                        recastKey = key
+                    end
+                end
+            end
             if inCombat then
                 run.attempts = run.attempts + 1
                 if steps[2] and M.readyShort(pre, p, us, t) then
@@ -655,6 +789,9 @@ function M.run(L, seed, o, drivers)
         if not headless.cycle(st.H, st.H.ctl.now) then
             run.raises = run.raises + 1
         end
+        if vt and i == 1 then -- a close in the gap's drain (after a kill) is checked too
+            M.verdictTruth(vt, run, us, tEnd)
+        end
         if traced[i] then
             st.H.Hekili.Debug, st.H.Hekili.SaveDebugSnapshot = traced[i][1], traced[i][2]
         end
@@ -663,6 +800,51 @@ function M.run(L, seed, o, drivers)
         end
         for name, n in pairs(st.H.ns.Facade.secrets) do
             run.secrets[name] = (run.secrets[name] or 0) + n
+        end
+        if st.layout then -- a viewer arm: the layout's coverage at the fight's end, a line in the arm's .ab file
+            local VI = st.H.ns.VirtualStateInternal
+            local ctl, Q, P = st.H.ctl, VI.PRESENCE.viewer, VI.presence
+            local who = tostring(ctl.class) .. " " .. tostring(st.H.Hekili.State.spec.key)
+            -- the fight's CDM audit (Sources/Auras.lua's snapshot counters, per fight) as player/target sums (Task 9)
+            local function sum(c)
+                local p, tg = 0, 0
+                for k, n in pairs(c or {}) do
+                    if k > VI.AURA_UNIT then
+                        tg = tg + n
+                    else
+                        p = p + n
+                    end
+                end
+                return p .. "/" .. tg
+            end
+            local line = (
+                "%s seed %d covered %d overflow %d slots %d lag %s facts %s beliefDisagree %s itemDisagree %s"
+                .. " lost %s exitFix %s ambiguous %d"
+            ):format(
+                who,
+                seed,
+                Q.covered,
+                Q.overflow,
+                Q.nSlots,
+                tostring(ctl.viewer.lag),
+                sum(VI.presenceFacts),
+                sum(VI.presenceDisagree),
+                sum(P and P.disagree),
+                sum(P and P.lost),
+                sum(VI.auraExitFix),
+                Q.ambiguous
+            )
+            if VI.presenceVerdict or VI.presenceStrike then -- the verdict's per-fight counters, once the belief has them
+                line = line .. " verdicts " .. sum(VI.presenceVerdict) .. " strikes " .. sum(VI.presenceStrike)
+            end
+            if vt and i == 1 then -- verdict arms only: the closes of an aura truly up (M.verdictTruth)
+                line = line .. " wrong " .. run.verdictsWrong[1] .. "/" .. run.verdictsWrong[2]
+            end
+            ab.check(Q.overflow == 0, "layout", line)
+            local el = st.edge and edgestats.line(st.H, VI)
+            if el then
+                ab.check(true, "edge", who .. " seed " .. seed .. " " .. el)
+            end
         end
     end
     run.damage = 0 -- our true damage dealt (white wounds count at their land)
@@ -674,6 +856,9 @@ function M.run(L, seed, o, drivers)
     run.errors, run.misses = 0, {}
     for i, st in ipairs(steps) do
         run.errors = run.errors + #st.H.errors - errors0[i]
+        local VI = st.H.ns.VirtualStateInternal -- the arm's Outcomes provider ran (the meter arm's write above is not
+        -- reverted by a rebuild: buildDef gives "default")
+        assert(not (VI and VI.outcomes) or VI.outcomes.name == arm.outcomes, "outcomes provider is not the arm's")
         for _, name in ipairs(headless.unexpected(st.H, "run")) do
             run.misses[#run.misses + 1] = name
         end
@@ -688,6 +873,28 @@ function M.run(L, seed, o, drivers)
         L.carry[drivers[1].H] = c
     end
     return run
+end
+
+--- A viewer arm's Cooldown Manager layout on driver H for the fight of `seed` (scenarios.viewerLayout over the
+--- belief's def; the fixture by the character's class from tools/data/cooldownviewer): its layout events. A class with
+--- no fixture runs viewer-fixture with no item and says so once in the arm's .ab file.
+function M.viewerLayout(H, preset, seed, wo)
+    local ctl, I = H.ctl, H.ns.VirtualStateInternal
+    local who = tostring(ctl.class) .. " " .. tostring(H.Hekili.State.spec.key)
+    local fixture
+    if preset == "fixture" then
+        local f = loadfile("tools/data/cooldownviewer/" .. tostring(ctl.class):upper() .. ".lua")
+        fixture = f and f()
+    end
+    local o = { pull = wo.pull, duration = wo.duration, fixture = fixture }
+    local ev = scenarios.viewerLayout(ctl, I.def, preset, seed, o)
+    if ev == nil and not ctl.viewer.skipNoted then
+        ctl.viewer.skipNoted = true
+        local line = who .. " skipped: no tools/data/cooldownviewer fixture"
+        print("\n" .. preset .. " layout: " .. line) -- once a boot, in the log too (review m3)
+        ab.check(true, "layout " .. preset, line)
+    end
+    return ev
 end
 
 --- Fight `seed`: run A (ours drives, the oracle shadows) and run B (the oracle drives a fresh world of the same seed).

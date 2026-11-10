@@ -221,66 +221,64 @@ spec:RegisterResource(Enum.PowerType.Mana, nil, nil, {
 })
 
 -- Talents: { talent tree (1 Holy, 2 Protection, 3 Retribution: the dominant tree picks the spec), rank 1's spell, max
--- rank }: the DB2's 44 nodes (`wowdb talents PALADIN`; the tree is the DB2's Talent.TabID), keys the snake_case names
--- (Holy Power is holy_power_talent; a nameless node talent_<spell>), and the Forever-only ones by spell at tree 0
--- until the live export places them.
+-- rank }: Forever's tree as wowsims/forever's ui/sim/talents/trees/paladin.json lists it (tools/wowsims/talents.lua
+-- writes it; tests/Forever/talent_trees_spec.lua checks it and the spec detection over it). A key is Classic's where the
+-- talent exists there (code reads `talent.<key>.rank`), else the snake_case of the node's name.
 spec:RegisterTalents({
     -- Holy (tree 1)
-    divine_strength = { 1, 20262, 5 },
-    divine_intellect = { 1, 20257, 5 },
     spiritual_focus = { 1, 20205, 5 },
-    improved_seals = { 1, 20224, 5 },
+    divine_strength = { 1, 20262, 5 },
     healing_light = { 1, 20237, 3 },
-    consecration = { 1, 26573, 1 },
-    talent_20234 = { 1, 20234, 2 },
-    unyielding_faith = { 1, 9453, 2 },
-    illumination = { 1, 20210, 5 },
-    improved_blessing_of_wisdom = { 1, 20244, 2 },
+    reverence = { 1, 1310899, 2 },
+    improved_seals = { 1, 20224, 5 },
+    purifying_power = { 1, 429144, 2 },
     divine_favor = { 1, 20216, 1 },
-    lasting_judgement = { 1, 20359, 3 },
+    illumination = { 1, 20210, 5 },
+    holy_conduit = { 1, 1237268, 2 },
+    divine_precision = { 1, 1310904, 2 },
+    infusion_of_light = { 1, 426065, 2 },
+    oath_of_light = { 1, 1328548, 1 },
+    consecrated_ground = { 1, 1310905, 2 },
+    holy_shock = { 1, 1311606, 1 },
+    boundless_light = { 1, 1328550, 2 },
     holy_power_talent = { 1, 5923, 5 },
-    holy_shock = { 1, 20473, 1 },
+    lights_vigil = { 1, 1310911, 1 },
     -- Protection (tree 2)
-    improved_devotion_aura = { 2, 20138, 5 },
+    divine_intellect = { 2, 20257, 5 },
     redoubt = { 2, 20127, 5 },
     precision = { 2, 20189, 3 },
     guardians_favor = { 2, 20174, 2 },
-    toughness = { 2, 20143, 5 },
-    blessing_of_kings = { 2, 20217, 1 },
-    improved_righteous_fury = { 2, 20468, 3 },
-    shield_specialization = { 2, 20148, 3 },
-    anticipation = { 2, 20096, 5 },
+    sacred_duty = { 2, 1224697, 2 },
+    templars_bulwark = { 2, 1311015, 1 },
     improved_hammer_of_justice = { 2, 20487, 3 },
-    improved_concentration_aura = { 2, 20254, 3 },
-    talent_20911 = { 2, 20911, 1 },
-    reckoning = { 2, 20177, 5 },
-    one_handed_weapon_specialization = { 2, 20196, 5 },
+    shield_specialization = { 2, 20150, 2 },
+    toughness = { 2, 20143, 5 },
+    swift_judgement = { 2, 1310994, 1 },
+    improved_righteous_fury = { 2, 20468, 3 },
+    anticipation = { 2, 20096, 5 },
+    stoicism = { 2, 1328546, 2 },
     holy_shield = { 2, 20925, 1 },
+    reckoning = { 2, 20177, 5 },
+    iron_creed = { 2, 1311034, 3 },
     shieldsworn = { 2, 1328544, 1 }, -- hotfix 113554
     -- Retribution (tree 3)
-    improved_blessing_of_might = { 3, 20042, 5 },
+    deflection = { 3, 20060, 5 },
     benediction = { 3, 20101, 5 },
     improved_judgement = { 3, 25956, 2 },
-    improved_seal_of_the_crusader = { 3, 20335, 3 },
-    deflection = { 3, 20060, 5 },
+    conviction = { 3, 20117, 3 },
+    sanctified_judgement = { 3, 1311074, 3 },
     vindication = { 3, 9452, 3 },
-    conviction = { 3, 20117, 5 },
+    unyielding_faith = { 3, 9453, 2 },
     seal_of_command = { 3, 20375, 1 },
     pursuit_of_justice = { 3, 26022, 2 },
     eye_for_an_eye = { 3, 9799, 2 },
-    improved_retribution_aura = { 3, 20091, 2 },
+    sacred_arbiter = { 3, 1311087, 1 },
     two_handed_weapon_specialization = { 3, 20111, 3 },
-    sanctity_aura = { 3, 20218, 1 },
-    vengeance = { 3, 20049, 5 },
+    turn_evil = { 3, 1328370, 2 },
     repentance = { 3, 20066, 1 },
+    vengeance = { 3, 20049, 3 },
     champion_of_the_light = { 3, 1311084, 5 }, -- hotfix 113554 (replaces Instrument of Law)
-    -- Forever-only (tree unknown until the export)
-    twist_of_light = { 0, 1310735, 1 },
-    swift_judgement = { 0, 1310994, 1 },
-    holy_conduit = { 0, 1237268, 2 },
-    sanctified_judgement = { 0, 1311074, 3 },
-    -- Consecrated Ground (wowsims talents_holy.go: Holy, 2 points; DB2 spell only): the talent, not the target's mark
-    consecrated_ground = { 0, 1310905, 2 },
+    twist_of_light = { 3, 1310735, 1 },
 })
 
 spec:RegisterAuras({
@@ -601,13 +599,13 @@ spec:RegisterWindow("move2", {
 -- (tests/Forever/paladin_spec.lua checks they match).
 spec:RegisterPack(
     "Retribution (wowsims.com)",
-    20261106000,
-    [[Hekili:LR16VTTnq8)wYx8K3sLLvttZcMcqgkkwg6ckM6NLmTeTnBKenePItam0F77OEz9I02XPjEPFjXMNUh)Uhu3DWoJD(MJTpIJDU10W88XJno3WWWXM)4sSJ9sK3DO5WhIqHWF)xmpMmnHtOrPt0wrxXiHmDpA4qXJ(yaf5le30esa)MiNP9kz2sSNJ9xV(lx)PBU9Y4nI0XEbX3hNZhM5PsFxMoHVaNoP4SrZOX47XXPt8XZqjb80jx)1VKobooDstPKqgjSa2OLOaKpjAunlyeAzaBuHi0HVO)DgnA4PGYIrrSaam(WNPcLtyPtq((0OFb(WD4hz6Pt(eIJUShJs7FU5BGqwW5lzxoA0CcFrYubog16rhcYeSDS5fNzoZa9XloZxhCTX0zKaW)J8ewjtFzmgyEkIB5HccCZp2nGW4NkcuwIdUhmwxeJrMhH9DrjXO0)Ud))M1O(LGhIX3W93t8NJdXr8krirXH07XUCQBioaJpLmZs7K8NrFbn4rxg4PVdRFxeDv06(OqICbh9C8WkfbwyL2pnHHDPZM5o3Z3ACM4drKOfOiF3yS4JS)WQ6eikJ9FNH(4bTFORSGthoqJtNppaRlmAH4hOTIe5txLDWy9KLRR9Dt47dxRaoQqZ6tAj5bN0w01bSaMeooK1fWCsigm)JxBFbkmehdgT7QyeFXPZOEjSIGvPAA(i6ICnlJ1DIsDIKMhXXSAYidRhwMzPjxL6xwZ4rPbGnuNsmg5)OcE6LLctsRhI(Wvfcb9oJHdpID4mmkqKdbxKfcEWSIduGaa8vW9rcsbK5l464i00aS)GcQT4RI8jttMnRdvWkQGtjTyHyX0eweMXkdmn4U5tagoiKmAG7sR)W0a5HPRGaHkKxRetThqttgixRjd99EE3u6ItejmNO0iwl1gYvf2BbTRlKXHgrUYA8WFEZZB4q2RyU6e)1k5x4VvMA3kZPn5bkOEizrBduBXQBMRvYCwwM17)jmjtstGarSxoaYEP2)VmF8d0ypcl8O207)YCtHnRUeq6lS21lpY1rR3TvkM83jTdfVqNP6HOh(vZntxi(F3PpSQnNv2bzQptdTPuhe6sMeXQ0SGXaD9ItyiFC8gr2h1gIvemQMuXsXignIMr4h4BQU7wp3oPQZTiDhWPPLO(17DTLwp8aLPmY15UHFZ9b)Mhk(L(cVUwuVSSR(IYRjAEFrNoZhR)bOD9iK(spUBafAgX4W6tVNjIR4QoTC(Q5WQFTCZ7ORvyFmcah77XXmG1wBesCLntS4OgPcWb3MTDQIiMZF6yxl7uqSyHio2vgPJTxmm6Cmb5yFqvUksDD4G93YWuP19QgDdMAXMJDw0vaBq)V)zYXS)L0BXXC2U4yE6LTDDpnyUHtcWCzjDF5sLcQ6zQzRhy1ZtS8rD9toIkwozFaQM5RshQAEzJxPDlv5vPU57bUzDApLd7v64HTQKT2yx3o7u1AN6E72HM72NQZQf9v3DS7R47vazYlV3Y29EUwV3lnMRIvTWvZRJ)GK7wQP3g(QdlL)GU2Pdt)OhP9LoIbHJZLeo68k1AvDVE7oCpwE4tC7HcFYhLw5U1fijBPHVGBn8h3AdFZL)VBnqEXtpDylRE7qxO4R0gf36kf)HTtX3(zGY7r)2FxEdfhV4szZX1NixGWXgV5Gy1itc4jFmKN4cm3(nyMzkw(m4pFB1CxZLnZNoR6hwHQbov6AfN3D5P9nJ1ojojBpn3ALruHT33EvB45vT91cTwV(q9yShJtHVXVxhhTYdKefv4yBVd8Uo1E2sUtrGeLWxqH4WFHVJeqsNO95IForzKD(V]]
+    20261107001,
+    [[Hekili:LR16VjUrq8)wYxOM2CgWxZD9IQJuQov1uDn6u99zBwSxWBX2lY76qIeY)T3z9l8RDbc5bxUVKa745XV5X6zgH9e7VzB5H4y7BngB8Hjtg)XXJNyBXFyf22AfYDjAb8Hiui83)fZJjZs4eAu6uT101msit3Lgou8OpeqrEcXnlHeWVjYEwVsMTc7AB91R)Y1F(MBVmERiTT8jEE4C(Wmxv67Y0PCFC60IZgnNgJVdhNo1dphLeWtNE9x)s6u440PnLsczKWcyJwHcqEKOr1SGrOvbSrfIqh(Ioi8GHNdklgfXcaW4bFMkuoHLof55rJ(j4dlXpW0tN(zehDzpgL2)CZ3aH4Z5RyxoA0cc3pzMahJA9Odbzc2o(c0NC9mqgEZD1bxBmDoja8)ixHvY0xfJbMNH4MUOGaN8JDcim(5IaLP4G7aJ1bXyKfryphusmk9V7W)VyoQFj4Iy8TC)FjElWH4iELiKO4q6Dyho1jehGXNtMBQDw(ZO7tdEWHbE6Ly9Lr01rB6JcjYbC0lWdRueyHvA)8eg2HoFUZcxpZjzIperI8rrEoXyXhz)Uz1jqug79UX6tg0(HUYeoD4anoDXIaSUWOfIFG2AsKhDD2bt0twTP23nGVpCJc4OcnBoRLKhCwBrxhWcys44qwxaZjHyW8pDTDFuyiogmAN1XiU)5ZPUjSIGvPAA(i6ICnZXB6eL6ejnoHJz1KrgwpUmZstUk1VSMXLsdaBOoLymY7bf80llfMKwpe9GRkec6DJho8e2HZWOaroeCrwi4bZkoqbcaWxd3hjifqw4Z1XrOzbyVbfuBXxf5ZMLmFEhQGvubNsAXcXIPjSimJvgyAWDZNamCqiz0a3Lw)HPbYdtxbbcviVwjMApGMMmqUrtg6798UP0fNisyotPrSrQnKRkSRpTRlKXHgrUYCYWFCZZB4qoOyU6e)nk5x4VvMA3kZPn5bkOEmzr7cu7WQBMRvYCwwM57)bmjtstGarSBoaYEP23xMp(EASlHfEsB69FzUHWMvxci9fw77Lh56O172kft(7K2JIxOZu9q09)SX2Ple)V70hM1MZk7Gm1NPH2uQdcDjtIywAwWyGoUXjmKhoERi7JAdXkcgvtQyQyeJgrZi898Tv3DRNBNu15wKUd400su)69U2sRhEGYug56C)WVXHGFJJf)sFHxxlQxw2xFr51enVVOtN5t0VaAxpcPVYL7eqHMrgFC9P3ZeXvCvNwoF1Cy1VwU5D01kSpfbGT1D4ygWARncjUYMjwCuJub4GBZ2ovreZ(pSTQLDkiwSqeBRkJ02YnggDoMGSToQkxfPU2CW(BzyQ06bvJUftTyZ2kl6kGnO)3)e5yo8s6D4y(19XX84lB76EAWCdNeG5Ys6(YLkfu1ZuZwpYQNhz5J66NCevSCY(aunZxLou18YwVs7wQYRsDY3dCZ60EkhoO0XJBvj7SXUUD2PQ1o192Thn3DivNvl6RU7y)xX3RaYKxEVJT79uTEVxAmxfRAHRMxhFHK7wQP3g(QJlL)OU2Pdtp3J0(shXGWXhKeo68k1AvDVE7o8awE4JC7HcFYhLw5UZfijBPHVGBn85BTHV5Y)3Vgi)ThF6Wow92XUqXxPnkUZvk(STtX3(zGY7r)2pjVHItxCPS546tKlq4KXV5Gy1itc4jFmKh5cm39nygzkw(m4pDB1CFZLnYNoR6hwHQbov6AfN3D5P9nJ1EjojBpn3ALruHT33EvB45vT91cTwV(q9ySNItHV1VxhhTYdKefv4yBVd8Uo1E2sUDrGeLW9PqC4VWljbK0PA)zXpNOmY2))d]]
 )
 spec:RegisterPack(
     "Protection (wowsims.com)",
-    20261105007,
-    [[Hekili:LwvxVTjpu4Fl9MTeToijRFPOXf9vvtRvDvvIETbd(qWno2i)XYIuf)2NnHqbcK3j1BioNpEEoNJF4aAo6fuibRb0tlMT4Q5ZND5SzxJc17kauyboDnEL9ahVX(8zPqdPAQGxgpzRyRIUr5Lk2m1f5oMatCOLyOm99CuYGaRkGuls3(4T3D)tllAqefMtjeyFAGk9eSTSmwNdLX128Zes43GSmMazydtxgF7ZpwgBnxg3bed13rVYVaZWek3)D69XfmLFnaE2)49QsWNEULkjMRy2gHyplCutvLXycrW)S9WAyNYRm(oSgVCGsAYVU)fli5ADHAPV)kQo3K46c)EHo1IPTYHf3CXISz4RV5cINDSkfzuMD0JRQsLxHeSjNG1bs6QCnimQOmJC350SGZsmzzEDT7zkkF4OK)sGVe0sAIX5icBK4wa0ZZOqOamlsKfzVmIsLgfMaY3HziVTHk4vdzfSb46ZnkWgzw0QusW8MaCmSLMPJgjqhvtoBFWEnX4TMl2YFlviye7HwoKWgmLR(EWKbCsSnQdOVoB60ovqDxunJZePgvWIkI70Jvt6d47EMJ5KOAdF6SJJ1u0HLu7pq6(kOT9CbBxKkxKUEFZQXmxX2eoqIwjfgoXd44egqEJavKnqe9OSgAkWih6RJDBfcRH2MH)iKPu1MYhqHwrRY9IB33VzuLwvTuz)7s2JpvTKPUcr)hkS11OZzT4gf2CDG0wu)htQNgbfMkPAqsXOWrvhFi5HR4(wVIRfNFyHrRwRLhuy1TKBUy5)IE8FiJ2cjxCxosCVlS6oV()fyNwH548QtZPtX1TzU(KjuPbDHDZiHDqtICYMWMfudj8oKs3DKThbJSdDibzdy92xoaChVrDiru)R92Bopg0r2VwnfSZbSrNlSP9tynLrTFi6h1FNPYn6Vd]]
+    20261110000,
+    [[Hekili:LwvxVPnmu0Fl9LnqRlPWw7wrJh6u106uxvLsF2jg7BiEyIJ8hJHuv(TVRdqAsiHnPYdG5(X5CVxFYnKjKNirCQfipm9IPxnzYKlWpKi72cGevqzROlXd50143pQvwGzfQ8YKrBuBmI1MaMA9yFKBLkk3J2cNqAVlNSOxGnfadr6M7V527EywrnIKOmbNd7sdmStW2SYeBguMS3wyQsd)g0LjCiL6K2YKBE8(Ye0CzslqCIqp9MWcQKYf5HVqFiTqAc3dqa(NaeA54ZrQ00CJeBeoEw5PwyktOCUk)T4HvWwtqzYTulDwpL0OFE3tiizwBHzwy4sHnZTW3fHDcDmIjw5WL0Rz8P0P8uwaow1QuHeh90QQ0euObm5fu7CTyzMfuotCQtV9Cr68Zw4stdABpWvu(JJs(DZd1Gvlw48oIPonTbaD8miegGkJvPX4Lrmt7muoOFbM(82eQ5gRkhWUFDTjeZF54lH1qU9CNbW0tJxY4ZN0meZgrQnEGa98p6SDbhuhtWQC1M8NzkLKJhA4qdRPICZxMpQhNCS79a9(lgpUvfSV1Qg8PkMZmFAfXTA8QX)b89FNrZ5X7n8MZoowxrlwy4paBxf00EMsUn2KPyR21SwQ0xS1Hd84LALlNha50fsG)mhQiRNi6q5EOfGKFOVo2nQowbnnd)rPzcdEpsIqLSX)0C7h6LcJ1uTPz3dy4XhQ28SVcjF9GchxqCqwqSikDcQXDThH6KQVZ8j9H)ZK6iKirmTWcAbLenOe6vPH8f3h7uCn48vREA0An8qIQUk9dtK)lhyS3uT5J7QbI7f1x751)wfEAzONZpDAo9YY2nZNpzcvcvFyxpqyheUeVSjQE12PuNT3U2CemW23(uX1G1ztBpWD8U4(u4DV2BUZ9yqhyZC1uaNduNntHP9DyLqkWxH9T9VHQYn5Vd]]
 )
 
 -- The hand-built lists the wowsims.com priorities replaced: a saved choice of one falls back to its spec's default.

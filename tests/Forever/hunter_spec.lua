@@ -86,12 +86,12 @@ describe("Forever Hunter", function()
         assert.are.equal("cooldowns", w.abilities.bestial_wrath.toggle)
     end)
 
-    it("places every DB2 talent in a tree and keeps the Forever-only ones at tree 0", function()
+    it("places every talent in a tree (Forever's)", function()
         local n = { [0] = 0, 0, 0, 0 }
         for _, t in pairs(w.talents) do
             n[t[1]] = n[t[1]] + 1
         end
-        assert.are.same({ [0] = 2, 16, 14, 16 }, n)
+        assert.are.same({ [0] = 0, 16, 16, 18 }, n) -- Forever's tree (trees/hunter.json)
     end)
 
     it("declares mana as wowsims's logs measure it per spec, and the two casting shares", function()
@@ -108,7 +108,7 @@ describe("Forever Hunter", function()
         assert.are.same({ aura = "rapid_recuperation", share = 0.5 }, r.models.rapid_recuperation)
         assert.are.same(1242688, w.auras.resourcefulness.id)
         assert.are.same(1242512, w.auras.rapid_recuperation.id)
-        assert.are.same({ 0, 1223987, 2 }, w.talents.rapid_recuperation)
+        assert.are.same({ 2, 1223987, 2 }, w.talents.rapid_recuperation)
     end)
 
     it("anchors the ranged clock on Auto Shot, off the GCD", function()
@@ -355,15 +355,6 @@ describe("Forever Hunter priorities", function()
             packs[p.name] = p
         end
     end)
-
-    local function line(pack, list, action, criteria)
-        for i, e in ipairs(packs[pack].lists[list]) do
-            if e.action == action and (criteria == nil or e.criteria == criteria) then
-                return i, e
-            end
-        end
-        error(pack .. ": no " .. action .. " if " .. tostring(criteria))
-    end
 
     it("keeps the class file's generated blocks in step with APLs/ and retires the hand-built lists", function()
         local mp = assert(loadfile("tools/make_pack.lua"))("lib")
@@ -899,7 +890,11 @@ describe("Forever Hunter Movement (R8)", function()
             local l = lines("raptor_strike")
             assert.are.equal(2, #l)
             assert.matches(",if=target%.within5$", l[1])
-            assert.matches(",if=toggle%.movement&%(.+&target%.outside5%)&window%.weave%.up%)$", l[2])
+            -- 0.7 re-pin: the weave's move arm is gated on the Auto Shot since the last swing, not the old weave window
+            assert.matches(
+                ",if=toggle%.movement&ranged_remains>=ranged_speed%-%(mainhand_speed%-mainhand_remains%)$",
+                l[2]
+            )
             local far, near = world("raptor_strike", 11), world("raptor_strike", 3)
             assert.are.same({ "aspect_of_the_hawk", "raptor_strike" }, { far(false), near(false) })
         end

@@ -707,61 +707,64 @@ spec:RegisterAbilities({
 })
 
 -- Talents: { talent tree (1 Beast Mastery, 2 Marksmanship, 3 Survival: the dominant tree picks the spec), rank 1's
--- spell, max rank }: the DB2's 46 nodes (`wowdb talents HUNTER`; the tree is the DB2's Talent.TabID), keys the
--- snake_case names (a nameless node talent_<spell>). The costs read Efficiency and Resourcefulness.
+-- spell, max rank }: Forever's tree as wowsims/forever's ui/sim/talents/trees/hunter.json lists it (tools/wowsims/talents.lua
+-- writes it; tests/Forever/talent_trees_spec.lua checks it and the spec detection over it). A key is Classic's where the
+-- talent exists there (code reads `talent.<key>.rank`), else the snake_case of the node's name. The costs read Efficiency
+-- and Resourcefulness.
 spec:RegisterTalents({
     -- Beast Mastery (tree 1)
     deadly_aspects = { 1, 19552, 5 },
     endurance_training = { 1, 19583, 5 },
-    improved_eyes_of_the_beast = { 1, 19557, 2 },
-    improved_aspect_of_the_monkey = { 1, 19549, 5 },
-    thick_hide = { 1, 19609, 3 },
+    focused_fire = { 1, 1223755, 2 },
+    improved_aspect_of_the_monkey = { 1, 19549, 3 },
     improved_revive_pet = { 1, 24443, 2 },
     pathfinding = { 1, 19559, 2 },
     bestial_swiftness = { 1, 19596, 1 },
     unleashed_fury = { 1, 19616, 5 },
     improved_mend_pet = { 1, 19572, 2 },
     ferocity = { 1, 19598, 5 },
+    summon_hawk = { 1, 1293241, 1 },
     spirit_bond = { 1, 19578, 2 },
     intimidation = { 1, 19577, 1 },
     bestial_discipline = { 1, 19590, 2 },
     frenzy = { 1, 19621, 5 },
     bestial_wrath = { 1, 19574, 1 },
     -- Marksmanship (tree 2)
-    improved_concussive_shot = { 2, 19407, 5 },
-    efficiency = { 2, 19416, 5 },
-    improved_hunters_mark = { 2, 19421, 5 },
-    lethal_attacks = { 2, 19426, 5 },
-    aimed_shot = { 2, 19434, 1 },
-    improved_arcane_shot = { 2, 19454, 5 },
     hawk_eye = { 2, 19498, 3 },
-    improved_serpent_sting = { 2, 19464, 5 },
+    improved_concussive_shot = { 2, 19407, 5 },
+    lethal_attacks = { 2, 19426, 5 },
+    improved_stings = { 2, 1310661, 3 },
+    efficiency = { 2, 19416, 5 },
+    careful_aim = { 2, 1223984, 5 },
+    rapid_killing = { 2, 415405, 2 },
+    improved_arcane_shot = { 2, 19454, 5 },
+    lone_wolf = { 2, 415370, 1 },
+    trueshot_aura = { 2, 1299346, 1 },
     mortal_shots = { 2, 19485, 5 },
-    scatter_shot = { 2, 19503, 1 },
+    rapid_recuperation = { 2, 1223987, 2 }, -- wowsims's Marksmanship (spell_data_auto_gen.go:401); the DB2 names the spell only
     barrage = { 2, 19461, 3 },
-    talent_19491 = { 2, 19491, 3 },
+    scatter_shot = { 2, 19503, 1 },
     ranged_weapon_specialization = { 2, 19507, 5 },
-    trueshot_aura = { 2, 19506, 1 },
+    sniper_shot = { 2, 1310687, 1 },
     -- Survival (tree 3)
-    improved_tracking = { 3, 24293, 3 },
-    humanoid_slaying = { 3, 19151, 3 },
+    improved_tracking = { 3, 24293, 5 },
     deflection = { 3, 19295, 5 },
     entrapment = { 3, 19184, 5 },
     savage_strikes = { 3, 19159, 2 },
-    improved_wing_clip = { 3, 19228, 5 },
-    clever_traps = { 3, 19239, 2 },
     survivalist = { 3, 19255, 5 },
+    improved_wing_clip = { 3, 19228, 3 },
+    clever_traps = { 3, 19239, 2 },
+    surefooted = { 3, 19290, 3 },
     deterrence = { 3, 19263, 1 },
     survival_tactics = { 3, 19376, 2 },
-    surefooted = { 3, 19290, 3 },
-    improved_feign_death = { 3, 19286, 2 },
-    killer_instinct = { 3, 19370, 3 },
+    predators_edge = { 3, 1310627, 5 },
     counterattack = { 3, 19306, 1 },
+    resourcefulness = { 3, 440529, 2 },
+    expose_prey = { 3, 1310532, 2 },
+    survivalists_discipline = { 3, 1310496, 2 },
+    strider_kick = { 3, 1317257, 1 },
     lightning_reflexes = { 3, 19168, 5 },
-    talent_19386 = { 3, 19386, 1 },
-    -- Forever-only (tree 0: not in the DB2's Talent table; wowsims's tree places it in Survival, 2 ranks)
-    resourcefulness = { 0, 440529, 2 },
-    rapid_recuperation = { 0, 1223987, 2 }, -- wowsims's Marksmanship (spell_data_auto_gen.go:401); the DB2 names the spell only
+    lacerating_strikes = { 3, 1310533, 1 },
 })
 
 -- Beast Mastery's HHA (re-pin ruling R15; wowsims bm_weave's default_hawks APL at e2842f0a78: a sequence of Summon
@@ -784,18 +787,18 @@ spec:RegisterWindow("hha", {
 -- wowsims recipe (`make wowsims-packs`, tools/wowsims/specs/hunter_*.lua).
 spec:RegisterPack(
     "Beast Mastery (wowsims.com)",
-    20261106001,
-    [[Hekili:LR1xVTTnq8pl9fpjehzzN)0SG6cSITH2H1IHPUxLmTeTfNLefePIBak8N9DuYwMIYsM2oRpOKhsSf59J3D8(FK7y3V66eG4y3VmXEY9JhBFVT9yxh(ZPyxNuK)k0s4djOy43FaJy8nZ(m8BC2ZBMzSMUMrIzw(0ytXUFoIIceiopNeX)uI78dcolf7768X)5lF93(7hNla1lUetxNqsqaUKqmZ)iN5JBMXdXBMT9zJwqZWpHZ2mlaVaLhb09l)1FUzg84nZAauozKGryJcZtGhnkiLnsW3bWFI9wJrpHTauJmhcNsgkHfbssa8zQ4ujSnZqbb0KFc(Wk8ZmRnZ(veh94b4gJp)PVcGeY5PShhnAjHhMpxiaJu2QjGjWJ4jpC7Kf2O3(WTbwGEnJUGeb6FKpNqtywPzyG45i(0swNbQVSvdjlM(Ma888flSKFUvE6M)ObPxnDesi(Cp6cpqj6fIwxcrbanxtgMPzOusG3csgEyoddBBH3s)GPJfaWrzlXClAoNrcW3nGtIXVF6DvedN88ikfipp75dqE52hOatnYXmobf5TodXdplecWX0eIVxwEYHKGJdqm6FPzG6nb5Lsfp8SqP213cQFoB6eDUgbsPP4eV1KKa66HcVZPfgScIbt1L4aVmCmIKWE)2Vc3N4GRTTgpq84qus1oExDcKpe4AMdIjJNrwPQNkzx5B81GDnjPMakOmaN5TI4VQ7Dc3hlPu4eMt44U3kjoMc(IW38a)Y0U3mOIw65hrk2MXBkxWsMVSwLqxN8DJwxAGpLgb6zL12PGhBDNP5Go0b4m4UIdArGvKvB7ULRTb4AwXI5HAGLdcFsLZAPbGvyiYkb)nUL0YYuHY8rjypwiLFiQKwURZogIOsQaPJn2z0b6YLryRy6t4yqOhy0WCS6bLMSc3ObgVXO6UtIB3E1DGfijEfM1MdmQBE)UP2FxXdzQrnFK6FR(Enl(5SdP1dK9ZjoCptS1m5rptQpLmE9mr)mIG3Z0aNscKEMORK1RNjD6wHNQyB0qWV22eyov(9Qy03mMyD7WysIXTdpaDxzi2I9qBRj3zELTP51YcG5vJfSmiKhLUbk6fBRg1EBoyRLBz3D5PMDwS6RbHUzD3VgK6d1cXRb5(hw3qVguMNsBoVmDmC5fFFX1X(Yus4lA1vVmfQODo)ooUkhQ9THV1PPr3YUopHZyWMvMnAeHXzfdLTCeMWh)sXqAXjO5r4a3p46iPLflUDUGUo7niDD8ZG45zeKRtlZJZLdNSMaV3uTgWhEaxcGVrxGLnI1e7B1eBzZBnH(onHUHHVM4FVc(7jQLj(T)iLxW1PWlrC)bG(2wbvjaxTcd1ysG7pCPHnwAH6v(peOiSOGhEOvEO(CXQ48XDAfVVKub4)Sc472OC(NoosaHX2TarTQFocgQEH7WqPwIJGIQl3ouQYmltFxzOV4u0n5nvV2MMNhBuLsxoY7u6AxCoQEWv0SpSP8H3XqolGt1RDhCsbN7cUoM(zb8QoTv2ovjjApABjcQEONy87)hA58K758IB6uoTZy1WfNzENEHIPqHOgI78Zx2B0jtuJzF2557pQeDleuV6t6p6f1KQ6K4QFi96KVDIAE9ljbz)qTj0kTvfsl517pcUA9sDiK9LX2Cw9DmPTk)ATXJER6tOnuRITYFP1EO61Qd1Ay3Po6QDWETcPT20)X3zBFwnFJULfRxZKsDLDJUvxEsDLvGS2Zz8eBVPaCDN14j2Nqb26oRXZPG7IdO9CX6w5QwLaEtBPYU8salGV1Cd6ulvbcTfoTfgu7jT7kG3P61E19aJtF3rvFeRnVjuNnlV5a0R4AM6RpBnaB)vSTGDf3P58qAMRZhXRirKnZm(9TVHWfl7(Fp]]
+    20261110000,
+    [[Hekili:LVvutUPnq4Fl3lU2tVIp7lxAYn13mntBNKon30PK(kyzq2Oya5bjo3BMm8BVRW2yHSbldI8c5bhojTF7NwjT7YQbNjoFXX2hXXopp9UPVDYKj3b)ZXM)6gSJ9gK3A0k4Hyue87hWigpB(NHFXjVMnF4w6wgjIz5rJgjg9RHuKVaXfPKq(NIDwCwWzBWEo2F8FF(l)()84cbOUr7W0XoG47J3jiM5DbD(y2CEaoB((2gVKMGFbNKn3hVeLgcY9R)9FLnhAoB(jaLsglicBCqAm00y)nSXcE7d)xK7wm6fSfGA4OBbTKGIzHWmXhEMk0kHLnh57tJ)b4H14xzwzZ)neh94zyZWp)PVaGeW5BypoE8kcpiDHycmwzOJamboIFa9Ep)POP(l9Sa7AcDjjeS)ipoHgZS2KGbHxG4Z2rDgy(swFlz5SB8XlsxU0sUDR0nz)5jI(JZgJetFUlDPlyeDdqB3broaN2NmmZsqBi(Uljj4BtzyyylDx55pBIaaokzfMBrt5mIp(HbCse(PzpuimOzCyAmM5gswfWpda7eyGcqYaSiKsb9NM8AZehSn4K1K4vnuCgNGcD3MG4bncbFCenM45Ma2Hgbqe6R0ey5ng5UHkASrOuA7ZsQxkB2uD2gbIc7a4ady8eYA1PWoKK3mSf2YtIlPBHK(4e31eV11psWuTIsbnSGWX1pusuefoMc)LlCKDt9dElS(76fsYh2WB21HLmVSwht3g)THv21apkn0hEOCFj4iejM90eRhgnAqn2aCYgCmhSIITIsMTdlaLgaScOSy(UsGLct(4IZXWSdiMvqaYkg)FClPULLcL4HIXUSak)Csj1DD6ocC2skaPMbwRJd6QvHyRi6l4iyspyOWigGI9D3Bp)LIgaVty)FsSdFWWBgwS2jX29lDNPdsSl4nFfE0GHdZF4i(ZU7BLB5PzhgYonw(Vkp2rJgPkDPrFhmGrTWBypW6C1U47B2eDIB17Sj6fmUNzw0mdJEMv5AsBQNzAAqUi9ml01KQupZ0OK)xpB2Fnj1EZqvIvMxkwgvlNjZGS1uPTPRzwc0GCJmmbAuIigLdnlQVrPqlcXAuE0(4zgLoTi4Hr5r9EQnQQ0TerkCODmO2sm1zA60su1zQ6CL4QZu23TsK1zZaLZDftHJvdBpnpPOvo2VaHuGbRC7fHegNLFTj7UKb4XNZVgfCmAri235do2sB2fDUVY9o2hZuWX2lb2RKqqo2vuXChoOznbwodGsqF(IalG(EnH(yKDnb(n6cCreBnb(bTbwksSMy)wnXwocRMq)ZAc9jro1e)3PG)rHQOo(hvPCho25oLf75aqFFLGwUC2fsnP2D9hdeiaFYDkOFyKYUiQrNciupYvyfLDfFbmupDDadfFSxaf1dshqPW5PS815eT1ErpLBQNfpDVXLUIbPfh5rkTUl0J6rZczo6Nvw51C5e5WPEA8aCsEZRdUAU1IC4vprwS3Pi5OQDpVdb1ZCxPd)o4fKV(3qULVI8LFhz5aztuDO04iz9dBxEWFv3KnmeDpYIPBIyxi3JEKft3mmVCsv9iJMU5oFXSf7r2mDFTa9sdUhz4uZTsNC46jMhDYnDQjtMSNyxfMTRmj5EKLXSj)36AUwQErDvA2TML5LCQBsO1mCRBsD0mCRZssZm0RRshYmSRtt8Wmu0aH4Bpr0jy69DyW02pdeeSDHTmdhQUISM9IoAuXxVxnerXYEvfF1SCgOWBQQ(Vvx8wZZHQkGCDf)18SOQsq)9V4XMFUvvHXRWxH23nhaox8zXS)tzX5mxa3bvv(coo1TQ6nJWp9k3kynt9tIPeGv)zZKtxGWOuEanXX(J41Kqs28H)X(V6N8UD())]]
 )
 spec:RegisterPack(
     "Marksmanship (wowsims.com)",
-    20261105002,
-    [[Hekili:LN12UnUnq0VL9fxjehDRX7MgSoaTOTy3IUbfvPVkjArkBwljkqsfVbOqF7DOTJTe11KfyFijpeOioZzgoCUCyuGBW9b(yKKeCNNJ37DDDw444f4lFSGe4xGI3IwdpKJYGF)feFRidLl2qlQIm2X2jOzcRywMPs2htziScVvL0u5NZdw1j0IcsCG)N(N7U)3(7BYQbzG)gkgtoOhrepObVPksUHufD8D2jmo5bcVkctsqLPYQOF(V(ZQi41vrAWusTv(GWEtzUKWTXfcBLlJf2zzH7iOhiwaMPMZbBWb1sHnbgEMPSjvufHWyw(papSL8OWQk6xrs0nD4lgF5Z3dGSrkle3yBVMk3uUs5(2AIAcycUmX76R8sCqF46RWwqiLZsOPqGhflPSCHvbNakVcjxEW1fHQ43CAYY3HjRktsSQ)ERYIQ)OLQxS0gP2(Yqwsiecd3G2DaI9a0ET6WSKJkO4WekNmVuqaXscxhJx6QaqI4RjslwPuqXKfNucS4QugduRK)yhQrZi3UCXSbuhtYy504qEzEx2DCaYq)lJdbLCuybt9Yxeknc6jS4sXsVPe8bvzfK8WD0CmB3CvX0Y9PzkLHeS1eCiNKHO5IBp(NWPabFPJL7m1R3GYpjXhBQqDJahosyBkKC6w940b3T(50oiBKM3ydQ0et4HBPXBhws48ynJbwyfvsgwuAwgdQGG)keQMkgwyieTomoLUxmJ3DybR6(L12C2U8)ZO3LMfZyPqCwBTNcWUwlmnNnqmGWHZkjefbxPEy7Pt5gcahZAzmxxhmepgLtcfByY2vinKmd6zrNIGt9qMTEDkXkJ9ajd82zggg6zsx6y(XLoZmAMqDrg6RgEwxnpJMBC18o07cdLioZDS8wyEHJP5L1tAnVW1e(52LJR3mTCFhRwLFMZou0yDOTCzH5G5RVf20Tl9ElSR7QlYBH993TgIVfcMdYEPza4zZEPF1Ni7L(b45WEPFuEbd26hm9bBd48nhSPlyGpq)vaYQDlHuQqk2F5Kd85HhVB)Lvi5OvPeCWVe4xlkOw8in5a)ZhZb(XCOljNIGR00mtjqcwCIaEobObGDZyub8porGRNAmrOVAIq3kPzI4Vqd)Zk1dn3ZMS(cb(7ZWuXya033lOFJ0FpB8AmSpK9eE4sR7BeO8Hp0Rp0Km4jp3DWmSZKWuGFTg4pjy9oUdysaHFQheAmUFyiCD6bdTHNJGIEz2tOCAuuD9hAK038mP2(MEfB7SZXONx7SPUK1o1v2rVa(jDQ13R)ElxVhc9c1thONAiogc9xk(QDA9lQ4ZvV9YOvFVAdFQOHEJUX7K8QoC0xR5HAk(QoG03KMV)93FnhM90hg)mzR2m2ShXPY)De6QDG8ujcpkF1oWEQCHNgH1omG(G2PWjqdMPWjWtFC8yCc6Wv7BqvpCcAHGu9rbo(pYVRBe1nt8XPW3XDHoT7A9bbAay)F0GGJomQuUHXd8)ezlnLwfz87h)Mh7xo4))d]]
+    20261110000,
+    [[Hekili:9MvxVTQrq0Fl5LuB1ui2T(2CJKVsTQT6ER6nQQK(k41SdWwdSODxIvKQ43EN1FcRn4TetYdry2zoZHDyoZSc)j(p77rjkW)PP3p9dtMm5E8pFp1RfGVxbjCfjgViNKH))ReXkzgjxMWkQwmAnFTKLjDc5zJ12(AkNq14TSKLQ(sU)YZcTSac99(8F)0Z)6F9ywni99syukS1pqg2zaFSAHkbQwS7EUrCb8ciQwqHiszQQAXp9N)r1c82vlmGPK5Q5G0nPmxbcxAH0vtzQ0nllynqEbCqmthFhgdb6wk(qqXR56yYKvliukp)BWlwbVkDQw8lef5XZWLrF9lpJGKOufYhDDJzQKYLA67Ay6yetKYWmYhdPtjtPrHo4wQGhXsXnEsOIXZLofcaDEjrnFl1Lb69V7yrZVHcllJICQFFNYIQF)ex)25Ue9JVkGhfGBHbjK1BHydaNUwDyMlifmAqeta3vkb0SOG4q68jAauermOC4LkjJcZo4egriTmhKbPS4e1zCKLbFA(SB7aGLPCog3sXR9ZDCpbeRy5X9YDkKXZzHbc8POxaKr(hUatk5KGcU(M9cLgj9iEyPC(uBs(ORyEtHmqQeSvMpcBrQEkCn(IklVrS1EsbrWkw4QUTe3QI5CmclzkOBtzzzCS4c)vawOv0TXRXSxqykBJzJUz7co15LZQC(68)DuRlDBiNNsXlAUMaYiSC5NM4mB84B7ypaefqUc3f1VivBBBFcOHbygWiz(qDWiIqsoeit4QtlEAyzgkNXSXWolo5XXPGtg)fidP4T3mcv2IbAW(h(57(nw)d0VBK(MjK89)(Wp3z(4X9O8EiPGvcedkbSrIzijGLIudjf()iZnK8OhfQdjDml1hYyziwmKHY2EkgC4TXGo7jnyr60EAdwOoxpXblyVB9uVYpb(E4qZsKqgNTiLjvYnhPz7PaWlFAZrCGCYYuG6)Z(E1ErvV4UHR99o2903luG5zbJGheQ54y(kmIwcy9UInG88t6PH(7Te6JD7Se4FWwGp0fZsGNzjW17ozj0FWsOpPRJL4)Jg4F0PwgO(yiRVGV3gXo97fiOp0kOnNR8Gxt68nYJcSAW)Ob47nSELxhHeryY9TardfUlGHzf1EmmKUUakMLr7r5GMuD)7sB6nloDk3mRdp9vJlnQFTKtDlRL21XXSSCVp1MyODXOh2aHzb4He6HbbUec2wN1Ia51EeJnCYS2S3ASdc7mlY7Pm9GWntnIEQ0peCBQP4tVBwmiSZ2bfSRFZGqrtntB0LU6eXgLTPMkOxsz7QZsnjAtETfTXbHdM6ZThV3w061aftn1(V4efxxoRPGPu)LNi56ZbtbDBMO56ZI2gV79FIOR9ZMs)Xm29bio3zYo)C1xEG8ZCASdcnsZpKrdaB)JDSHUiHjLQeUW37ZWkwkRAXOFB33QzZY()h]]
 )
 spec:RegisterPack(
     "Survival (wowsims.com)",
-    20261105002,
-    [[Hekili:LRvBpkUnq4Fl7xOjAzdbUL7ORooPw1wD3P2vvnB)QdMed4ssCKTd0v6u(T3Xj8IJHab2TTszVtAviEMhpZ4XJF8OG6JEc5fILe0JdCh8((9Dh66oa5jFoLG8sXblXZHhsWXWF9Y4RORWr5tSwZwlOXcNawSTsUNJy4qfwtZOrYVKGMEuyfPKaK3N)ZhF6N)JheBGd5TGggsk1HicQDIEiFICbjFYM31BgJtwr45tcjZWzrY8j)WV)R5tGxNprdImAp18k6Tilrs49ctf9uMzOONyL)AcEfXbWlYUlGphNiIadpeEMPMpQiFcomKL8DWdljplCYN8tyj(HJyhw)2xEcazHuMkEOxV5u5ISPktVNHO2aMG5sgm6(bZCXFy09HoqyKZMrJGanoqszjcNuobuEkwoU00f(Xy(YU0zJVjKmnB2mh937KLM)1du92X9Wk3x6ZM5dHp)f41LquaWHJPdZyooLg6pJYjDZeeqSz(Zdch3xbGeZNtKoSmPGgsg2rsJjFA8WDkdZ80igdupJ)8ruVu8ogWOREijMLqd85zjhB(ppaX4)IXHGtc2pLPE5vHsLG)mwqMy8GMSiaQYsjj(RPjHS1DvBIgxKUPugs0Mtc95Kymnr8Pn)ewniH3560VJ61lWj7K4JvvqFsGfjj4McjNU0movAU6RxRHSsAsfhuPziH7VKgS80scRhZzmygMsLKtlknoMb7KGF5d7QspTWqiAUFqeTqmRBkhWr3UCwMWwN8nRAhQtaJfbXzJX2gG77m02UZjIbeoSwjHOiyk6HTTRYveawMnYygPdgMhGti(Ifm5H7uQizmu3I2ebp5or285reNy2ksmyIDSoi5z3lktWuj9DSUXAxKwZG3eOpYa0e)IKq7owvtg)4y3VzKpp2QsgD1Fvvw7I)D1LpAb((vuZRL51xsH6wMRFffEAzraZQLTm3ZOeFlZ7Ak5dt326ah)oxBW4mT3BJX)T1aN77gttSUV7r07wlLiUDDDgm0(wxB770Da7B7RmzWjpREDmIlUohql0UtjzoNYRnKLAFsEuVfC6dPe(wWRpg723c(9)ze1FlemVeo9Vo0JFXmnFDiT9QY)P5ujA8PY5Ff5TcUspiRrhSIOcPOOPzL9CcE8XIMOrsWtJiHOFe5PffudUPDoiV9l3iVaouTKtXiVAAJcscZCdbEFIqfGpENnua)UgcSEksdH((gc9bjpne)Hg4VxPAAhZ(PuFaKxrMMkgdG((Ab1ylEfQrnOnn7NCTobvMf5x2u1IcdkB4d1AdvBAXolV)jZ02tktb(idW3kOEf4tmLacFFniu54)tdrF3AWW4W0ZGI52TTOS7OjD9p1ruV4ZOo02m3XEy255AJK2AJUKAR6Q5XCd8wD0Q)vFnMrfqyUrD3c6UcJNdbZTIxyDV)fUi0fFtOx8vH0lx33SmYvwVUveykciM10U6ZzApHeZkXVSZhBpXfZZxAsLZ2H33Kc(dQ7OZ6k43ocnkpVUJ7R5CQ2JJxpxIw7LJVkUTdQJmuTKBBTHpv0OwED1suVvhomjP2K7C0QdiMKu))76tT6WCtP(2SlhP3uOMYG8IULrbYMCWELORx0XjtcmVM8ElMatEcxobYgXe7DMhlFzmXkGOUdSAeLgK6)E7((UqhPbKBXRAdVoFNYoslh35DcZVtSkaw)3sgAJbJZKlyCK3NjlPr08jw)YMpfUIHr)Zp]]
+    20261110000,
+    [[Hekili:LR13poQnq4)w2xsjQBjBY296ERAwPw1wDxv7QtLTVcXbBsCdGr2MeTsN4V9oM8lWjqCa27fUhorGXFZN)S9mdZI7y3xDDWijX9Lj3n5dJhp(o4FUoY3siUoji)vOfWfXOi4)Ds5RPRrHzZS2W2iOrcBFw0qLDVfYqyfwZtPHYph7o)SWksi(UoF6FF51F)FEsSdoxNLumMSDmeHFLo6PSzYLKSz7U3OagNSMWZMHjbO0qz2SF5l)v2m42zZkarkDKYVIrltJLe(iCIyKIMyXiXAVne0AInGx4WBb85OyriqCmCnt5pQiBgcJzXFhCXkYBc7Sz)gsIE6m8W6V)8RailLYeXtJgTGkxMoxr9rAMoeWeOl5b0h9XtqtWb(2GmYzb0qqOr(sklwyNWjWGNJKt3sDHxeIV6wAW0BWK5Pbb2fVVDAs2FEYq)(PJqQPV0Jf4bYN3s0MTqKdWPpRimt5Oek2lGYj3MkiGzbEl8XthRaqI4lisBwQuqXKhgiPrKNN(WHbdEMeMgteEH0flLNbGTdyGgqfbyEiJb(pL)wZgoOne(kA8IgnCmjIft994WSOraeH(pghwCIrEjm1nBekLw8dy(PIPtmztamuy9tcmqi50v6tHTivCPCdSHLgxY3QrIjCVvu)v1BjivlymWdZPss9MsJIyWHm4xEWbUK6nEdS655hsZnZ6MTpWUiVSxfZ2e)vRkF0aFgledxu(zCseIglEES9ddhoOgnGWtiXsqfvBKkiB7xakzaScOTy(yrWqCFumXtSKjp9qujlJGqAutmS2dPSflcj2rS1KiGIdSut5LOyS3Uz)pF4gqKac(hu7hhyDJ1bLUaH3j0N5b0ypiY5cYWbww5xCe)P391Y355P7nzRhl)RY2oC4q9rxY67adg2Iip9a15QdN230etYr0Z0edt81ZuLRjBEptAAqkYEMcPN3VNn91kMPNn7VMk0UXsNyL5LMYORCDz5qTMkTT2JULanirFNsGMLvTtPqlsH1P8O95l6u6CHGZDQVQpsyN6ktF7Fno0oguB3dE380PDF4DZvNR7fVBo7Bw3p64zGRZAiClqiToahsfsrEtN32Zw4YxYBcnjgnpKGD)vxNcBuvpCx7qDDoMf11XNdRZCkY1PI2q6kbpBiWfZowc6Z3Bof03Bi0hZ6ziW)OPaFiBMHa)GHaxmlLHq)bdH(KSpgI)pPH)Xbvrlqp6YIpW1jpONAFba6JvcA5obEyuJRDN5XaTkW)Og47nS4jWACjGW47QaIsr6Uag6NS2JHwiSlGI(XO9OCi2uXXxxmQwhK6uUPFo80TgxQ5SfwCkAzHLDLF0pwUFmfQCO6GspMdH(bWdlOhki4siy65Skcu(o8sxx)BD1Yx76YV3vXeaJ1JC04ma9dTlxZ0dm2WuB9iftpAFdZz3FuSj6j3ACXi9inZ0YKnRkREKWPx)Ij1i0tKhtQ9zIEnwxQ2NEI2PKMQklSIA66rkJPVUPz1Q262IvQTaMwh91wvyRzzo7mTM1RR(RUHBgxB4vvPt3WntRc7ARPOty39MwXtJYE3nuuVaJgKNS9eXKms3xvhjmmJu7zPIevLw0Sy)Ddh0Z)uT)AN3AutWUVQoEuzxW6woROGEO(dlsv2fTUNd6b03ZH66cx3Zc9q37zX3(U411ZnP6tNE3N7S7z(7jSFMwUxWxUjYYt)liCiqJq)ZMUeGv)PvNtxGWOu5sg315tKv0qA2mR)y3xgE(JD)))]]
 )
 
 -- The hand-built lists the wowsims.com packs replaced: a saved choice of one falls back to the spec's default.

@@ -130,14 +130,13 @@ changes a trace; `tests/Forever/driver_rate_spec.lua` is their proof, through th
   (`Engine/Driver.lua`). A force keeps the 0.2 s wait, so a target change, a cast or combat wakes it. The belief drains at
   that rate too, so its 256-entry log holds 1.5 s of observations out of combat.
 
-**The rate switches** (perf phase 2; Options > Performance > Experimental, `profile.performance`, profile-wide). Dev
-builds only, like `damageMeter` and `cooldownViewer`: a non-dev build (`Hekili.IsDev` unset) hides all four and
-`providersOf` (`Engine/Schema/Tracked.lua`) reads each as off, whatever the saved profile says.
-- `coalesceCooldown`, default off: the event facade holds SPELL_UPDATE_COOLDOWN to its per-frame OnUpdate and runs it once.
-- `narrowUnitAura`, default off: UNIT_AURA is asked for only on `I.auras.token`, applied at a drain out of combat; a
-  general subscriber keeps it general. UNIT_TARGET stays general, because `Game/Events/Attackers.lua` reads the target,
-  the focus and 40 nameplate tokens and the facade registers at most two units.
-The last two reach the belief as fields of `def.providers`, the toggles' existing route (`Hekili:ProvidersChanged`).
+**The rate switches** (perf phase 2) `coalesceCooldown` and `narrowUnitAura` were removed with their code paths on
+2026-11-10 (owner ruling): the event facade runs each SPELL_UPDATE_COOLDOWN at once, and UNIT_AURA is registered for
+every unit. A saved value of either is ignored. `damageMeter` and `cooldownViewer` are gone too (cdm-default decision
+107, owner 2026-11-08). The Outcomes provider is always the default one (the meter provider stays for the harness's
+`meter` A/B arm), and the Cooldown Manager leaf is always on unless the debug-only session switch `Hekili.cdmOff` is
+true (`DEVELOPMENT.md` §6); a saved value of either is ignored. `providersOf` (`Engine/Schema/Tracked.lua`) hands them
+to the belief as `def.providers` (`Hekili:ProvidersChanged`).
 
 **Private, on `ns`**, because only the engine and its tests use them:
 - `ns.Output`: a separate table whose `__index` is `Engine.Output` (so `ns.Output.Primary` reads the display), holding
@@ -148,7 +147,7 @@ The last two reach the belief as fields of `def.providers`, the toggles' existin
   belief annotator (section 7); 4 slots. Not on the port until that feature exists.
 - `ns.EngineFrame`: the `HekiliEngine` frame (`Engine/Driver.lua`). Only engine files touch it: `Driver.lua` (the loop
   and `Hekili:ForceUpdate`, which the UI and the engine call), `Snapshot.lua`, `Sim/Core.lua`, `Sim/Targets.lua` and
-  `Schema/Spec.lua`; `tools/check_engine_reads.sh` keeps it out of UI, Options and `Hekili.lua`.
+  `Schema/Spec/Activation.lua`; `tools/check_engine_reads.sh` keeps it out of UI, Options and `Hekili.lua`.
 - `ns.LoadContent`, `ns.ContentNotice` (`Engine/Content.lua`): called by `OnInitialize` and `OnEnable` only.
 
 Output allocates nothing in `Begin`, `Publish`, `Subscribe` or `Unsubscribe` (`tests/Forever/output_spec.lua` checks
@@ -158,7 +157,7 @@ Output allocates nothing in `Begin`, `Publish`, `Subscribe` or `Unsubscribe` (`t
 
 What a content addon may use, and nothing else (`tests/boundary_spec.lua` enforces it):
 - `Hekili:NewClass(token, { specs = { ... } })`, `Hekili:NewShared(...)`, `Hekili:NewRace(...)` and the `Register*`
-  calls on the object they return (abilities, auras, hooks, settings, packs, ...). `NewClass` (`Engine/Schema/Spec.lua`)
+  calls on the object they return (abilities, auras, hooks, settings, packs, ...). `NewClass` (`Engine/Schema/Spec/Kits.lua`)
   returns the class's kit, or nil on another class (the pack then returns). The kit holds every ability, aura and talent;
   each entry of `specs` is one talent tree's spec: `{ key, name, tree (1-3), icon, role, ranged, package, unsupported }`
   (`package`: the default priority's name; `unsupported`: no priorities on Forever, its displays off and its page a
@@ -230,7 +229,7 @@ belief paired it to; a swing closing with no row runs nothing, and a spell of ou
 (`docs/dev/gaps.md` CO). The owner's order: an aura first, a usability flip where it works, a reaction only where only
 an outcome reveals the span.
 
-`RegisterAbility{ passive = true, id = <number> }` (`Engine/Schema/Spec.lua`) is a spell the spellbook knows and the
+`RegisterAbility{ passive = true, id = <number> }` (`Engine/Schema/Spec/Abilities.lua`) is a spell the spellbook knows and the
 player never casts. The belief tracks its known rank (the `now` context's `knownRank` reads it; the sim's asks the
 spellbook through the facade); the sim never sees it.
 
@@ -310,15 +309,39 @@ class token, a missing pack, a mismatch or a failed pack load keeps one notice, 
 
 **What bumps what.** A class release bumps `## Version` in its pack's TOC. `CONTENT_API` and every content TOC's
 `## X-Hekili-ContentAPI` change together, only when the content surface changes: the Register* API, `Hekili.Client`,
-or the environment names above (10: `Hekili:GetLocale`, the packs' `Locales/`). `tests/Forever/content_spec.lua` checks the TOCs and the constant agree.
+or the environment names above (now 12: 10 added `Hekili:GetLocale` and the packs' `Locales/`, 11 the aura field
+`enchants`, 12 `kit:RegisterSelector`). `tests/Forever/content_spec.lua` checks the TOCs and the constant agree.
 
-**Active spec.** The client reports one pseudo-spec per class, so the core picks the spec (`ns.PickSpec`) from the
-talent tree with the most points: the spec the character activated for that tree
-(`profile.specChoice["Name-Realm"] = { [tree] = key, last = tree }`), else the tree's first spec; on no points or a
-tie, the last dominant tree seen; with none seen, the first supported spec. A respec or dual-spec swap that moves the
-dominant tree therefore switches the spec, and two builds of one tree share its choice. The choice is written only by a
-spec page's "Activate <Spec>" button or `/hekili spec <name>`, for the current dominant tree (a pre-table scalar
-choice moves onto it once). On a class's first login after the update a one-time migration (`ns.MigrateTrees`, marked in
+**Active spec.** The client reports one pseudo-spec per class, so the core picks the spec (`ns.PickSpec`,
+`Engine/Schema/Selectors.lua`; the tree arithmetic, ids, share keys and migration are `Engine/Schema/Trees.lua`'s) from
+the talent tree with the most points: the spec the character activated for that tree
+(`profile.specChoice["Name-Realm"] = { [tree] = key, last = tree }`) when the player activated one of its packs
+(`packManual`); else the first of the class's **selectors** that holds; else the spec stored for the tree (a choice from
+before pack-level activation, or one whose pack went back to the default); else the tree's first spec; on no points or a tie, the last dominant tree seen; with none seen, the first
+supported spec. A respec or dual-spec swap that moves the dominant tree therefore switches the spec, and two builds of
+one tree share its choice. Activation is at the pack level (owner 2026-11-08): `Hekili:ActivatePack` (the spec page's
+Priority, a pack's Active toggle, `/hekili priority <name>`, and the "Activate <Spec>" button and `/hekili spec <name>`,
+which activate that spec's pack in place) marks the pack the player's and writes its spec as the choice for the
+current dominant tree (a pre-table scalar choice moves onto it once).
+
+**Selectors** (after the Hekili classic branch's pack selectors; no user toggle). A class kit registers
+`spec:RegisterSelector(key, { spec = "<spec key>", pack = "<built-in pack>" }, function(tab1, tab2, tab3) ... end)`
+(Spec.lua stores them in order; specific before general). The condition gets the points per tree and runs in one reused
+environment: `talent.<name>.rank` (the kit's talents, the talent walk's ranks), `level`, `max`, `min`. They run on
+login, a talent change and a spec change (SpecializationChanged's pick and SettleSpecChoice), never per poll, each
+under `pcall`: one that raises counts as false and on `kit.selectorErrors` (the snapshot's `spec:` line shows the count
+and the last message; a selector pick shows as `(selector <key>)`). A selector whose spec is unsupported is skipped. The
+first that holds picks its spec, unless the player activated a pack for the tree, and, in SettleSpecChoice and again
+after
+RestoreDefaults (the built-ins exist only then at login), its pack (`ns.SelectPack`) on `profile.specs[id]`:
+`packManual = true` marks the player's pick (ActivatePack's callers; cleared by `/hekili priority default`, a toggle back to the default, a delete or retire fallback), and
+`packAuto = "<name>"` the pack a selector set. A selector writes only a built-in pack bound to that spec, and only over
+the default or its own `packAuto` pick: any other value (a custom priority, `(none)`, a profile's pick from before
+selectors) stays. With no selector holding, a pack still equal to `packAuto` goes back to the default; with no points or a
+tie (a walk before the ranks arrive, a talent wipe) the last spec settled with points (source `held`) and
+its pack hold, unless the player activated a pack for the tree; a first login or /reload with no settle yet falls to
+the rule above. One notice says so when a selector switches the
+pack, or the spec after the first settle with points (never at login). On a class's first login after the update a one-time migration (`ns.MigrateTrees`, marked in
 `profile.specMigrated[<TOKEN>]`) merges the legacy pseudo-spec profile (the client's id, now read for nothing else:
 Rogue 1488 and Warrior 1491 read in game; Druid 1483, Hunter 1484, Paladin 1486, Shaman 1489 assumed) into every
 supported spec, value by
@@ -379,7 +402,10 @@ facade and the environment names. The boundary scan rejects `Hekili.Virtual` and
 Default priorities are written as SimC text: `src/Hekili_<Class>/APLs/<Pack>.simc` (leading `#` lines are the
 description) and the manifest `src/Hekili_<Class>/APLs/packs.lua` (`{ class = "<TOKEN>", packs = { ... } in block
 order, specs = { [<Pack>] = <spec key> } }`; each pack's payload gets `spec = "<TOKEN>:<key>"`, a pack without a spec
-key errors). The TOC lists
+key errors). An optional `imports = { [<Pack>] = { from = <Pack>, as = <prefix>, aura = <key> } }` merges the other
+pack's own lists in at every build as `<prefix>*` (default -> `<prefix>`, precombat -> `<prefix>_precombat`), called
+first in default and precombat while `buff.<key>.up`, the host's own lines there gaining `!buff.<key>.up` (the Druid's
+form-following Feral and Guardian packs); the payload's text is then the merged lists. The TOC lists
 neither, so WoW never loads them, and `.pkgmeta` leaves them out of the zip. `make packs` runs
 `.lua/bin/lua tools/make_pack.lua write <class>` (`lua5.1` without `.lua/`) for each manifest. It parses the text, serializes and encodes it as the share
 string `RegisterPack` takes, and rewrites the generated `RegisterPack` blocks in `src/Hekili_<Class>/<Class>.lua`.
@@ -560,17 +586,18 @@ button draws, 0 for none), `b.isFocus`, `b.Cooldown`, `b.round` (and `b.timersHi
 6. Core calls Truth through `ns.UI.Truth.<member>` at each call (no local cached at load), so the TOC order does not
    matter and a test can count the calls.
 
-**Steady icons (experimental, off by default).** With the active specialization's `steadyIcons` on (its Performance
-tab), `Output.Publish` holds a slot when its shown icon and the new one are both countdowns (due more than 0.05 s
-out) with different names and the raw set has had the new one in that slot for no more than `hold` publishes (the
-`steadyHold` slider, 1 to 3 updates, default 1; each update is about 0.1 to 0.2 s): an icon the engine keeps shows
+**Steady icons (always on, no setting; owner 2026-11-07).** `Output.Publish` holds a slot when its shown icon and
+the new one are both countdowns (due more than 0.05 s
+out) with different names and the raw set has had the new one in that slot for no more than `Output.hold` publishes
+(1 for players; each update is about 0.1 to 0.2 s): an icon the engine keeps shows
 at most `hold` publishes late. The shown record table moves into the new set and the new one into the old, so the
 hold costs no copy and no allocation (`streak[i]` is a preallocated counter), and `out.held[i]` says which slots are
 held (the snapshot marks them `(held)`). A ready icon on either side and the first publish after our own cast start
 or success, channel end or swing queue change (`Output.Acted`, from the engine's own cast and
 `CURRENT_SPELL_CAST_CHANGED` handlers in `Engine/Sim/Events.lua`) show at once, so
-what is pressable and when never changes. Core reads both settings once per update into `Output.steady` and
-`Output.hold`; styles see only the held records and need nothing. Known limits: a held cell keeps the previous
+what is pressable and when never changes. `Output.steady` (true) and `Output.hold` (1) are module fields no profile
+reads (an old profile's saved `steadyIcons`/`steadyHold` are ignored); only the headless harness sets them per instance
+(its measurement arms). Styles see only the held records and need nothing. Known limits: a held cell keeps the previous
 publish's `time` (one poll off in Timeline's out-of-combat pinned mode), and for some publishes the same icon can
 show in two slots when a held slot's icon is the next slot's new icon.
 

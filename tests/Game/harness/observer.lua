@@ -67,6 +67,10 @@ M.DEFAULTS = {
     viewer = false,
     takenLag = 0,
     group = true,
+    -- Live (owner's /vslog dump 2026-11-08): UNIT_COMBAT's amount (slot 4) is secret, its action, flag and school
+    -- plain; the October beta's rows were all plain. On: the stream says so (`s.secretAmount`) and the drive fires
+    -- every UNIT_COMBAT amount as fake_api's SECRET; a4 keeps the truth for the metrics. Never on the plain oracle.
+    secretAmount = false,
 }
 
 M.COMBAT_END = 1.0 -- s from a kill to PLAYER_REGEN_ENABLED when no attacker is left (Rogue kill-events capture)
@@ -179,6 +183,7 @@ function M.new(W, k)
     end
     local s = { n = 0, t = {}, ev = {}, a1 = {}, a2 = {}, a3 = {}, a4 = {}, a5 = {} }
     s.src, s.hand, s.swingT, s.actor, s.castT = {}, {}, {}, {}, {}
+    s.secretAmount = k.secretAmount and not k.plain or false
     local obs = { s = s }
     local list, seq = {}, 0
     local function push(t, ev, a1, a2, a3, a4, a5, src, hand, swingT, actor, castT)
@@ -325,6 +330,49 @@ function M.new(W, k)
             )
         end
     end
+    -- the viewer arms: our auras on each entity (aura -> expires), and the target the items last read (CDM Task 8)
+    local mine, viewerTarget, retargetAt = {}, false, -math.huge
+    local viewerLast = {} -- (unit .. aura) -> its last @viewer edge's time: the client takes them in order (review I1)
+    local function retarget(t, tgt) -- the client re-reads its target items the frame after a change (CDM-O: f=1)
+        if k.viewer and tgt ~= viewerTarget then
+            viewerTarget, retargetAt = tgt, t + 0.005
+            push(retargetAt, "@viewerRetarget")
+            local auras = {}
+            for id, expires in pairs(tgt and mine[tgt] or {}) do
+                if expires == 0 or expires > t then -- 0: no expiry
+                    auras[#auras + 1] = id
+                end
+            end
+            table.sort(auras) -- pairs order is not stable: the stream must be
+            for _, id in ipairs(auras) do
+                push(t + 0.005, "@viewer", "target", id, true, "player")
+            end
+        end
+    end
+    -- the "target" aura list follows our target (the client answers the new mob's auras): each mob's live aura events,
+    -- and the mob the list holds now
+    local onMob, auraTarget = {}, nil
+    local function sortedIds(e)
+        local ids = {}
+        for id in pairs(e and onMob[e] or {}) do
+            ids[#ids + 1] = id
+        end
+        table.sort(ids) -- pairs order is not stable: the stream must be
+        return ids
+    end
+    local function relist(t, tgt)
+        if tgt == auraTarget then
+            return
+        end
+        for _, id in ipairs(sortedIds(auraTarget)) do
+            push(t, "@aura", "target", id, 0, 0, 0)
+        end
+        auraTarget = tgt
+        for _, id in ipairs(sortedIds(tgt)) do
+            local a = onMob[tgt][id]
+            push(t, "@aura", "target", id, a.stacks, a.expires, a.duration)
+        end
+    end
     local function targets(t, ev)
         local tt = ev.targets
         for _, e in ipairs(mobs) do
@@ -351,7 +399,12 @@ function M.new(W, k)
         if k.plainSpeed and tgt then
             push(t, "@speed", "target", tgt.weapons[1][3])
         end
+        if ev.relist then -- shortcut: swapEvery's swaps only, so switchTo's default-arm streams stay as they were;
+            -- set it on switchTo too when a switchTo world reads the target's auras after its switch
+            relist(t, tgt or nil)
+        end
         push(t, "PLAYER_TARGET_CHANGED")
+        retarget(t, tgt)
     end
     -- UnitDamage read out of combat only (docs/superpowers/specs/2026-10-16-forever-protection-design.md §1.1); the
     -- attack speeds (Sources/Swing.lua, probe W PR2) and the regen rates (probe W: 10.001 a second out of combat) too.
@@ -573,12 +626,40 @@ function M.new(W, k)
                 push(t, "@current", id, kind == "queue")
             end
         elseif kind == "aura" then -- ours on the player (plain), ours on the target (raising in combat)
+            if ev.dst ~= us then
+                onMob[ev.dst] = onMob[ev.dst] or {}
+                onMob[ev.dst][ev.aura] = ev.stacks > 0 and ev or nil
+            end
+            if k.viewer and (ev.src == nil or ev.src == us) then
+                mine[ev.dst] = mine[ev.dst] or {}
+                mine[ev.dst][ev.aura] = ev.stacks > 0 and ev.expires or nil
+            end
             local unit = ev.dst == us and "player" or (ev.dst == ev.ourTarget and "target" or nil)
             if unit then
+                if unit == "target" then -- a world without a prepull's target event (the unit specs)
+                    auraTarget = ev.dst
+                end
                 push(t, "@aura", unit, ev.aura, ev.stacks, ev.expires, ev.duration)
                 push(t, "UNIT_AURA", unit)
-                if k.viewer then -- the Cooldown Manager's item shows or hides 3-5 ms later (CV §2)
-                    push(t + W.mrng.int(3, 5) / 1000, "@viewer", unit, ev.aura, ev.stacks > 0)
+                if k.viewer then -- the Cooldown Manager's item shows or hides 3-5 ms later (CV §2); a partner's copy
+                    -- (an aura event with another source) lights none of our items (F10, CDM-P)
+                    local src = (ev.src == nil or ev.src == us) and "player" or "party1"
+                    -- the same draw as before; viewerLag (the edge-anchor stress arms only) on both edges
+                    local vk, vt = unit .. ev.aura, t + W.mrng.int(3, 5) / 1000 + (k.viewerLag or 0)
+                    local late = W.lateLight -- a verdict arm's late lights: { share, lo, hi } s, from W.lrng alone
+                    if late and ev.stacks > 0 and W.lrng.next() < late[1] then
+                        vt, W.lateN = vt + late[2] + W.lrng.next() * (late[3] - late[2]), (W.lateN or 0) + 1
+                    end
+                    -- an edge on the new target read after its change but falling before the re-read: the re-read
+                    -- sees it (the list above was taken at the change's read), so it follows the push
+                    if unit == "target" and ev.dst == viewerTarget and vt < retargetAt then
+                        vt = retargetAt + 1e-6
+                    end
+                    if viewerLast[vk] and vt <= viewerLast[vk] then -- a set and a clear at one instant stay in order
+                        vt = viewerLast[vk] + 1e-6
+                    end
+                    viewerLast[vk] = vt
+                    push(vt, "@viewer", unit, ev.aura, ev.stacks > 0, src)
                 end
             end
         elseif kind == "item" and ev.src == us then -- a bag count, plain [W PR13]; nothing reads its BAG_UPDATE
@@ -612,6 +693,7 @@ function M.new(W, k)
                 push(clear, "@guid", "softinteract", ev.dst.guid)
                 cleared[ev.dst] = clear
                 push(clear, "PLAYER_TARGET_CHANGED")
+                retarget(clear, nil)
                 push(clear, "UNIT_HEALTH", "target")
             end
             local left = false

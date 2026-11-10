@@ -22,6 +22,8 @@ L["Hekili Forever is designed for level %s content.\nIt may not work as expected
 L["on"] = true
 L["off"] = true
 L["%s\n\nThe wowsims gate runs this as %s."] = true
+
+-- Hekili/Engine/Schema/Spec/Packs.lua
 L[" and "] = true
 L["The %s priority was retired; a spec that used it now runs its default priority."] = true
 L["The %s priorities were retired; a spec that used one now runs its default priority."] = true
@@ -31,6 +33,10 @@ L["The %s, and |cFFFFD100%s|r priorities were updated."] = true
 L["The |cFFFFD100%s|r priority was reverted."] = true
 L["The |cFFFFD100%s|r and |cFFFFD100%s|r priorities were reverted."] = true
 L["The %s, and |cFFFFD100%s|r priorities were reverted."] = true
+
+-- Hekili/Engine/Schema/Spec/Activation.lua
+L["%s: the |cFFFFD100%s|r priority, picked from your talents."] = true
+L["%s, picked from your talents."] = true
 
 -- Hekili/Options/ChatCommands.lua
 L["Invalid command. Type '/hekili help' to see the available commands."] = true
@@ -428,6 +434,9 @@ L["If specified, the addon will show this text in place of the auto-detected key
 L["Default |cffffd100(none)|r"] = true
 L["If set above zero, the addon will only allow %s to be recommended via [Use Items] if there are at least this many detected enemies.\nSet to zero to ignore."] = true
 L["If set above zero, the addon will only allow %s to be recommended via [Use Items] if there are this many detected enemies (or fewer).\nSet to zero to ignore."] = true
+L["The Cooldown Manager is not available: %s"] = true
+L["The Cooldown Manager is not available."] = true
+L["Turn on the Cooldown Manager in the game options: it tells Hekili when your buffs and debuffs are up."] = true
 L["Activate %s"] = true
 L["Recommend for %s from now on. The choice is kept for your current talent tree: a talent swap to another tree activates the specialization chosen for that one (also |cFFFFD100/hekili spec name|r)."] = true
 L["|cFFFFD100Active|r"] = true
@@ -496,19 +505,6 @@ L["Forecast window (s)"] = true
 L["How far ahead the recommendations look for the next affordable action. A resource paid by swings can take longer to arrive than one that regenerates steadily; raise it if the queue sits empty while that resource builds."] = true
 L["\nThis setting determines how far ahead the Primary and AOE recommendations look for the next affordable action, and how far the resource forecast runs.\n\n|cFFFFD100• Higher values|r show the next action while a resource paid by swings is still building, so the queue |cFF00FF00stays filled at the pull|r, at a small cost per recommendation that grows with the window.\n|cFFFFD100• Lower values|r |cFF00FF00cost less|r and suit a resource that regenerates steadily.\n\nThe other displays (Cooldowns, Defensives, Interrupts) keep their own |cFFFFD100Forecast Period|r in their display settings.\n\n|cFF00B4FFDefault|r: |cFFFFD10015 s|r\n\n"] = true
 L["Current window: |cFF00FF00%s s|r"] = true
-L["Experimental"] = true
-L["Experimental: steady icons (hold a swap between two countdown icons)"] = true
-L["When an icon that is still counting down would be replaced by another icon that is also counting down, keep the shown icon for a few more updates (set below) and show the new one if it is still there after that.\n\nAn icon that is ready to press, a ready icon that goes back to waiting, and anything after your own cast always show at once, so what you can press and when never changes; the icons just flicker less.\n\n|cFFFF7F00Experimental|r: off by default while it is being play-tested."] = true
-L["Steady icons: updates to hold"] = true
-L["How many updates a swap between two countdown icons is held. Each update is about 0.1 to 0.2 s, so 1 holds a swap for about 0.1 to 0.2 s and 3 for about 0.3 to 0.6 s; more updates flicker less but show a changed countdown icon later.\n\nAn icon that is ready to press, a ready icon that goes back to waiting, and anything after your own cast are never held.\n\nTurn on steady icons above first."] = true
-L["Experimental: use the damage meter for swing outcomes"] = true
-L["Reads the game's damage meter events (they work with the Damage Meter window hidden or disabled) to know at once whether your white swing hit, and that another player's hit was not yours.\n\nChanges apply at once out of combat, otherwise when the fight ends. Applies to every specialization.\n\n|cFFFF7F00Experimental|r: off by default while it is being play-tested."] = true
-L["Experimental: use the Cooldown Manager for aura presence"] = true
-L["Reads whether your own buffs and your debuffs on the target are up from the game's Cooldown Manager, for the auras it tracks; the others keep their timers. Needs the Cooldown Manager enabled in the game options. Shows presence only (no durations or stacks), and only auras you applied.\n\nChanges apply at once out of combat, otherwise when the fight ends.\n\n|cFFFF7F00Experimental|r: off by default while it is being play-tested."] = true
-L["Experimental: read cooldown changes once per frame"] = true
-L["When the game reports several cooldown changes in one frame, reads them once, at the end of the frame. Costs less in busy fights; a changed cooldown shows up to one frame later.\n\nApplies at once to every specialization.\n\n|cFFFF7F00Experimental|r: off by default while it is being play-tested."] = true
-L["Experimental: listen for aura changes on you and your target only"] = true
-L["Asks the game for buff and debuff changes on you and your target only, instead of every unit, which matters most in raids.\n\nChanges apply at once out of combat, otherwise when the fight ends. Applies to every specialization.\n\n|cFFFF7F00Experimental|r: off by default while it is being play-tested."] = true
 L["%s Preferences"] = true
 L["No priorities on Forever for %s: Hekili Forever recommends nothing while this specialization is active."] = true
 L["Priorities"] = true
@@ -797,6 +793,9 @@ L["Edit specific items, such as disabling, assigning to a toggle, overriding the
 L["Disable Gear and Items"] = true
 L["If checked, no equipped trinkets, weapons, or armor with |cFF00FF00Use:|r effects will be recommended for |cFFFFD100%s|r, regardless of any other options selected below."] = true
 L["this specialization"] = true
+L["Cooldown Manager"] = true
+L["Hekili reads the Cooldown Manager to see when your buffs and debuffs are up. Turn a switch off and Hekili ignores that aura's items there. |cffffd100Gold|r: on a bar. |cff808080Grey|r: not on a bar; its switch applies when you add it."] = true
+L["Changes apply after combat."] = true
 L["Snapshots (Troubleshooting)"] = true
 L["Learn how to report an issue with the addon, such as incorrect recommendations or bugs."] = true
 L["Snapshots"] = true
@@ -1021,5 +1020,4 @@ L["The picks on the lane."] = true
 L["The lane's time axis, the ruler and the focus zone."] = true
 
 -- Hekili/Engine/Sim/Core.lua
-L["Open Hekili Forever Options"] = true
 L["|cFFFF0000WARNING|r: This version of Hekili Forever is for a newer WoW Forever client; you should reinstall for %s."] = true

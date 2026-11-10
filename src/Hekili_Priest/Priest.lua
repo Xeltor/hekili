@@ -721,34 +721,34 @@ spec:RegisterAbilities({
     },
 })
 
--- Talents: { talent tree (1 Discipline, 2 Holy, 3 Shadow: the dominant tree picks the spec), rank 1's spell, max rank }:
--- the DB2's 47 nodes (`wowdb talents PRIEST`; the tree is the DB2's Talent.TabID, the max rank its rank slots), keys
--- the snake_case names; then the Forever-only nodes, absent from the DB2's Talent table, in wowsims's tree
--- (ui/sim/talents/trees/priest.json: their trees and ranks; the definition spell its spellId). wowsims's Forever tree
--- drops some Era nodes (Unbreakable Will, Improved Power Word: Fortitude, Divine Spirit, Force of Will, Lightwell,
--- Shadow Affinity, Improved Fade, Improved Vampiric Embrace and the unnamed Holy 14911) and gives others fewer ranks
--- (Silent Resolve, Mental Agility, Wand Specialization 3 / 3 / 2; Twilight Focus 3 to the DB2's 2): the DB2's are kept
--- until the live export (no Forever node holds them). The costs read Mental Agility and Devouring Contagion, the cast
--- times Divine Fury, Mind Blast's cooldown Improved Mind Blast, Shadow Word: Pain's duration Improved Shadow Word: Pain.
+-- Talents: { talent tree (1 Discipline, 2 Holy, 3 Shadow: the dominant tree picks the spec), rank 1's spell, max rank
+-- }: Forever's tree as wowsims/forever's ui/sim/talents/trees/priest.json lists it (tools/wowsims/talents.lua writes it;
+-- tests/Forever/talent_trees_spec.lua checks it and the spec detection over it). A key is Classic's where the talent
+-- exists there (code reads `talent.<key>.rank`), else the snake_case of the node's name. The costs read Mental Agility
+-- and Devouring Contagion, the cast times Divine Fury, Mind Blast's cooldown Improved Mind Blast, Shadow Word: Pain's
+-- duration Improved Shadow Word: Pain.
 spec:RegisterTalents({
     -- Discipline (tree 1)
-    unbreakable_will = { 1, 14522, 5 },
-    wand_specialization = { 1, 14524, 5 },
-    silent_resolve = { 1, 14523, 5 },
-    improved_power_word_fortitude = { 1, 14749, 2 },
-    improved_power_word_shield = { 1, 14748, 3 },
+    power_in_light = { 1, 1309969, 5 },
+    wand_specialization = { 1, 14524, 2 },
+    twin_disciplines = { 1, 1225132, 5 },
+    silent_resolve = { 1, 14523, 3 },
+    holy_precision = { 1, 1309957, 3 },
+    mental_strength = { 1, 18551, 5 },
     martyrdom = { 1, 14531, 2 },
+    mental_agility = { 1, 14520, 3 },
     inner_focus = { 1, 14751, 1 },
+    improved_power_word_shield = { 1, 14748, 3 },
     meditation = { 1, 14521, 3 },
     improved_inner_fire = { 1, 14747, 3 },
-    mental_agility = { 1, 14520, 5 },
     improved_mana_burn = { 1, 14750, 2 },
-    mental_strength = { 1, 18551, 5 },
-    divine_spirit = { 1, 14752, 1 },
-    force_of_will = { 1, 18544, 5 },
+    soul_warding = { 1, 402000, 1 },
+    penance = { 1, 402174, 1 },
+    renewed_hope = { 1, 425280, 5 },
+    divine_aegis = { 1, 431622, 3 },
     power_infusion = { 1, 10060, 1 },
     -- Holy (tree 2)
-    twilight_focus = { 2, 14913, 2 },
+    twilight_focus = { 2, 14913, 3 },
     improved_renew = { 2, 14908, 3 },
     holy_specialization = { 2, 14889, 5 },
     spell_warding = { 2, 27900, 5 },
@@ -759,55 +759,52 @@ spec:RegisterTalents({
     holy_reach = { 2, 27789, 2 },
     improved_healing = { 2, 14912, 3 },
     searing_light = { 2, 14909, 2 },
-    holy_14911 = { 2, 14911, 2 }, -- the DB2 names neither the node nor its spell (tier 4, column 0)
+    holy_binding = { 2, 1328569, 1 },
+    litany_of_light = { 2, 1317006, 2 },
     spirit_of_redemption = { 2, 20711, 1 },
     spiritual_guidance = { 2, 14901, 5 },
-    spiritual_healing = { 2, 14898, 5 },
-    lightwell = { 2, 724, 1 },
-    -- Shadow (tree 3)
-    spirit_tap = { 3, 15270, 5 },
-    blackout = { 3, 15268, 5 }, -- wowsims's node names 15326, the DB2's rank 5
-    shadow_affinity = { 3, 15318, 3 },
-    improved_shadow_word_pain = { 3, 15275, 2 },
-    shadow_focus = { 3, 15260, 5 },
-    improved_psychic_scream = { 3, 15392, 2 },
-    improved_mind_blast = { 3, 15273, 5 },
-    mind_flay = { 3, 15407, 1 },
-    improved_fade = { 3, 15274, 2 },
-    shadow_reach = { 3, 17322, 3 },
-    shadow_weaving = { 3, 15257, 5 },
-    silence = { 3, 15487, 1 },
-    vampiric_embrace = { 3, 15286, 1 },
-    improved_vampiric_embrace = { 3, 27839, 2 },
-    darkness = { 3, 15259, 5 },
-    shadowform = { 3, 15473, 1 },
-    -- Forever-only (wowsims's trees and ranks)
-    power_in_light = { 1, 1309969, 5 },
-    twin_disciplines = { 1, 1225132, 5 },
-    holy_precision = { 1, 1309957, 3 },
-    soul_warding = { 1, 402000, 1 },
-    penance = { 1, 402174, 1 },
-    renewed_hope = { 1, 425280, 5 },
-    divine_aegis = { 1, 431622, 3 },
-    binding_heal = { 2, 401937, 1 },
-    litany_of_light = { 2, 1317006, 2 },
+    spiritual_healing = { 2, 14898, 3 },
     prayer_of_mending = { 2, 401859, 1 },
+    -- Shadow (tree 3)
+    shadow_focus = { 3, 15260, 5 },
+    blackout = { 3, 15326, 5 }, -- wowsims's node names 15326, the DB2's rank 5
+    spirit_tap = { 3, 15270, 5 },
+    improved_mind_blast = { 3, 15273, 5 },
+    improved_shadow_word_pain = { 3, 15275, 2 },
+    shadow_reach = { 3, 17322, 2 },
+    improved_psychic_scream = { 3, 15392, 2 },
+    mind_flay = { 3, 15407, 1 },
     improved_mind_flay = { 3, 1225139, 2 },
     dark_inspiration = { 3, 1326159, 5 },
+    vampiric_embrace = { 3, 15286, 1 },
+    shadow_weaving = { 3, 15257, 3 },
+    silence = { 3, 15487, 1 },
     devouring_contagion = { 3, 1309950, 2 },
     early_demise = { 3, 1310076, 2 },
+    darkness = { 3, 15259, 5 },
+    shadowform = { 3, 15473, 1 },
 })
+
+-- Shadow's Starshards (the Night Elf racial): wowsims casts it when its expected damage per cast beats Mind Flay's, which
+-- this addon cannot compute (the translator has no spellExpectedDpet), so the player says it (owner 2026-11-07); the pack's
+-- `extra` line reads it. Off by default: the pack is wowsims's without that line.
+spec:RegisterSetting("prefer_starshards", false, {
+    type = "toggle",
+    name = L["Prefer Starshards"],
+    desc = L["Shadow only, and only when you know Starshards (the Night Elf racial). When enabled, the priority shows Starshards before Mind Flay whenever Mind Blast is 4 seconds or more from ready. Off: the priority never shows Starshards."],
+    width = "full",
+}, "shadow")
 
 -- The priorities, written by `make packs` (tools/make_pack.lua) from APLs/packs.lua and APLs/*.simc; edit those and
 -- run it, never this block (tests/Forever/priest_spec.lua checks it matches). Each pack's .simc is generated from its
 -- wowsims recipe (`make wowsims-packs`, tools/wowsims/specs/priest_*.lua).
 spec:RegisterPack(
     "Shadow (wowsims.com)",
-    20261103000,
-    [[Hekili:vAv3oUjpq0NL9M9lrFr83UTnnQuPw1w1TQTQQSxBWbBcUbSr2MnksR4zV2MSedbssVjXypZ5mEM5maWh8iicbLyWpd8cETVV3DEEEGi5(kmiQcMUfUrTGclv)gLdrSDnjZ2X2jiLcNuw5CTv7lyqKgP11Kc5duW6rbvuHtbr)63p85OhxjmGbIYjieU1dSiDcsw1KiZXnjh2ZnJXXpH5njiCgSUq2K8HF99Me12njDautC1mkCR4eSq6IQeU6aejCLQNj0noMhD(JGrNVqrbhsffQ4gPwZ0usenjqeIr)p1IT49cNMKpbLWvJekZ(XdpQajxkReRCD3qK51R1rV7atNRWufX4GL3hK5bFZY7roQSiNLrkuzzyQKWOcNkow58AOmSnvTPgYrlizH3SUolZXAtN6QBB9Q3UBPSD0MVDcE)FOBjHIIxxafYUZpWIkglhsIEpfhDMQaab5BJfWuojJKI1oucPqNc27cdu1ABtXf1uSiUGSjxUOwGJzzzXBsrH(A3MjjL4W7Ew)37d9x698HBITBTxL59qTMJ3cViEbhXZ4WiiPHGiXLI(G172IlzusAmxfstBvj8pmESopexX0BoTPT514DmokUcsOlYyP1IWatMhHTY9hTzyfa)eRMRAIJRkGBQXJbXqBgaXiDbdInegkZTpKqPyESHQb5(w69pb)Sc4EtHz2HcHfeTvJBvDMp54BFW8NNDZuMpF(OC07kuQkOMeXbq6S6frbisjefQJgmIQGiKcZmX2blQL)0mJetHRlWiWhFrGQgN1joarkHGeZjqq0ichGuXYeG0xizdupbLgI7gaHv(xhKDqARCSb8fPHLw7mInnJ3FTmA0wNJRalUSfIAwE1vYsNqv70RVsNSLUA)EZv63jIzTZlh4SvvFAr7WgMJhcImT16Mdf4V9IGpIC2(I2)W(G77nr)3XzagZoFVU1qbJ1dBQNkzAPH7clFdcd7P7fwAbBVMQ)TriNDgIH9H93NYU2QH9ND5e9uME1PXN2a0P2OUx)E5rkMxFp1mLl(g)ZnTPx12ewWAzoJdI(kElPGO(kMVC4Jumhd(7]]
+    20261110000,
+    [[Hekili:9EvuVTTnq4Fl5LmBSajlV2oxJ6cSH1HLHTIIQ8mLOfpzZAjrbsQyeGc9BFhPvKPKLI9AsRFWqI3DF3XJh)(GibK7iHmQgiFC(S5Vjiiyg(JeQFOeiHL0KD0n4df0C8)WTuMyFD8K9I9kEUYlrKp141dzckZG06kEM(2cY6bbvvcjKWp95B)q4DlvwWiHB5mgCicqLmsswwhR3c1XnR5NkKW9GSoMbP0QmDD8V9P)PogxUoUfGkUVjJk)sjhuAFwPY3uGmLVgFNxSXZ(Q3xuIIP3GPqsluzyDZWNfMuYv1Xugtu8t4d7GhuE1X)bvtxoqPm5FV9oeKTADPAPV)gUEB1At173Z1PiMyfdVM(2e2C6CwAIh2fLIuEg2LPjAUOq5vkbm41u9QdTQnvuj7gE6QRwxLM65SOxv51hIQZQ7ke7lQ)7tW7Nx5NZlyrRZOkDR9MSG1yE)KywdZrRRiamQCxKIMi5P8eWeqoTG6LjE3Q54zTRRqwvbOIY4B2QVPsbrI00OnjSvbMWM0u4UEDOYVEc6KNeYP8c17wn76jx1ztgTxizrLO1d()vg4uZowBG49RcMn9iim4ErLehcIkZOBQGgqMm5jTFDtsoXQBs(6zWiriYWsCa7TOSyQ5xN2yLe2rFIgO1(3Rw3IFaDUfFFACRbPcK7qN728C9XyGRHC14UWGCrbpjsIZPJ7vo9lczK5UquPWS44U2VzFtQiPsTAU923yhi9Uf2RnmeeN0Q6cXamb9Qngq1BDnYlkazKnv9ghpK(U7snvIOjzktrPaTH31sgLIGC06XXRJvuZGv7PUJL2Z7xn9KDtAg9b7nJhNMCk4Mbjm937f4AaN9UAm3NoCo6SnZXXhBB3Dxy86rAysis9Rqt9efZ4kTYQcFqkdF8JwvzOGUodyKF)rjbuaTLoMeIuVAqYPKWbOQjAmlJasxQBxG6qHBG4x6bHZPTPiBH0L82fWxqY9ZtrDjS7pFskd9(lgnLPh)QlThB53hS7(Cy(pFF9cO(F(T1fVWD1xFHD1JIdMOEZfgvRCHjOF9cdYvaXe3IlmUtKumb)2Eb7WgmU0rFIKJgjHw6odPbcEWSZI(aQkU70Ug7H(ySBhP3TUng)1jAtwVVuQkhY92YkWIq)lIT5RvJYTr8nPKDoPmBD0F0Tt7XOO0Hd4)Ng3tkYzZE)RaNMDJx9N5B7vgzWoZldlhsmhXHTFrY518SFrZyIEN9JGEk5WotD2YIwP3kKKW)c2XZ44h29NnF3M1m5)(]]
 )
 spec:RegisterPack(
     "Smite (wowsims.com)",
-    20261103000,
-    [[Hekili:LsvyVPnpq4Fl7lBfnusiTRfHwqAtBtRvBvvZ9ZoXeFM4xc2w2ofXxYV93ZPuGqHUUnHeY6UN755YDp20r07PeoZd0BttsVC0OKZtssOe)Adqjgw5c2C8GITe)NSu6H2IZwPx5KlDrL6LdcGwxRz8arZAK1(Rv0zhLtNbkPK7(11FLC)eU0vkn1sfYBLKZHhRcCLhxNjTf(km4MyXcTfEaSTfCqWAQ9TfF6UF0wGHBlEQ(gzCqtxSXkbNpMBCXHwK7IDbi5EmQunpQly0)50QbdrDSmLRg7FoEwh0v6AlyCUw9o8WcyTlQT4lmpBYr6NZ(513JKu59g3K445sFvZSWNq8bqhGCITnKo(Iurc7QXxWJWPPvlK14qHv6LALlYybS4zmFMrVcS5sLOXHzg24GCTqKpVKNnQ9Mn4ZCvATVFYHsr2sMIfzk9516pMnkzl(3NfxPRxNlKwyOqx24Ysd4p7nCywJqeTnBuJ5T9yjnzW)ontpknk9dSUY3vRPXA0UUYdGFaYbfSe3RtZoVhbUkgxVkFL2YZnmPA)25PU5qmiR7tHbumvjeQ4XGrBIezbgFDp1cgPNnGttEgM2BOeCRhwDhCVOw68UU7HpALXJ32DVe1CwnWPFMs2BFgsUXDG3PcBBkP0IkyLmk5G9m1JIDax7a)B3oDl5DQTfgL0nudCJcC(FVatFvcCXbc0dEWR0tZxPNjq8hozN)coL9N(9t2VRV8eD9gV0(QDmxwGIRobfDoQtU2t7w7JFXA94pY23w(tSC9FgQJiKkwJVsBPKVdlK1s8zWVT5vUU00)p]]
+    20261107001,
+    [[Hekili:LsvyVnnmq0Fl8fyvuLKMX2GkYKabi2emnH3NDIJ9LgZsTTSDwv)s(TZ5SSUMs7yaQsvw39U37YDpB6m6nuIG5b6vPjPNoBwYzjjZOe)Adqjgg)w2c8GITe)NSu6HUIJwPx5KlDrC9YjbqRB0mrGOYwzJ)cfTCVC6maNsU(hx8zYnZfshxAAKkK3APqa3xf447xN5Df(Am4qS4kTfUdSDfcOI1247k(W1FRRad3v8q9TY4GMUyJvcoFSW4IdTOWf7cqY9yuPAruFWOF60QjtrDSmLRb7FbEwh0v66kycHw9k8WTWAxuxXNyE2890ph99lUbjP27nU5XXlK(62YWNq8oqNGCITnCc7DCrklvuXJWPPvxjBWHcJ7LALlYybS4sMpZOxb2CPQQ1HzM26GCDvv(cUiBw3Ld4ZC1ATFCYPYQSLmflYW95n63Nnlzd(xNfxRBwNxjTW0knV1LLgWF0leqzBvv0MSrTMxoIL0Kj))0C(EPrPVJ1x(J1AATgTRV8a47GCqblX965zhpIaxntOxLVsBf5gMuTD78q3SlgK1TPWakMIdHkUpy0qKilWeRhPwWi9Bd40KFdt3LucU1dRUDUx0iDEx)9W7TY4XR6VxIAw2ac6hPKT2NHKdUd8ovyBtjClQGvYOKD2Zupk2oC9i4)42PFj)OABGrj9d1a3Oah)VlW5plbEZocmcEWRmsZNPNjq8jhSZFcNY2t)Xjh31NEGUEWlTTA7ZLfO4SdqrVJ6GR90(1(BFYA94pYM3w(BSCJFgQNiKkwRVwBPKVc3kBK4ZGFz4vU(00F9]]
 )

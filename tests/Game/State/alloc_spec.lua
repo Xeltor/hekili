@@ -261,38 +261,78 @@ describe("zero allocation", function()
         end
     )
 
-    it("allocates nothing over 100 Cooldown Manager hook calls (providers spec §2.4)", function()
+    -- The sweep (cdm-default §3.2, plan Task 3b): the item fields are written directly (ctl.ViewerAura logs its writes,
+    -- the fake's allocation, not the leaf's).
+    local function hold(item, on, unit)
+        item.auraInstanceID, item.auraDataUnit = on and fake.SECRET or nil, on and (unit or "player") or nil
+    end
+
+    it("the sweep over a 40-slot layout with changes allocates nothing (cdm-default §3.2)", function()
         local api, ctl = fake.new()
         ctl.now = 1
-        ctl.viewer.sets[2] = { 501 }
+        ctl.viewer.sets[2] = { 501, 502, 503, 504 }
         ctl.viewer.infos[501] = { spellID = fs.SPENDER_A }
-        local item = ctl.ViewerItem("BuffIconCooldownViewer", 1, 501)
-        item.unit = "player"
+        ctl.viewer.infos[502] = { spellID = fs.SPENDER_C }
+        ctl.viewer.infos[503] = { spellID = 9999 } -- unmapped
+        ctl.viewer.infos[504] = { spellID = 9998, linkedSpellIDs = { fs.SPENDER_A, 9997 } } -- ambiguous (counted)
+        local items = {}
+        for n = 1, 40 do
+            local v = fake.VIEWERS[n % 4 + 1]
+            if n % 10 == 0 then
+                ctl.ViewerChild(v)
+            else
+                items[#items + 1] = ctl.ViewerItem(v, n, 500 + n % 4 + 1)
+            end
+        end
         local ns = load.module()
         local I = ns.VirtualStateInternal
         local def = fs.def(fs.new(9))
+        def.providers = { presence = "router", viewer = true }
         I.Build(def, 1)
-        local Q = I.PRESENCE.viewer
-        Q.Activate(api, 1, def)
+        ns.VirtualState.Start(api)
+        local R = I.presence
         local n = 0
-        Q.onEdge = function()
+        R.onEdge = function()
             n = n + 1
         end
+        local U = I.auras -- records up, so a silence that passes the seen rule is live (Task 3c)
+        for u = 1, 2 do
+            for j = 1, 2 do
+                U.exp0[u][j], U.applied[u][j] = 1e6, 1
+            end
+        end
+        local t = 1
         local ok, bytes = pcall(alloc.bytes, function(i)
-            ctl.ViewerShow(item, i % 2 == 1)
+            t = t + 0.1
+            ctl.now = t
+            for k = 1, #items, 3 do -- a third of the slots change at every sweep, some for the target
+                hold(items[k], i % 2 == 1, k % 6 == 1 and "target" or "player")
+            end
+            ctl.viewer.shown.BuffBarCooldownViewer = i % 5 ~= 0 -- and a viewer hides now and then
+            if i % 7 == 0 then -- a re-point to the other aura and back (a seen-rule reset)
+                items[2].cooldownID = items[2].cooldownID == 501 and 502 or 501
+            end
+            if i % 11 == 0 then -- a record closes and opens again (the gate)
+                U.exp0[1][2] = U.exp0[1][2] > 0 and 0 or 1e6
+            end
+            if i % 13 == 0 then -- a target switch: settle and reset
+                ctl.Fire("PLAYER_TARGET_CHANGED")
+            end
+            R.Sweep(t)
+            R.Presence(1, 1)
+            R.Presence(2, 2)
         end, 100)
         assert.is_true(ok, tostring(bytes))
         assert.are.equal(0, bytes)
-        assert.is_true(n > 100, "every call an edge")
+        assert.is_true(n > 100, "the changes are edges")
     end)
 
-    it("allocates nothing over 100 hook calls through the Presence router (providers spec §2.5)", function()
+    it("allocates nothing over 100 sweeps and edges through the leaf and the router (providers spec §2.5)", function()
         local api, ctl = fake.new()
         ctl.now = 1
         ctl.viewer.sets[2] = { 501 }
         ctl.viewer.infos[501] = { spellID = fs.SPENDER_A }
         local item = ctl.ViewerItem("BuffIconCooldownViewer", 1, 501)
-        item.unit = "player"
         local ns = load.module()
         local I = ns.VirtualStateInternal
         local def = fs.def(fs.new(9))
@@ -303,8 +343,12 @@ describe("zero allocation", function()
         R.onEdge = function()
             n = n + 1
         end
+        I.auras.exp0[1][1], I.auras.applied[1][1] = 1e6, 1 -- the record up: the item's silence is live (seen rule)
+        local t = 1
         local ok, bytes = pcall(alloc.bytes, function(i)
-            ctl.ViewerShow(item, i % 2 == 1)
+            t = t + 0.1
+            hold(item, i % 2 == 1)
+            R.Sweep(t)
             R.Presence(1, 1)
             R.Presence(2, 2)
         end, 100)
@@ -312,6 +356,64 @@ describe("zero allocation", function()
         assert.are.equal(0, bytes)
         assert.is_true(n > 100, "every call an edge")
     end)
+
+    it(
+        "the sweep, poll 15 and the fold allocate nothing with proof, dark starts, verdicts, strikes and suspensions",
+        function()
+            local api, ctl = fake.new()
+            ctl.now = 1
+            ctl.viewer.sets[2] = { 502 }
+            ctl.viewer.infos[502] = { spellID = fs.SPENDER_C }
+            local item = ctl.ViewerItem("BuffIconCooldownViewer", 1, 502)
+            local ns = load.module()
+            local VS, I = ns.VirtualState, ns.VirtualStateInternal
+            local S, Q = I.Sources, I.PRESENCE.viewer
+            local def = fs.def(fs.new(9))
+            def.providers = { presence = "router", viewer = true }
+            I.Build(def, 1)
+            VS.Start(api)
+            ctl.now = 10
+            ctl.Fire("PLAYER_TARGET_CHANGED")
+            I.Fold(10, false)
+            ctl.Fire("PLAYER_REGEN_DISABLED")
+            ctl.auras.target.HARMFUL[1] = fake.SECRET -- the target walk secret: only the reduced facts speak
+            ctl.Fire("UNIT_AURA", "target")
+            local REND, k = 2, I.AURA_UNIT + 2
+            local t, maxDark, cycle, maxSince = 10, 0, 0, 0
+            -- a 12-poll cycle at 0.25 s: our cast (dark: dodged), the verdict at +1.0 (its close names the application,
+            -- counted at the fold), and every second cycle a late light at +1.5 (a strike) and dark again at +2.0 (rule 1
+            -- closes the CDM open). The cycle without a light leaves a silent verdict, so the next one's verdict suspends
+            -- the proof and its light re-proves it (review M3); the strikes reset each cycle so the item is never retired
+            local ok, bytes = pcall(alloc.bytes, function(i)
+                t = t + 0.25
+                ctl.now = t
+                local p = i % 12
+                if p == 0 then
+                    cycle = cycle + 1
+                    Q.strikes[502] = 0
+                    I.AuraModel(2, REND, t, t + 15, 1, t, ns.VirtualState.Obs.CastSuccess, true)
+                    I.AuraOurs(2, REND, 0)
+                elseif p == 6 and cycle % 2 == 0 then
+                    hold(item, true, "target")
+                elseif p == 8 then
+                    hold(item, false)
+                end
+                S.RunPolls(t)
+                I.Fold(t, false)
+                I.Settle(t)
+                local _, _, _, _, _, _, nd, since = Q.Counts(REND, 2)
+                maxDark = nd > maxDark and nd or maxDark
+                maxSince = since > maxSince and since or maxSince
+            end, 240)
+            assert.is_true(ok, tostring(bytes))
+            assert.are.equal(0, bytes)
+            assert.is_true(I.auraVerdict.n[k] > 20, "verdicts " .. I.auraVerdict.n[k])
+            assert.is_true(I.auraVerdict.strikes[k] > 10, "strikes " .. I.auraVerdict.strikes[k])
+            assert.is_true(Q.suspended > 10, "suspensions " .. Q.suspended)
+            assert.are.equal(1, maxDark)
+            assert.is_true(maxSince > 10, "the dark's start moved")
+        end
+    )
 
     it(
         "allocates nothing over 1000 meter events, 100 swings and their ticks with the Meter (providers spec §2.2)",

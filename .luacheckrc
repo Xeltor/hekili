@@ -34,10 +34,7 @@ globals = {
     "HekiliDisplayDefensives", "HekiliDisplayInterrupts", "HekiliNotification", "HekiliNotificationMover",
     "HekiliNotificationText", "HekiliTooltip", "HekiliCustomEditorInsertLink", "Hekili_Keyhandler",
     "Hekili_OnAddonCompartmentClick", "Hekili_OnAddonCompartmentEnter",
-    "Hekili_OnAddonCompartmentLeave", "Hekili_ToggleOptions", "Hekili_ToggleMode", "Hekili_TogglePause",
-    "Hekili_SnapshotMode", "Hekili_ToggleCooldowns", "Hekili_ToggleDefensives", "Hekili_ToggleInterrupts",
-    "Hekili_TogglePotions", "Hekili_ToggleEssences", "Hekili_ToggleCustom1", "Hekili_ToggleCustom2",
-    "Hekili_ToggleDisplayMode", "Hekili_FixSpecialization", "HandleSpellData", "BlizzBlue",
+    "Hekili_OnAddonCompartmentLeave", "HandleSpellData", "BlizzBlue",
     "HekiliPopupDropdownMixin", "HekiliPopupDropdownSliderMixin",
 }
 
@@ -60,7 +57,7 @@ read_globals = {
     "UIDropDownMenu_AddButton", "ToggleDropDownMenu", "UIFrameFadeOut", "PixelUtil", "PlayerUtil", "ExportUtil",
     "ClassTalentImportExportMixin", "Item", "ItemLocation", "Mixin", "hooksecurefunc", "CreateAtlasMarkup",
     "BackdropTemplateMixin", "AddonCompartmentFrame", "DEFAULT_CHAT_FRAME", "ChatFontNormal", "DevTools_Dump",
-    "InterfaceOptions_AddCategory", "Screenshot", "SetCVar", "SetOverrideBindingClick", "ClearOverrideBindings",
+    "Screenshot", "SetCVar", "SetOverrideBindingClick", "ClearOverrideBindings",
     "ClearCursor", "C_Timer", "Enum", "RAID_CLASS_COLORS", "NORMAL_FONT_COLOR", "TOOLTIP_UPDATE_TIME",
     "MAX_PLAYER_LEVEL", "LOCALIZED_CLASS_NAMES_MALE", "LOCALIZED_CLASS_NAMES_FEMALE", "ACCEPT",
     "INVTYPE_WEAPONMAINHAND", "INVSLOT_NECK", "INVSLOT_LAST_EQUIPPED", "ITEM_SPELL_TRIGGER_ONEQUIP",
@@ -85,6 +82,7 @@ local stateEnv = {
     "knownRank", "stat", "swingBase", "healthMax",
 }
 files["src/Hekili/Engine/Schema/Spec.lua"] = { globals = stateEnv }
+files["src/Hekili/Engine/Schema/Spec/"] = { globals = stateEnv }
 files["src/Hekili/Engine/Sim/"] = { globals = stateEnv }
 -- Options and Hekili.lua read no engine state either (Engine.Registry, the commands, Output.status); each keeps only
 -- upstream's stray global reads.
@@ -115,7 +113,7 @@ files["tests/Forever/"] = { std = "+busted" }
 -- further `state` names they use.
 local warriorEnv = {
     "rage", "cooldown", "combat", "active_enemies", "active_dot", "setDistance", "interrupt", "swap_stance",
-    "mainhand_remains", "nextMH", "mainhand_speed", "offhand_speed", "weapon", "level",
+    "mainhand_remains", "nextMH", "nextOH", "mainhand_speed", "offhand_speed", "weapon", "level",
 }
 for _, k in ipairs(stateEnv) do
     warriorEnv[#warriorEnv + 1] = k
@@ -132,7 +130,7 @@ end
 files["src/Hekili_Druid/Druid.lua"] = { globals = druidEnv }
 -- The Rogue's further `state` names.
 local rogueEnv = {
-    "energy", "combo_points", "cooldown", "combat", "class", "interrupt", "stealthed", "expose_due",
+    "energy", "combo_points", "cooldown", "combat", "class", "interrupt", "stealthed", "expose_due", "window", "closeWindow",
 }
 for _, k in ipairs(stateEnv) do
     rogueEnv[#rogueEnv + 1] = k
@@ -145,7 +143,7 @@ for _, k in ipairs(stateEnv) do
 end
 files["src/Hekili_Paladin/Paladin.lua"] = { globals = paladinEnv }
 -- The Shaman's further `state` names.
-local shamanEnv = { "totem", "summonTotem" }
+local shamanEnv = { "totem", "summonTotem", "combat", "nextMH", "nextOH", "mainhand_speed", "offhand_speed" }
 for _, k in ipairs(stateEnv) do
     shamanEnv[#shamanEnv + 1] = k
 end

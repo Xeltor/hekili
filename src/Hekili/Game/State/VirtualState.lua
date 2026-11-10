@@ -53,7 +53,7 @@ VS.Obs = {
     Range = 33, -- reserved
     TargetCast = 34, -- a: TargetCastOf; b: castBarID; c: interruptible 1 / 0 / -1 unknown
     TargetDamage = 35, -- b: a WOUND amount the target took (UNIT_COMBAT, plain); VirtualState's own, past TDF's range
-    PlayerHit = 36, -- a: I.HitKind; b: the amount (0: none); c: the attacker's level (UNIT_COMBAT on the player, plain)
+    PlayerHit = 36, -- a: I.HitKind; b: the amount (0: none, -1: a wound's secret amount); c: the attacker's level
     TargetRange = 37, -- a: the target's least distance in yards; b: its greatest (math.huge: no bound), the range poll's
     Avoided = 38, -- a: ability index; b: its cast's time; c: I.HitKind (DODGE, PARRY, MISS): our cast's own outcome on
     -- the target (Events/Rows.lua's pairing in its landing window, GAP AX); Families/Now.lua undoes and refunds it
@@ -73,8 +73,23 @@ I.HitName = { "WOUND", "BLOCKED", "BLOCK", "DODGE", "PARRY", "MISS", "HEAL", "DE
 
 --- What a `Read` observation read (its `c`): TDF's Enum.ReadOf integers (5 and 7-9 reserved), plus Health = 10 and
 --- RegenSpirit = 11 (an `fsr` slot's spirit part: the not-casting rate less the casting one), VirtualState kinds past
---- TDF's range.
-I.ReadOf = { Resource = 1, Aura = 2, TargetAura = 3, Max = 4, Regen = 6, Health = 10, RegenSpirit = 11 }
+--- TDF's range. AuraOpen = 12 and AuraHeld = 13 are the Cooldown Manager's presence writes (Sources/Auras.lua; below
+--- I.AURA_STACK, so they pack stacks like Aura): no client expiry behind them, so no plain read our cast's write yields
+--- to (Families/Auras.lua); AuraOpen also opens only a record still down when it folds (our cast's write wins).
+--- AuraVerdict = 14 is the verdict's close (cdm-verdict §2.3): its `b` is the applied time of the application it judged,
+--- and the fold closes the record only while that is still its application (a recast folded first stands).
+I.ReadOf = {
+    Resource = 1,
+    Aura = 2,
+    TargetAura = 3,
+    Max = 4,
+    Regen = 6,
+    Health = 10,
+    RegenSpirit = 11,
+    AuraOpen = 12,
+    AuraHeld = 13,
+    AuraVerdict = 14,
+}
 
 --- What a `TargetCast` observation reports (its `a`): TDF's Enum.TargetCastOf integers.
 I.TargetCastOf = { Start = 1, ChannelStart = 2, End = 3, Interrupted = 4, Kickable = 5 }

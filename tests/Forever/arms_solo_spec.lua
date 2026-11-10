@@ -231,7 +231,7 @@ describe("the shipped Arms leveling and PvE priority", function()
             assert.is_true(H.Hekili.State.debuff.hamstring.up)
             assert.is_not_true(nextAction == "hamstring")
             if not options.instance then
-                assert.are.equal("execute", nextAction)
+                assert.are.equal("slam", nextAction) -- The current WoWSims priority uses Slam through Execute range.
             end
         end
     end)

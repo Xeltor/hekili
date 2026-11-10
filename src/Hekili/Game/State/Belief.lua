@@ -45,11 +45,13 @@ local function advance(t)
     end
 end
 
+I.folds = 0
 --- Folds the log in order (spec §5.2 step 2): everything stamped at or before `upto`; an own cast's effects are
 --- written by its appliers (Families/Now.lua). An observation older than the clock is applied at the clock with
 --- `lag`. Allocates nothing.
 ---@param upto number
 function I.Fold(upto)
+    I.folds = I.folds + 1 -- one per drain: Families/Auras.lua's I.CastAura counts drains, not seconds
     local log = I.log
     if not I.started then
         -- The clock starts at the first thing heard, not at 0 (TDF Belief.lua:723-728).
@@ -98,7 +100,11 @@ end
 I.UNDECIDED, I.HIT, I.AVOID, I.OURS, I.FOREIGN, I.UP, I.DOWN = 0, 1, 2, 1, 2, 1, 2
 I.OUTCOMES, I.PRESENCE = {}, {}
 I.outcomes, I.presence, I.presenceViewer, I.restartProviders = nil, nil, nil, false
+local NO_PV = {}
 local wantO, wantP, wantV -- a swap asked for in combat (I.SetProviders): applied at combat end
+-- (cdm-panel) def.providers.cdmGen at the presence provider's last activation: a moved one (a Cooldown Manager switch,
+-- Tracked.lua Hekili:CdmSwitchChanged) re-activates it, so the leaf rebuilds its map; never mid-fight
+local presenceGen
 
 -- Activates the named providers (spec §3.1): unknown names are "default"; only a changed choice is swapped, except
 -- that a build (`def`) re-activates the presence provider (its map names the new set's auras).
@@ -112,7 +118,10 @@ local function provide(oName, pName, viewer, now, def)
         I.outcomes = O
         O.Activate(I.api, now)
     end
-    if P ~= I.presence or viewer ~= I.presenceViewer or def then
+    local gen = (def or I.def or NO_PV).providers
+    gen = gen and gen.cdmGen
+    if P ~= I.presence or viewer ~= I.presenceViewer or def or gen ~= presenceGen then
+        presenceGen = gen
         if I.presence then
             I.presence.Deactivate(now)
         end

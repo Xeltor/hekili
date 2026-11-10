@@ -86,6 +86,34 @@ describe("now handlers", function()
         assert.are.same({ 0, 0, 0 }, { state.resets, state.offset, state.delay }) -- Hekili's state untouched
     end)
 
+    it("our cast's aura write marks that application ours (cdm-default rule 2.5.1)", function()
+        start()
+        local k = I.AURA_UNIT + I.auras.bySpell[fs.SPENDER_C]
+        assert.are.equal(0, I.auraOurs[k])
+        cast(fs.SPENDER_C, 5)
+        assert.is_true(I.auraOurs[k] ~= 0)
+    end)
+
+    it("our cast's write carries its travel (rMax / velocity) into the verdict's W (cdm-verdict §2.3)", function()
+        register("bolt_test", {
+            id = 2687,
+            expects = "travel",
+            school = "nature",
+            velocity = 20,
+            now = function()
+                applyDebuff("target", "spender_c", 15) -- luacheck: ignore 113 (the `now` context's verb)
+            end,
+        })
+        start()
+        local a, k = I.ab.bySpell[2687], I.AURA_UNIT + I.auras.bySpell[fs.SPENDER_C]
+        assert.are.equal(20, I.ab.velocity[a])
+        I.ab.rMax[a] = 30 -- the range read's (Sources/Spellbook.lua)
+        cast(2687, 5)
+        assert.is_true(math.abs(I.auraVerdict.W[k] - 1.8) < 1e-9, I.auraVerdict.W[k]) -- 30 / 20 + TOL 0.3
+        cast(fs.SPENDER_C, 6) -- no velocity: W0
+        assert.are.equal(1.0, I.auraVerdict.W[k])
+    end)
+
     it("shifts a resource by `gain` (est, lo and hi) and writes its energize row back-dated to the cast", function()
         register("rage_test", {
             id = 2687,
@@ -200,7 +228,6 @@ describe("now handlers", function()
         maul = "as heroic_strike",
         raptor_strike = "as heroic_strike",
         revenge = "revenge_usable has no spell id: untracked",
-        riposte = "riposte_usable has no spell id: untracked; its window is the client's usability answer (reset_precast), as revenge",
         starfire = "removeStack is no `now` verb; the charges end with the 15 s aura",
         fire_blast = "removeStack is no `now` verb; the belief reads Fingers of Frost charges from the aura walk",
         claw = "combo points are read plainly in combat (poll 1)",
@@ -825,6 +852,36 @@ describe("now handlers", function()
             local rec, n = VS.Aura("target", fs.SPENDER_C, 5.1)
             assert.are.same({ "modelled", 1 }, { rec.basis, n })
             assert.are.equal(0, I.auraReadsWon)
+        end)
+
+        it("a Cooldown Manager light folded just before the cast is its own application: no double stack", function()
+            stackCast()
+            -- the CDM's open of a record believed down (Sources/Auras.lua apply), a frame before the cast's event
+            I.Sources.Direct(VS.Obs.Read, 4.98, j, 3600, I.ReadOf.AuraOpen)
+            cast(7387, 5)
+            local rec, n = VS.Aura("player", 7386, 5.1)
+            assert.are.same({ 1, 35 }, { n, rec.est }) -- addStack read it down: one stack, the cast's 30 s (F3)
+            cast(7387, 6) -- the next cast stacks on our own record
+            assert.are.equal(2, stacks(6.1))
+        end)
+
+        -- review S3: the light is the cast's own only when folded in the drain just before the cast's (or in it):
+        -- drains, not seconds (the old 0.05 s window answered the opposite in both cases below)
+        it("a CDM light 0.1 s before the cast, in the drain just before its drain, is its own application", function()
+            stackCast()
+            I.Sources.Direct(VS.Obs.Read, 4.9, j, 3600, I.ReadOf.AuraOpen)
+            VS.Drain(4.92)
+            cast(7387, 5)
+            assert.are.equal(1, stacks(5.1))
+        end)
+
+        it("a CDM light 0.03 s before the cast but two drains before is an earlier application", function()
+            stackCast()
+            I.Sources.Direct(VS.Obs.Read, 4.97, j, 3600, I.ReadOf.AuraOpen)
+            VS.Drain(4.975)
+            VS.Drain(4.99)
+            cast(7387, 5)
+            assert.are.equal(2, stacks(5.1))
         end)
 
         it("lets a read after the modelled change win, as before", function()

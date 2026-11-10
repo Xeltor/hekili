@@ -1,23 +1,24 @@
 -- Hekili_Rogue/Rogue.lua
 -- The Forever Rogue (Assassination, Combat and Subtlety, one spec a talent tree: Hekili:NewClass): the Rogue kit with
 -- Forever's spell data (ranks, costs, cooldowns and durations from the Forever DB2 at build 1.60.1.70338, wowdb; energy
--- costs are DB2 points), Forever's Venom, Mutilate and Cutthroat, energy and combo points as the Druid's cat has them
+-- costs are DB2 points), Forever's Shank, Death Mark and Mutilate, energy and combo points as the Druid's cat has them
 -- (combo points plain in combat, measured), Adrenaline Rush as a regen multiplier, Stealth and Vanish from IsStealthed
 -- (unprobed, so the belief also models them from our casts) and the poisons as abilities (no list recommends them
 -- now). The defaults are the "<Spec> (wowsims.com)" packs, generated from wowsims/forever's Rogue APL
 -- (tools/wowsims/specs/rogue_*.lua; no in-game check yet). Research: docs/research/2026-10-15-forever-rogue/research.md
 -- and the class-completion research §2.
--- Talents: the DB2's 51 Classic nodes and the Forever-only ones this file reads; a modifier is rank 1's value x the
--- rank (Classic's convention; only rank 1 of each is in the Forever DB2), floored at 0, except where wowsims/forever's
--- casts at the talent's last rank show the DB2 value is the whole talent's (Improved Sinister Strike, Dirty Deeds:
--- that value x rank / max rank).
+-- Talents: the DB2's Classic nodes and the Forever-only ones this file reads, as the 0.7 re-pin's rework left them
+-- (wowsims/forever at 4b0030a44b: Venom, Cutthroat, Thousand Cuts, Murder gone as they were; Shank, Death Mark, Boot
+-- Knife, Flash of Steel, Composure, Blood Splatter, Quick Getaway new; Improved Sinister Strike is Efficient Strikes,
+-- Improved Eviscerate Coup de Grace). A modifier is the rank curve wowsims/forever's spell store states (the
+-- generatedCurves of sim/core/spelldata/spells_auto_gen.go), else rank 1's value x the rank.
 -- Credits: Hekili (registration API and pack format; the `stealthed` table and the stealth-breaking runHandler hook
 -- follow Hekili's Classic profile, origin/classic:Classic/Rogue.lua). wowsims/forever (MIT,
--- ui/specs/rogue/dps/apls/default.apl.json and sim/rogue/) is the reference for the priorities and the Cutthroat and
--- Preparation rules; no code is copied.
+-- ui/specs/rogue/dps/apls/default.apl.json and sim/rogue/) is the reference for the priorities and the Ghostly Strike
+-- and Preparation rules; no code is copied.
 
 local Facade = Hekili.Client
-local UnitClassBase, GetTime = Facade.UnitClassBase, Facade.GetTime
+local UnitClassBase = Facade.UnitClassBase
 local IsSpellUsable, GetItemCount = Facade.C_Spell.IsSpellUsable, Facade.C_Item.GetItemCount
 local L = Hekili:GetLocale("Hekili_Rogue")
 
@@ -73,12 +74,13 @@ local KICK = { 1766, 1767, 1768, 1769 }
 local RIPOSTE = { 14251 }
 local AMBUSH = { 8676, 8724, 8725, 11267, 11268, 11269 }
 local GARROTE = { 703, 8631, 8632, 8633, 11289, 11290 }
-local MUTILATE = { 1310707, 399956, 1241582, 1241584 }
+local MUTILATE = { 399956, 1241582, 1241584 } -- 1310707 (the talent rank 1) left at the 0.7 re-pin
+local SHANK = { 1329283, 1329549 } -- levels 24, 44
+local DEATH_MARK = { 1316709, 1325756, 1325757, 1325758 } -- levels 40, 48, 56, 60
 local VANISH = { 1856, 1857, 1285372 } -- 1285372: Forever's "Rank 3" (checkpoint Q12)
 local STEALTH = { 1784, 1785, 1786, 1787 }
 local HEMORRHAGE = { 16511 }
 local GHOSTLY_STRIKE = { 14278 }
-local VENOM = { 1310703 }
 local ADRENALINE_RUSH = { 13750 }
 local BLADE_FLURRY = { 13877 }
 local COLD_BLOOD = { 14177 }
@@ -88,8 +90,14 @@ local PREPARATION = { 14185 }
 local INSTANT_POISON = { 8928, 8927, 8926, 6950, 6949, 6947 }
 local DEADLY_POISON = { 20844, 8985, 8984, 2893, 2892 }
 
--- Relentless Strikes (14179: 20% a combo point to restore 14181's 25 energy): only the certain part, at 5 points.
+-- Relentless Strikes (14179, 4% a rank a combo point to restore 14181's 25 energy): only the certain part, 5 ranks at
+-- 5 points (the rank curve {4, 8, 12, 16, 20}).
 local RELENTLESS_ENERGY = 25
+
+-- Improved Expose Armor (14168): the energy curve {-5, -10} by rank (the old rank x 10 priced rank 2 at 5, not 15).
+local IMPROVED_EXPOSE_ARMOR = { [0] = 0, 5, 10 }
+-- Efficient Strikes (13732, Sinister Strike and Hemorrhage): the rank curve {-3, -5}, by rank.
+local EFFICIENT_STRIKES = { [0] = 0, 3, 5 }
 
 local function rest(ids)
     local out = {}
@@ -110,7 +118,8 @@ local function knows(ids)
 end
 
 -- The finishers' durations by combo points (DB2 durations and per-point steps): Slice and Dice 6 + 3 a point,
--- Improved Slice and Dice +15% a rank (14165 aura 108 base 15); Rupture 6 + 2 a point; Venom 6 + 3 a point. Read at the
+-- Improved Slice and Dice +15% a rank (14165 aura 108 base 15); Rupture 6 + 2 a point. Blood Splatter (1329256: duration
+-- +6000 ms on Rupture's class mask, +9000 ms on Garrote's) adds 6 s to Rupture and 9 s to Garrote. Read at the
 -- cast, so `now` and `handler` pass them (the auras' registered durations are the 5-point ones).
 local function sndDuration(cp, rank)
     return (6 + 3 * cp) * (1 + 0.15 * rank)
@@ -128,68 +137,67 @@ spec:RegisterResource(Enum.PowerType.Energy, {
 }, nil, { refundOnAvoid = 0.8 })
 
 -- Talents: { talent tree (1 Assassination, 2 Combat, 3 Subtlety: the dominant tree picks the spec), rank 1's spell,
--- max rank }: the DB2's 51 nodes (`wowdb talents ROGUE`; the tree is the DB2's Talent.TabID), keys the snake_case
--- names (Setup is setup_talent; a nameless node talent_<spell>), and the Forever-only ones by spell at tree 0 until the
--- live export (checkpoint Q1) places them.
+-- max rank }: Forever's tree as wowsims/forever's ui/sim/talents/trees/rogue.json lists it (tools/wowsims/talents.lua
+-- writes it; tests/Forever/talent_trees_spec.lua checks it and the spec detection over it). A key is Classic's where the
+-- talent exists there (code reads `talent.<key>.rank`; Setup is setup_talent), else the snake_case of the node's name.
 spec:RegisterTalents({
     -- Assassination (tree 1)
-    improved_eviscerate = { 1, 14162, 3 },
+    improved_gouge = { 1, 13741, 3 },
     remorseless_attacks = { 1, 14144, 2 },
     malice = { 1, 14138, 5 },
     ruthlessness = { 1, 14156, 3 },
-    murder = { 1, 14158, 2 },
-    improved_slice_and_dice = { 1, 14165, 3 },
-    relentless_strikes = { 1, 14179, 1 },
     improved_expose_armor = { 1, 14168, 2 },
-    lethality = { 1, 14128, 5 },
+    improved_slice_and_dice = { 1, 14165, 3 },
+    vigor = { 1, 14983, 2 },
+    blood_splatter = { 1, 1329256, 1 },
+    lethality = { 1, 14128, 2 },
     vile_poisons = { 1, 16513, 5 },
-    improved_poisons = { 1, 14113, 5 },
     cold_blood = { 1, 14177, 1 },
-    improved_kidney_shot = { 1, 14174, 3 },
-    seal_fate = { 1, 14186, 5 },
-    vigor = { 1, 14983, 1 },
+    improved_poisons = { 1, 14113, 5 },
+    relentless_strikes = { 1, 14179, 5 },
+    venom = { 1, 1329328, 1 }, -- Shank's 6 s poison bonus
+    improved_kidney_shot = { 1, 14174, 2 },
+    seal_fate = { 1, 14186, 3 },
+    mutilate = { 1, 399956, 1 },
     -- Combat (tree 2)
-    improved_gouge = { 2, 13741, 3 },
-    improved_sinister_strike = { 2, 13732, 2 },
+    coup_de_grace = { 2, 14162, 3 },
+    efficient_strikes = { 2, 13732, 2 },
     lightning_reflexes = { 2, 13712, 5 },
-    talent_13733 = { 2, 13733, 3 },
-    deflection = { 2, 13713, 5 },
-    precision = { 2, 13705, 5 },
+    puncturing_wounds = { 2, 1224716, 3 },
+    deflection = { 2, 13713, 3 },
+    precision = { 2, 13705, 3 },
+    improved_sprint = { 2, 13743, 2 },
     endurance = { 2, 13742, 2 },
     riposte = { 2, 14251, 1 },
-    improved_sprint = { 2, 13743, 2 },
+    composure = { 2, 1329265, 2 },
     improved_kick = { 2, 13754, 2 },
-    hack_and_slash = { 2, 13706, 5 },
-    dual_wield_specialization = { 2, 13715, 5 },
-    hack_and_slash_2 = { 2, 13709, 5 },
-    blade_flurry = { 2, 13877, 1 },
-    hack_and_slash_3 = { 2, 13960, 5 },
-    fist_weapon_specialization = { 2, 13707, 5 },
+    flawless_execution = { 2, 1310711, 1 },
     weapon_expertise = { 2, 30919, 2 },
     aggression = { 2, 18427, 3 },
+    dual_wield_specialization = { 2, 13715, 2 },
+    blade_flurry = { 2, 13877, 1 },
+    hack_and_slash_3 = { 2, 13960, 5 },
+    flash_of_steel = { 2, 1329284, 5 }, -- Shank: +3 energy and -0.4 s cooldown a rank
     adrenaline_rush = { 2, 13750, 1 },
     -- Subtlety (tree 3)
-    master_of_deception = { 3, 13958, 5 },
-    opportunity = { 3, 14057, 5 },
-    sleight_of_hand = { 3, 30892, 2 },
-    elusiveness = { 3, 13981, 2 },
-    camouflage = { 3, 13975, 5 },
-    initiative = { 3, 13976, 3 },
-    ghostly_strike = { 3, 14278, 1 },
-    improved_ambush = { 3, 14079, 3 },
     setup_talent = { 3, 13983, 3 },
-    improved_sap = { 3, 14076, 3 },
+    master_of_deception = { 3, 13958, 3 },
+    opportunity = { 3, 14057, 5 },
+    dirty_deeds = { 3, 14082, 2 },
+    camouflage = { 3, 13975, 3 },
+    improved_ambush = { 3, 14079, 3 },
+    dirty_tricks = { 3, 1224782, 2 },
+    initiative = { 3, 13976, 3 },
+    premeditation = { 3, 14183, 1 },
     serrated_blades = { 3, 14171, 3 },
+    elusiveness = { 3, 13981, 2 },
+    ghostly_strike = { 3, 14278, 1 },
+    quick_getaway = { 3, 1310728, 2 },
     heightened_senses = { 3, 30894, 2 },
     preparation = { 3, 14185, 1 },
-    dirty_deeds = { 3, 14082, 2 },
     hemorrhage = { 3, 16511, 1 },
-    deadliness = { 3, 30902, 5 },
-    premeditation = { 3, 14183, 1 },
-    -- Forever-only (tree unknown until the export)
-    flawless_execution = { 0, 1310711, 1 },
-    thousand_cuts = { 0, 1310721, 1 },
-    cutthroat = { 0, 424980, 1 },
+    boot_knife = { 3, 1329286, 5 }, -- Shank's chance of 2 combo points (20% a rank; not modelled)
+    death_mark = { 3, 1316709, 1 },
 })
 
 spec:RegisterAuras({
@@ -216,17 +224,11 @@ spec:RegisterAuras({
         duration = 3600,
         max_stack = 1,
     },
-    -- Cutthroat's proc (462707, 10 s): the next Ambush needs no Stealth. From Ambush's usability flip (reset_precast).
-    cutthroat = {
-        id = 462707,
-        duration = 10,
-        max_stack = 1,
-    },
-    -- Riposte's window: the game opens it for 5 s after a parry and answers Riposte as usable only inside it. From the
-    -- plain usability read like Cutthroat's (the player aura walk is secret in combat); the way Warrior's Overpower and
-    -- Revenge windows are modelled.
-    riposte_usable = {
-        duration = 5,
+    -- Death Mark (rank 4 1325758, 6 s): the mark's payout lands when it ends.
+    death_mark = {
+        id = 1325758,
+        copy = { 1316709, 1325756, 1325757 },
+        duration = 6,
         max_stack = 1,
     },
     expose_armor = {
@@ -244,6 +246,13 @@ spec:RegisterAuras({
     },
     ghostly_strike = {
         id = 14278,
+        duration = 7,
+        max_stack = 1,
+    },
+    -- The next Ambush or Garrote needs no Stealth (1329326, 7 s, one charge): Ghostly Strike's landing gives it, either
+    -- cast takes it (wowsims talents_subtlety.go). From our cast's `now`, as the strike's own buff.
+    ghostly_strike_next = {
+        id = 1329326,
         duration = 7,
         max_stack = 1,
     },
@@ -280,17 +289,11 @@ spec:RegisterAuras({
         max_stack = 1,
         isStealthed = true,
     },
+    -- Venom (talent 1329328): Shank gives +30% poison damage for 6 s.
     venom = {
         id = 1310703,
-        duration = 21,
+        duration = 6,
         max_stack = 1,
-    },
-    -- Thousand Cuts's stacks (1310723, 10 s, 5: from Rupture's ticks): Backstab and Hemorrhage cost 3 less a stack
-    -- (effect 0: aura 107 misc 14 -3, class mask 0x2000004).
-    thousand_cuts = {
-        id = 1310723,
-        duration = 10,
-        max_stack = 5,
     },
 })
 
@@ -322,10 +325,9 @@ spec:RegisterHook("runHandler", function(key)
     end
 end)
 
--- Cutthroat from the plain usability read (the player aura walk is secret in combat): Ambush usable, or short only of
--- energy, while neither Stealth nor Vanish is believed up, is the proc; its 10 s from the flip's time.
-local cutthroatAt, ambushOpen = 0, false
-local riposteAt, riposteOpen = 0, false
+-- Riposte's window (L138; the Forever client answers Riposte as usable only inside the 5 s a parry opens): the client's
+-- usability flip is the evaluator, its false->true edge opens the window, the flip back (Riposte cast, or the 5 s)
+-- closes it. The belief owns the span, so it forecasts and survives a rebuild. (Runs in the belief's `now` context.)
 local function riposteUsable()
     local r = knownRank(RIPOSTE)
     if r == 0 then
@@ -334,50 +336,11 @@ local function riposteUsable()
     local usable, noMana = IsSpellUsable(RIPOSTE[r])
     return usable == true or noMana == true
 end
-local function ambushUsable()
-    local r = knownRank(AMBUSH)
-    if r == 0 then
-        return false
-    end
-    local usable, noMana = IsSpellUsable(AMBUSH[r])
-    return usable == true or noMana == true
-end
-spec:RegisterEvent("SPELL_UPDATE_USABLE", function()
-    local u = ambushUsable()
-    if u ~= ambushOpen then
-        ambushOpen = u
-        cutthroatAt = u and GetTime() or 0
-    end
-    local p = riposteUsable()
-    if p ~= riposteOpen then
-        riposteOpen = p
-        riposteAt = p and GetTime() or 0
-    end
-end)
-
-spec:RegisterHook("reset_precast", function()
-    if
-        now == query_time
-        and talent.cutthroat.enabled
-        and not (buff.stealth.up or buff.vanish.up)
-        and ambushUsable()
-    then
-        if cutthroatAt > 0 and now - cutthroatAt < 10 then
-            applyBuff("cutthroat", cutthroatAt + 10 - now)
-        else
-            applyBuff("cutthroat")
-        end
-    end
-
-    -- Riposte's 5 s from the parry (the usability flip's time), else its window with no known end.
-    if now == query_time and riposteUsable() then
-        if riposteAt > 0 and now - riposteAt < 5 then
-            applyBuff("riposte_usable", riposteAt + 5 - now)
-        else
-            applyBuff("riposte_usable")
-        end
-    end
-end)
+spec:RegisterWindow("riposte", {
+    evaluator = riposteUsable,
+    duration = 5,
+    close_on_false = true,
+})
 
 -- A finisher needs a combo point (its `usable`; with `ladder = false` its answers are no energy rungs, C9).
 local function finisherUsable()
@@ -460,20 +423,20 @@ spec:RegisterAbilities({
         refundOnAvoid = true, -- wowsims ambush.go; DB2 Discount Power On Miss
         known = knows(AMBUSH),
 
-        -- In Stealth or Vanish, or with Cutthroat's proc; a dagger and being behind are the player's (settings).
+        -- In Stealth or Vanish, or after a Ghostly Strike; a dagger and being behind are the player's (settings).
         usable = function()
-            return buff.stealth.up or buff.vanish.up or buff.cutthroat.up, "requires stealth"
+            return buff.stealth.up or buff.vanish.up or buff.ghostly_strike_next.up, "requires stealth"
         end,
 
         now = function()
             removeBuff("stealth")
             removeBuff("vanish")
-            removeBuff("cutthroat")
+            removeBuff("ghostly_strike_next")
             removeBuff("cold_blood")
         end,
 
         handler = function()
-            removeBuff("cutthroat")
+            removeBuff("ghostly_strike_next")
             removeBuff("cold_blood")
             gain(1, "combo_points")
         end,
@@ -486,9 +449,7 @@ spec:RegisterAbilities({
         cooldown = 0,
         gcd = "totem",
 
-        spend = function()
-            return max(0, 60 - 3 * buff.thousand_cuts.stack)
-        end,
+        spend = 60,
         spendType = "energy",
 
         startsCombat = true,
@@ -554,7 +515,7 @@ spec:RegisterAbilities({
         gcd = "totem",
 
         spend = function()
-            return max(0, 35 - 10 * talent.flawless_execution.rank)
+            return max(0, 35 - 15 * talent.flawless_execution.rank) -- 1310711's -15 (4b0030a44b; the log's 20)
         end,
         spendType = "energy",
 
@@ -566,14 +527,14 @@ spec:RegisterAbilities({
 
         now = function()
             removeBuff("cold_blood")
-            if talent.relentless_strikes.enabled and combo_points.current >= 5 then
+            if talent.relentless_strikes.rank >= 5 and combo_points.current >= 5 then
                 gain(RELENTLESS_ENERGY, "energy")
             end
         end,
 
         handler = function()
             removeBuff("cold_blood")
-            if talent.relentless_strikes.enabled and combo_points.current >= 5 then
+            if talent.relentless_strikes.rank >= 5 and combo_points.current >= 5 then
                 gain(RELENTLESS_ENERGY, "energy")
             end
             spend(combo_points.current, "combo_points")
@@ -589,7 +550,7 @@ spec:RegisterAbilities({
         gcd = "totem",
 
         spend = function()
-            return max(0, 25 - 10 * talent.improved_expose_armor.rank)
+            return max(0, 25 - IMPROVED_EXPOSE_ARMOR[talent.improved_expose_armor.rank]) -- the curve {-5, -10}
         end,
         spendType = "energy",
 
@@ -601,14 +562,14 @@ spec:RegisterAbilities({
 
         now = function()
             applyDebuff("target", "expose_armor")
-            if talent.relentless_strikes.enabled and combo_points.current >= 5 then
+            if talent.relentless_strikes.rank >= 5 and combo_points.current >= 5 then
                 gain(RELENTLESS_ENERGY, "energy")
             end
         end,
 
         handler = function()
             applyDebuff("target", "expose_armor")
-            if talent.relentless_strikes.enabled and combo_points.current >= 5 then
+            if talent.relentless_strikes.rank >= 5 and combo_points.current >= 5 then
                 gain(RELENTLESS_ENERGY, "energy")
             end
             spend(combo_points.current, "combo_points")
@@ -633,17 +594,19 @@ spec:RegisterAbilities({
         missable = true,
 
         usable = function()
-            return buff.stealth.up or buff.vanish.up, "requires stealth"
+            return buff.stealth.up or buff.vanish.up or buff.ghostly_strike_next.up, "requires stealth"
         end,
 
         now = function()
             removeBuff("stealth")
             removeBuff("vanish")
-            applyDebuff("target", "garrote")
+            removeBuff("ghostly_strike_next")
+            applyDebuff("target", "garrote", 18 + 9 * talent.blood_splatter.rank)
         end,
 
         handler = function()
-            applyDebuff("target", "garrote")
+            removeBuff("ghostly_strike_next")
+            applyDebuff("target", "garrote", 18 + 9 * talent.blood_splatter.rank)
             gain(1, "combo_points")
         end,
     },
@@ -663,10 +626,12 @@ spec:RegisterAbilities({
 
         now = function()
             applyBuff("ghostly_strike")
+            applyBuff("ghostly_strike_next")
         end,
 
         handler = function()
             applyBuff("ghostly_strike")
+            applyBuff("ghostly_strike_next")
             gain(1, "combo_points")
         end,
     },
@@ -678,7 +643,7 @@ spec:RegisterAbilities({
         gcd = "totem",
 
         spend = function()
-            return max(0, 35 - 3 * buff.thousand_cuts.stack)
+            return max(0, 35 - EFFICIENT_STRIKES[talent.efficient_strikes.rank]) -- the log's 30 at rank 2
         end,
         spendType = "energy",
 
@@ -720,8 +685,8 @@ spec:RegisterAbilities({
     },
 
     -- Combat talent (DB2 14251: 10 energy, 6 s cooldown, off the global cooldown, 5 yd, a strike that also disarms for
-    -- 6 s). Usable only in the 5 s window after a parry (buff.riposte_usable, from the client's usability answer, as
-    -- Warrior's Revenge). On no built-in priority (L91): a custom priority adds `riposte` itself.
+    -- 6 s). Usable only in the 5 s window after a parry (window.riposte, from the client's usability answer). On the
+    -- Combat priority, in the window (owner R70).
     riposte = {
         id = 14251,
         cast = 0,
@@ -733,16 +698,22 @@ spec:RegisterAbilities({
 
         startsCombat = true,
         known = knows(RIPOSTE),
-        buff = "riposte_usable",
+        usable = function()
+            return window.riposte.up, "needs a parry in the last 5 s"
+        end,
+
+        now = function()
+            closeWindow("riposte")
+        end,
 
         handler = function()
-            removeBuff("riposte_usable")
+            closeWindow("riposte")
         end,
     },
 
     -- Both hands; +2 combo points (one effect).
     mutilate = {
-        id = 1310707,
+        id = 399956,
         copy = rest(MUTILATE),
         cast = 0,
         cooldown = 0,
@@ -782,7 +753,7 @@ spec:RegisterAbilities({
         end,
     },
 
-    -- Finishes the cooldowns of Cold Blood, Premeditation, Vanish, Ghostly Strike, Blade Flurry and Adrenaline Rush
+    -- Finishes the cooldowns of Cold Blood, Premeditation, Vanish, Ghostly Strike, Blade Flurry, Adrenaline Rush and Riposte
     -- (wowsims's list: a server script, no client data).
     preparation = {
         id = 14185,
@@ -801,6 +772,7 @@ spec:RegisterAbilities({
             setCooldown("ghostly_strike", 0)
             setCooldown("blade_flurry", 0)
             setCooldown("adrenaline_rush", 0)
+            setCooldown("riposte", 0)
         end,
 
         handler = function()
@@ -810,6 +782,7 @@ spec:RegisterAbilities({
             setCooldown("ghostly_strike", 0)
             setCooldown("blade_flurry", 0)
             setCooldown("adrenaline_rush", 0)
+            setCooldown("riposte", 0)
         end,
     },
 
@@ -831,15 +804,15 @@ spec:RegisterAbilities({
         usable = finisherUsable,
 
         now = function()
-            applyDebuff("target", "rupture", 6 + 2 * combo_points.current)
-            if talent.relentless_strikes.enabled and combo_points.current >= 5 then
+            applyDebuff("target", "rupture", 6 + 2 * combo_points.current + 6 * talent.blood_splatter.rank)
+            if talent.relentless_strikes.rank >= 5 and combo_points.current >= 5 then
                 gain(RELENTLESS_ENERGY, "energy")
             end
         end,
 
         handler = function()
-            applyDebuff("target", "rupture", 6 + 2 * combo_points.current)
-            if talent.relentless_strikes.enabled and combo_points.current >= 5 then
+            applyDebuff("target", "rupture", 6 + 2 * combo_points.current + 6 * talent.blood_splatter.rank)
+            if talent.relentless_strikes.rank >= 5 and combo_points.current >= 5 then
                 gain(RELENTLESS_ENERGY, "energy")
             end
             spend(combo_points.current, "combo_points")
@@ -854,7 +827,7 @@ spec:RegisterAbilities({
         gcd = "totem",
 
         spend = function()
-            return max(0, 45 - 2.5 * talent.improved_sinister_strike.rank) -- 13732's -5 is the talent's whole
+            return max(0, 45 - EFFICIENT_STRIKES[talent.efficient_strikes.rank])
         end,
         spendType = "energy",
 
@@ -890,14 +863,14 @@ spec:RegisterAbilities({
         -- Replaces the running one (checkpoint Q8).
         now = function()
             applyBuff("slice_and_dice", sndDuration(combo_points.current, talent.improved_slice_and_dice.rank))
-            if talent.relentless_strikes.enabled and combo_points.current >= 5 then
+            if talent.relentless_strikes.rank >= 5 and combo_points.current >= 5 then
                 gain(RELENTLESS_ENERGY, "energy")
             end
         end,
 
         handler = function()
             applyBuff("slice_and_dice", sndDuration(combo_points.current, talent.improved_slice_and_dice.rank))
-            if talent.relentless_strikes.enabled and combo_points.current >= 5 then
+            if talent.relentless_strikes.rank >= 5 and combo_points.current >= 5 then
                 gain(RELENTLESS_ENERGY, "energy")
             end
             spend(combo_points.current, "combo_points")
@@ -948,31 +921,68 @@ spec:RegisterAbilities({
         end,
     },
 
-    -- Forever-only (talent, level 40): poison damage +30% for 6 s + 3 a combo point.
-    venom = {
-        id = 1310703,
+    -- Forever-only (levels 24 and 44, 5 energy, 10 s): an off-hand strike that gives 15 (rank 1) or 25 (rank 2) energy
+    -- and 3 more a Flash of Steel rank, which also shortens its cooldown 0.4 s a rank; with Venom it gives the poison
+    -- bonus. No combo point: wowsims's Shank is no builder (Boot Knife's 2-point chance is not modelled).
+    shank = {
+        id = 1329283,
+        copy = { 1329549 },
         cast = 0,
-        cooldown = 0,
+        cooldown = function()
+            return 10 - 0.4 * talent.flash_of_steel.rank
+        end,
+        gcd = "totem",
+
+        spend = 5,
+        spendType = "energy",
+
+        startsCombat = true,
+        known = knows(SHANK),
+
+        now = function()
+            gain((knownRank(SHANK) >= 2 and 25 or 15) + 3 * talent.flash_of_steel.rank, "energy")
+            if talent.venom.enabled then
+                applyBuff("venom")
+            end
+        end,
+
+        handler = function()
+            gain((knownRank(SHANK) >= 2 and 25 or 15) + 3 * talent.flash_of_steel.rank, "energy")
+            if talent.venom.enabled then
+                applyBuff("venom")
+            end
+        end,
+    },
+
+    -- Subtlety's finisher (talent, levels 40/48/56/60: 25 energy, 1 combo point at least, 10 s): a 6 s mark that deals a
+    -- share of what the rogue deals the target when it ends (the payout is not modelled).
+    death_mark = {
+        id = 1316709,
+        copy = rest(DEATH_MARK),
+        cast = 0,
+        cooldown = 10,
         gcd = "totem",
 
         spend = 25,
         spendType = "energy",
 
-        startsCombat = false,
-        known = knows(VENOM),
+        startsCombat = true,
+        refundOnAvoid = true, -- wowsims death_mark.go IssueRefund on a miss
+        known = knows(DEATH_MARK),
+        missable = true,
         ladder = false,
         usable = finisherUsable,
 
         now = function()
-            applyBuff("venom", 6 + 3 * combo_points.current)
-            if talent.relentless_strikes.enabled and combo_points.current >= 5 then
+            applyDebuff("target", "death_mark")
+            if talent.relentless_strikes.rank >= 5 and combo_points.current >= 5 then
                 gain(RELENTLESS_ENERGY, "energy")
             end
         end,
 
         handler = function()
-            applyBuff("venom", 6 + 3 * combo_points.current)
-            if talent.relentless_strikes.enabled and combo_points.current >= 5 then
+            applyDebuff("target", "death_mark")
+            if talent.relentless_strikes.rank >= 5 and combo_points.current >= 5 then
                 gain(RELENTLESS_ENERGY, "energy")
             end
             spend(combo_points.current, "combo_points")
@@ -995,16 +1005,16 @@ spec:RetirePacks({ "Combat", "Assassination", "Subtlety" })
 -- /hekili priority <name>.
 spec:RegisterPack(
     "Combat (wowsims.com)",
-    20261106000,
-    [[Hekili:TV1wVTTnu4Fl5fpl0cFjjoTlika7(6Ww3WC3RYMwIYwlYsgIuPWab(3(oK6gjdPUzN2S20hkKfjpx)O45WpeNPoFWzUhIIDE)5to)QPtNC1KjtCMt3Vd7mFhY9o0A4Hi0w4))H4TRq0dlh(X4psc2sg5gV1InR9HXipMKwLgesFxKZkTcLSd76m)V)ZF5F(PRD5YYz(MappC2cWexd646dlPBWhwM)UX(Xj47Xjhw6H9rPHW0)U)63pSeE9HLLcinymtHKXjXRtXJ92rgJ2fsgNVMrWpg9VK4iRxdspbfrcbl2dEoMPTaYHLipV4OVbE4o8EYOdl)refDTgRy4F8UpaczdLUJC94XRdOBsxXm8Xkt1cKjyA4ZF7LN7pb9M3EP3ii(Le7hecXxKlnioImAxcol8yVke5Hx4hMMKS)WV9OXFL9y45TyVakIn0Rtj4fX((lw76zpv)ciumkKUrEQVoW3(SvP((JYhEu6UYLBNeSlgEVYs8JDtjzlLVY8zTiLGwfIbbmahHtwVFuy8T2zIQyoqSHqlLpyuOTRsjByIAixwUPu6MKyeLjgMPhVyxCqefGdqOahrVzML46xJssIbluWMgQFzdoZdZvr(safijP7rrbenrNHdpl3hkw4DrXFm6bnIBGHP(4WrX4SWHLb)SsAKWax8cuK3cp4Hc9NfWugdafOGiYn2NBzj5EasyhkjdSW8QczN52fY0noo0dEQ41jyK3Ej5G8aRdfgeHxKuK5k9VBSNnPbZwNrZcDflchMgHjlcdwVHMTKYHwfgh7TWpnzF2as2v1G1LcvS(CBQ0RvhoZ9hm0Gbu5QQJujsHrYKwL404QdnhgQeP0yLcTpr9gZSg9CaoD)OPcV36bJbJbVe)nf)zl8efCEg4nIOjrXQzh5zdR1PnB31yxae8yJL9mG1Z4vR3(Pj3MVbuCeHTGAbdVeYTY2X1UiXtS)2nZU1h11BRJx3WT2tNEzN2hFQvxAc(oKgfvGs4JNdPRWhzVLhIh0GnvBUFapbOoeKbAyzn6OQMQxAwTynjyFwCFrrvDnPgfGcRzgAiEbuzVUIIekBB6Sh0gHfMY5cfKkoNmmB(B4y1b6Ra)c9Q4rlxgQx1gKeERNLeRurSPgOyQsRpyFHOeKvKupi1Ait0wXpSzyWzdLt42xjBZ3JJI3Mfi4AG)BtTkDR9fslojDhfIZn2ReSUYMLYxdtfdPOqy0r0nXqNEGtb9QrgbWqOPpVYC7g824KKnO15jLb5cs49SSCJEQlG0xW)sNgORoR2(4BysaGFFaXfdBrn3cNWuY6IRUtYYYwsd8OcMkLx2Ut9zgyFQwN)Yb5kFBkniS0UT0p9BH539dIesvhDO2OHDXGhJlaT1kSxbyvc4v8YYJCU0smB(MzpupqC9gi7gUFbHMeCh24xgMjUMIKqDxhrzXD6IGdAoc(qTRFy9jOQaGbPWG0VsfsXX5NGCVfmjdFbuj3yz4mN2CsI(jDM2Igmm5H61UEryYupUsKUX2yPd8)jc7Q(g7xgapHZmEb698g6rcIGAnXjcFMSu7YhjvEDEpQsH)3JxvccVaAFwcADMFpoHaVqHKQqi3r4SILXte8475SKLxMHZ37m3njaYVbigHx(DN5dN58AVzYDUqvT8FNnDN55Z3HcMNI2lMsgPjIwt7jpHj3lm6vDG7KkZj)LcohOJlv0Hj3nJObjBOebiZIsxyC5PHYL2SxL57ZmK3e4GrYHluQexmMiJHPGRmbmK3tiPKUqsZjLLgMb)MwIgQwSEeH(Vj08LUzW2QHaHNcgeoQlD34DdYIVVThacJbfnC7CeK781DYPfe806a0ZchIH2(2wUBwuVYFWR2l98HA4IO(lNVXBNV5yDFdO9nEYdOtNCe7FBl5qhf7qFvLsAbhrFYC6oA6C0KAvRD802(B6cK6Wne1cy7(hkozMIAnVgnfEtdsgrb8tStNEr9uF5E6PJ8Ptn7t8qDBl9xGEk5pSjtmv)zMQdut1QoKZ9ptL3lswLwuCFBQGRv1A(nfvLO1s0mmqOfx4Q1NR2zPjJRBmzvzKYYtUZXPMkMLt2LCGLBCnscgxQQfT0qtV9IeStclycxfqMELdpNRwRGjGqfdAn6SnYDwlaPc7bvjp7yzpZe9z8WH6HDLFiVudYFCXeVADLyT(YS2rsTwlYeMTT(qUw3zxtHEnn8RXtCMUDlzc3A8lyZ4ct949cHvK1AClWP4IMpQBAUBx1C34KRnGgRhQ7wMB31m3Qtrnmltx0CNUP5UDvZnDxZnwFztx2mhAQwoub0S6SGV0aNDL3UxGNFgHNMQMvHmlTf0(5MzVpHy6EXT3la7pBaBkVtiwCfPLjVcyUutBA4CRDTzPHuntlm)VZkX9tQ)byXnFWbqPqjzjoZ)v8DbHbhwo8NZ)RjJpSZ)9]]
+    20261110000,
+    [[Hekili:TVvBVTTnx0Fl5lA2yf2XoXDTbrbyBp7LoSNUH5UVkzAjkBollAqsLmdy4F7JI6ftYqQ3StxbwYhAvejV3dpxsQlVheVjEFYBEiGb9(40RN(2jtMCn)hV5S97GEZ3bc2awXFibSL)VFpE7sa74IbpHFII2shfG3omRx7JXGWmlTmffZ(qI3sJgLUdg4n)p(TF6p)H7ce2YB(AuyimFaqAGfFC3XfS1WJlkE34imb(iKCCrimcKgZ7(3(7)6Xf8xFCrLbsrJZCiDmbVkfooChDmyxmDCXygX)Lr)ffNm8nCRtaj0yoId5pJZ8gIECbimeN8v8h2a3thDCX)dWa3zafd()F4tCJSMX2rVB84vi260LzaFSwxhYTjhAWzG3heofmnmkyeN)i4iumNFbbmeoHoAhbMtpUlJbHq)O4ucz)XF5zT)1UJ5pVfgIyGSMEtkf6JJI8xfe6oPAaUe0omLbvB(nr4Guk))rrUWeiz1(rX4hCZhZOIHWNfuwLH4(BfGqWCtjn4bzGb7VdJsy84fhRWe29ZCUkeUmnkAuXqgLUBOSLEeKGOR1WuM5gCvbgkh4Me8tjhmyohlD95tNY2ZModDSaygAl8b3jkOKZV7aKC2ndCLomh9LqlaJJd5pv(AceeUxXolJX4q)OuYEdZ4sJkhUlm9aRn5iydL3ZPK27068A18rPT8zLt1WknE(G088PXL7nlJYHtWpoAI07hEqczAD(Yd6HslI6OnvMVqcfs2Gswvt4LgJcG(GKq)q(dfEqef1ArBNcDniztoloGbI5lwhTeJz(BsqrWr8JU28G7Sd2A5wRTCJ1wMAOfycyzmm0YUh3BCQ21DV77Uolk(LayvbLcTcc5iheJsG(Ku(jrzeSu3NDTtVICoLdcgNMaP(XOvRzfRFTTWUh7A1qV(6v9Ml2gyDBO19CYBbQAj3ANmNHP6a70WjtQ0wLr7dR3yK9sFa0R8Vk)NnWle58fWSrE1KSznD6(GAN02XDn4IVe8C5YEsy9KVA92pdX2InGYTiTf04IHxP8H574Aht8cpF7gS7YwR(IVTaucLNk)KBvDxkbUbyWrLbor7fRYofYYFRyw70aMQnCKNXUEtCsPHH14evhQHP53yPjdhLX7(fw5(MCJwSl7oYSyOpdAIrhiNk1e(LblYrlecyR93ciBQYr7Gr6xA4tNX7JYVFkmizV8iqXTeLEVyvNJ5BPEJzNlmrXBE2I2AUYD2u3s6XYw4e4SnaEMWYdGKUJXrJYTURYUwKwaDxmGXGKswTmN41WTycznyvdjWZtWU6c7fEJpZDUAG6Ae33oSkugfdEkgsP(W)ggKMtIfUq52lkNbOmfmDgrLNU2coNycukEmGVo2xqlgwyAYOUslOGpIObq((h7ftqQl51tOUt(VkFTKCdplbJk7LhynpVNDWm2VT8UTB5XG4kCp0C35lS6Xb3YmTn7EJZZJk1TTxPQsR58y8EFkJG2aRROsvyxTIpA1gQcd3QY0LuuR8G8jcT6ycZD6kJFiXsNhy27MnHnOEEF28ExRFor8JmFE60Lxz0EZOovjhRSM2X8A6hCF3WdLBRu33uT1s98xuc)d1qI8MRRmEKrv5jK(OrzgiVgy7EGLhg8M)iKq5VqtkKyEiHk0Ejxnc(JFuOftri0778Mhqq8WgcK9Y6kpV3CX3uZmWCPV3j(98U7nVO)EmooS6Moui)twU4LsGG7JB08HnyLxUCfmy5a(Uu()ZT()zZGB1MbLiwspafyxIefDbSjmqMdM1sk6uvFm6pd1SU7AgKHN3EE4Pwavxv0Twz(mq9nwIcY2rfgwSMPQ81QY8DXMoni0qTgnJkExBJpvkryC9IXu(SDz9m)(ElHaHOeQCFn17VMc(xtf)RPK)xabkQxHIpRiwtLImEFY1wiETVfPec6I8fxu9leiw)dy99ieZFmU56rzD3SnyF4LO46Nv9OTw2mbbR)P72SK4IFI4RrNEj(rRjOViMqILBTnlozhR(rN6RoDnfQV(kx3yPRBMS7lJ2xcnNrTLvzB2a3wLtolPt(pviPfcO8zBs3rOlwn12RqyF)zVbVKalcO02BpKFnzfqug1LVBVXlX3K2l9v8Lxo1xU0YViOA97ezJQL0Nrln92RmtRKMP9AZ0zXzAvTKk4L2Ebjf5BKzglxBqyCB3c60mPjlXV4GO6l6P1lhzQxrN)DL0rQws52sTIptTx9QlPmps3)uXEAGrprzBRfoPuuJ1bRwnIoxrISPsKyYONgw1zPvEqDvKn5J6Q(r9vaPMvq6sjHKGESLtLATXBm(AxBP6exsGa9VdxIGscTt(wP(0T68pl9YwX07u107w50BQE6nMrrtfuxq365Aus3Nox8vc)cr49qAQg1MsedTvyxnXQmMT6lIOvVg4F2onMixPmweyuFQYyMsX4niWu7seJL7rqkBnM4n)NHBqXOJlg8Jf)PZiA27Fo]]
 )
 spec:RegisterPack(
     "Assassination (wowsims.com)",
-    20261105000,
-    [[Hekili:TV1wVTTnu4Fl5fpj0aFjjUTlikaDy36Ww3WC3RYMwI2wlYsgIuPWab(3(oK6gjdPUzN2S20hAuejpx)O4HNpe3jUF0DMpIID)WfJV41tMmE64XJDNr3Vd7oBhY7o0A4Hi0w4)FhHGiKGienio6WcRpf)jsWwYqV4T2SjVpmg5Ze4Y0Gq67JCxQv2KDyp3z)9F(l)ZpDnsuKUZ2e47JZwhM4vVgV(Wc6g8Hf5VB0Q4e894Kdl8XRqPH0dlE3F97hwaVgEsroPbJywbzus86u8i)DKrODHKr5lDi8ld)xsCK95GssqrKqWn8HNJzknGCybY3po67GhUdVNm8WIFerrxRXyS(J3)rqiBO0DKRhnADaDt6sM9pszQ2GmbBgFXBV6IvJrV5Tx5pecQjXRccHypYJz6KH7sWWIxIOoldr(45Rctts2F43E04VYze88wSFaL71NNsWZJxTA(ApFNj6xaHIrH0nYt98GvoNTmD1QH5dpmDx5YDqBxMs2WMJfFoEPu6MKyefM1aMGJNVloiIc5mWqXr0BMAxUAqLRrjjXu85RI9sjzkZs)YgCMpMRI8Lakqss3JIciASDlRZYMu5cVlk(trpOrCdmmvCeoz9(HHX36OmUxmHABWpRKgjmWdphf5p3hEOq)zbmLXGugkiICJZf22sUhKN2HsYsLmVQq2zUDHm9IJd9HNkEDcg5VxsoiFW6qHbr45jfzUs)7gNPJBWS1z0SqxXIWHPryY8WG1BOzlPCOLHXX(ZxLMSpBaj7QAW6sHkwFUnv61QdN5(dSmyavUQ6ivIuyKmPvjonUQL5WqLiLgRuO9jQ3yM1ONdWP7hor492pymym4L4VP4pBHNOGZZaVrenjkwn7ipZQwN2SDxJDbqWJnw2ZawpJxTE7NMCB(gqXre2cQfm8si3oBhx7IepX(B3m7wFuxVToEDd36mzYvDAF8PwDPj47qAuubkHpEoKUcFK9wEiEqd2uT5(b8eG6qqgOHL1OJQAQ(Pz1I1KGxXI7ZlQQRj1Oauyx1GgINd1DRROiHY2Mm9bTryHPCHqbPIZjdZM)gowDG(kWVuVkE0YLH6vxsrcV1ZsIvQi201ByQsRp4CPOeKvK0DqQ1qgRTIFyZWGZSKt4oVw2MVhhfVnlqW1a)3nDvPBDUuAXjP7OqCUX7kbRR8Ys5RHPclkkegDiDtCkH5uWD1idby4YqSFzUDdEBCsYg4A)553Cbj8EwwUrp1dq6Z5FPtd0vNv7C8xysaGFFaXddBrnFfoHPKDlU6ojllBjnWJkyQuEz7o1NzG9PAD(RgKR8TP0GWs72w)0VfMF3pisivD0HAJg2LdEmUa0wRWEfGvjGxXllpY5kBXS5BM(q9aX1BGSB4(5eAsWDyJFzyQ4Aksc11oIYI70fbh0Ce8HAxVv9jOQaGbPWG0VsfsXX5NGCVnmjdFbuj3yB4mN2CsI(jDM2Igmmzl9AxVimzQhxjs34yS0b()eHDvFJ9RdGNWzgVa9EEd9ibrqTM4eHptwQD5JKkBN3JQu4)94vLGWlG2NLGw3z3JtiWlu4vkeYDeoFwzS4ap(bo)w5Lz4(df0Oa)KtBH7mVKaiFhGCN1E6lCPGIvKRGCAp7fvMt(lDNXlTNz2GoUurhcLrZMr5IZA1VKnuMdK5XOlCE80q6rB2TW89RmK3eybrYHluQeBiMOdHPGPMagYOsjL0fAsoP8KWm4x3s0q1I1Ji0VRS52EzW2QPf(pf9W)OA7TXUZXIVVPhacJbfnSRCe0R8TDYPfuS06a0ZchIH2EBl3nlQx5p4vBBhFOg2aQV94n2F8MJ19nG234jpG(9hX232YoZrrpZ3uzKwqsZNnNUJModmnzCl3EA4W2(B6cSQWne16x7(3jozMIAjVgnfEv7sgrb8t8Qg9I7N(s(Zth7pNA6F4H62w5Va)qYFytMzO(tnuh4gQvxrn3)mvDViBrArX99ofCTQwYVPOQeVsIMHbgL4cxT8C1lwAY46gvsvgPS8KV44et1YYzBsoWYnUgzHIlv1AwA4oV9IfQtcnuvoCUEvcpQ1kyciurHvJoBJKx1cqQWEqv2Row6RmXFfVvgQh2v(H8sni)XfteB1vMT6l1whj3wTity226d7wDNElf(T0qWfpXzQ5wYmE14xWMYfM6X7fcRiR14wGtrNEpQw92TE92nsXAdOX(H6AZB76ZBRof1WSm1P3o1Q3U1R3MA2BJ1x2u3E5qt1YHkGMvNf81g4SReN9c88li80u1SkSjPTG2V0uR9zet3lY1Eby)fdyt53eIfxr1sLM0L20qnw7UMvh47k)pdjX9tQ)9jXnFWbqPqjzjUZ(v8DbHbhwy9Z5)XwXh29)(d]]
+    20261110000,
+    [[Hekili:TVvxVnUTs0Fl5fvB0a74K4T7gefGTO92UfTBVOE7RsMwIYM1YIgKuj1ag(3EPO(WKmK6l7Snan(HfkIKZCMZmKA4my9M49fVzHag07ZxF11VBYKjxX)5nJTBl0B2wqWAWs(djGn8)9JukGsrjagcNCy(GNWprrBOJcWBgMn5DXyqyMaxKIIzFkXBHrzt3cd8M9h)(p9N)4Dazr6nBfkmeMVoinOEnE3H5SvWdZlE34imb(iKCyEimcKgZom)J))F9WC(R5pPjNu04muqhtWltHJd3shd2gthxS0r8)y0FrXjdVKReciHgZnJq(Z4mLIOhMdcdXjFd)H1WD0rhM)dag4odGzWV9PVWfYkgBl9UXJxIyRsxKH)XAtDixMCmdNc(qq41GRdJcgXjvcocfZ5Eqqg0PJ2sG8fVaWCxedcH(rXPeYUd)YZg)BDhZFEdmeXew9LPuOpokYFzqO7KQf4Ueqiyg8YiCqk1DYLOi3bzsa7VfJsyCUMRayc7(PoxecxKgfnQyjJs3oSsoC19iibrxPQhH4gCr(KQw46e8tj7niohltfMajl3nkg)GR24bykBOJfaZqBGp4orbLCszlGKtjzGRuH5OVeAbyCCi)PYxtGGWDkYzrmgh6hLs2zWIlfQSpQq0dSoKJGnuEpNsAVsRtRv2JYy5wLt1YkfE(I008X1LRnlRYHtWpoAI07hUxczAt(8d6HsbrDuMk2lKqHK1OKL14EPXOaOpij0pK)qHgeErTr02PqxbswNZIdyGyEW6OfymZFDckcoIFEZ6hCNU32i3ADKBSoY1ggbMaweddTS7X9gNQDD37((RY8IVgaRkOuOvqih5Gyuc0NKYpjkJGLM(0RC6LNZPCrW40ei1pgTCfRi(1wGDp21QHE94v9Hl2gyDBO19CYBbQgjxAhfNbtDGDA4OivgRsO9H1B0ZEUpa6n(xL)Zw4zICEfynYrtYI10P7dQ1OTJ7AWfpe8u5YEsy9KVA92pd(2InGYJiTf0yWWBu(W8DCTJjEHT3Ub7US1QV4BdaLq5PYp5wv1LsGRbguuPJtmEru2rxw(BfwTtdyQw3rEg76dXjLgwwJgQoudtZVXstcokJ39lKY9nPgnFx2fBzXqFg0eJoqovQj8ldwKJwieWw5VbqwxLJ2EJ0V0YVEkFok)9r3GK8Y9af3su69IOohZ3s9gZkxiII38SG2AUNCMPBj9yzjCeC2wapty5fqs3Y4Or5w3vzxlslGUngWyqsjRwMt8k4gmHScSSHe45jyxDH9cTXTCNlgOgJ4(UHvUYOyWtXqk1h(3WG0CsSqfk3Er5maftW0zevA6kl4CIjqPOXaECSVGwmeyAsOUsbuWhr0aiF)J9IjinL86ju3j)xKhljpWZsWOsE5owZ2909MX(TL3TDd3hexH7HMNopWQhhClZ02K7nop3Ru32Ezgy5kopgVZNYiO1W6kQuf2vR4JwTHQWWTQmDjf1kniFIqRoMW8KUW4hsSm5bM1UzrydQN2NnV316Nte)K5ZJNU8gJ2Bg1Pk5yLyAhZX0p4((H7l3wPUVPARL65VOe(hQHe5nxxy8iJQYti9rJYmqEZX2Dhl3n4n7riHYFHwtnI5UeQOzk5TqG)4NfnxPWf699EZciiUBdb8M1HkSxw6FVzfV0BM4lUzINXbHMoK((y2mQwCEDSvWGLtE7sD5p1cZNzb3OzbLiwQq9kWUejkfS3wf7ZuWTTKIowogJ6ZqXK7EX8ZWZ0tdp1cO6kVT1sMNbQ3zXlilhvyyrAMk)wRQ)2zZCAOda1k0mQ47AR)PQfbgJxmMlMTBrNP33BXfi6wGk3xtH4RPs81uk(AQf)zOZb136GVQiwR9bz8(hSW7AFJqXd0L2kCw7RqgGNCvBJqB4eeZFKS56ezDZSnyV)LOO3NuDITwolbbR)L72esC2pq8nVtVAkrRjOxfgKiCRTjXjRy1V5uFvJRPa61xr5glPCZKDFz0(sO5mQTKkBZg422rJtQLg)NYL0IgB8vZO7i0frtT9ge23F2BWl14dbuA7LhYV(Qcik96Y3524LRBQNi9TPiVCDf5C3webvRFLiBuTuFt0YsV9DmPvTmP99mPZnnPv14PGxA79JuARImZy5wdcHB7sqhTKMKe)EdcjPNwVSNP(oT8VBRwoAZfYsRGp6j)lzxNX2ViD9tf5Pbg9eLTflCSdonwgSA7DZP28gBDVrym6PHvDwALguJIS1wNU2xN(2yNM7SZ5Q1oc6XwovQ1SUr)R9E(uxtFeiq)7WLiOKq7KUvQBCRo)ZYSSvK7ovL7UvM7MQZDJzu0uHUf0TEUgL09XZfFJWpteEpAzuJ9ms4dTvxxTMizmB1xKMj9MJ)z70yICLYyrGX(gv6ZuQfFh69JAIySCncszRWeVz)mCnkgDy(G)xX)pued79pd]]
 )
 spec:RegisterPack(
     "Subtlety (wowsims.com)",
-    20261105000,
-    [[Hekili:TV1AVTTnx4Fl5lEsOf(ssCBxqua2W7U0HTUH5UVkBAjABTilzisLcdy4F77qQBKmK6MDAZBB6hAuejpxFO4HNhe3jUF0DMpIID)WLJV8ntMmE64XJDNr3Vd7oBhY7E0A4Hi0w4)NLUKgIP7pUW6tXFIeSLm0lERnBE7dJr(mzTmniK((i3LAflzh2ZD2F)N)Y)8t3qYLM7Snb((4SLGjEg1Znhxq3GpUi)DJwfNGFaNCCHpEfknKECXp8x)(XfWRpUqqePbJyQLmkjEDkEK)oYi0UqYO8vne(LH)ljoY(1G8tqrKqWU9HNJz6lGCCbY3po67GhUhVNm84I)hIIUrJDy9hV)JGq2qP7i3mA06a6M0LmtFKYuTbzcMl(Y3D9LRgJE77U2FieftIxfecXzKhnioImCxcgw8se1zziYhpFvyAsY(J)2Jg)voJGN3I9dOi2qVoLGNhVA181E(ot0VacfJcPBKN6Rdw5CXY0vRgMp8W0DLl3bTDzkzdBow854LsPBsIruywdycoE(U4GikKUadfhrVDQD5QbvUgLKetXVEvSxkjtzw6x2Gl8XCvKVeqbss6buuarJTBzDr2Kkx49rXFk6GgXnWWuXr4K17hggFNJY4EXeQTb)SsAKWap8CuK)CF4Hc9NfWugdszOGiYToxABl5EqEAhkjlvY8QczN52fY0loo0hEQ41jyK)Ej5G8bRdfgeHNNuK5k9VBDMoUbZwNrZcDflchMgHjZddwVHMTKYHwggh7pFvAY(SbKSRQbRlfQy952uPxRoCM7pWYGbu5QQJujsHrYKwL404QwMddvIuASsH2NOEJzwJEoaNEy4eH3BFWyWyWlXFtXF2cptbNNbEJiAsuSA2rEHvToTz7Ug7cGGNASSNbSEgVA92pn528nGIJiSfuly4LqUD2oU2fjEI93Uz2T(OUEBD86gUZzYKR70(4ZT6stW3J0OOcucF8CiDf(i7T8q8GgSPAZ9d4ja1HGmqdlRrhv1u9tZQfRjbVIf3NxuvxtQrbOWUQbCLL5qD36kksOSTjtpOnclmLlfkivCozy283WXQd0xb(v6vXJwUmuV6sks4TEwsSsfXMUEdtvA9bNReLGSIKUdsTgYyTv8dBggCHLCc35nY28d4O4TzbcUg4)UPRkDNZvslojDhfIZnExjyDLxwkFnmvyrrHWOdPBItjmNcURgziadxgI9lZTBWBJts2axXpp)MliH3ZYYn6PEasFo)lDAGU6SANt)ctca8hciEyylQ5RWjmLSBXv3jzzzlPbEubtLYlB3P(mdSpvRZF9GCLVnLgewA326N(DW87(brcPQtouB0WUAWJXfG2Af2RaSkb8kEz5roxBlMnF70d1dexVbYUH7NtOjb3Jn(LHPIRPijux7iklUtxeCqZrWd1UER6tqvbadsHbPFLkKIJZpd5EBysg(cOsUX2WzoT5Ke9t6cTfnyyYw61UEryYupTsKU1XyPd8)jc7Q(g7xhapHZmEb698g6rcIGAnXjcFMSu7Yhjv2oVhvPW)3JxvccVaAFwcADN9aoHaVqHiPqi3r4CxLXId84h4CzLxMH7pwqJc8toTfUZ8scG8DaYDw7PVWLckwrUcYP9Sxuzo5V0DgV0EMzd64kfDiugnBgLloRv)s2qzoqMhJUW5XtdPhTz3cZ3V2qEtGfejhUqPsSHyIoeMcMAcyiJkLusxOj5SYtcZGFtlrdvlwpIq)UYMB7LbBRMw4)u0d)tQT3g7ohl((2Eaimgu0WUYjqVY32jNwqXsRdqplCigA7DTC3SOEL)GxTTD8qnSbuF7XBS)4nhR7BaTVXtEa97pHTVTLDMtIEMVPYiTGKMpBoDhnDgyAY4wU90WHT930fyvHBiQ1V29VtC2mf1sEnAk8Q2LmIc4N4vn6f3p9L8NNo2Fo30)Wd1TTYFb(HK)WMmZq9NAOoWnuRUIAU)zQ6Er2I0II77Dk4AvTKFtrvjELenddmkXfUA55QxS0KX1nQKQmsz5jFXXjMQLLZ2KCGLBCnYcfxQQ1S0WDE7fluNfAOQC4C9QeEuRvWeqOIcRgD2gjVQfGuH9GQSxDQ0xzI)kERmupSR8d5LAq(JlMi2QRmB1xQTorUTArMWST1h2T6o9wk8BPHGlEIZuZTKz8QXVGnLlm1J3lewrwRXTaNJo9EsT6TB96TBKI1gqJ9H6AZB76ZBRof1WSm1P3o1Q3U1R3MA2BJ1x2u3E5qt1YHkGMvNf81g4SReN9c88li80u1SkSjPTG2V0uR9zet3lY1Eby)fdyt53eIfxr1sLM0L20qnw7UMvh47k)pdjX9tQ)9jXnFWbqPqjzjUZ(v89bHbhxy9Z5)XwXh29)(d]]
+    20261110000,
+    [[Hekili:TV1wVTTnu4Fl5fnBSa74K4U2GOaSHDRdBDdZDVkzAjkBollAqsLmdy4F7JI6Ijzi1n70fGf)qHIi558XVZHuNlOEt8(S3Sqad69PRV663nzYKR4)8MX2Tf6nBliynyj)HeWg()olDblgY2Dy(GNWprrBOJcWBgMnVDXyqyMSwKIIzFmXBHrXs3cd8M9N)(p9x)WD0cP5nBfkmeMVeinWQEU7WC2k4H5fVBCeMaFesompegbsJzhM)T)XVEyo)1hMljIu04m1shtWltHJd3shd2gthxSQr8)y0FtXjdVKlFciHgZXDi)zCM(q0dZbHH4KVI)WA4o6OdZ)EadCNbCm43(4N5czfJTLE34XlrSvPlYG(yTPoKltoCHtbFii8AW1HrbJ4SibhHI58miGHWj0rBjq(IxayUlIbHq)O4ucz3HF5zJ)1UJ5pVbgIyGSHUmLc9Xrr(ldcDNuTa3LacbZGxgHdsPUtUef5oitcy)TyucJtZCfaty3p15Iq4I0OOrflzu62HvYHRUhbji6kv9ie3GlYNu1cxNGFkzVbX5yzQWeiz5UrX4hC1gpatzdDSaygAd8b3jkOKtkBbKCkjdCLkmh9LqlaJJd5pv(AceeUtrolIX4q)OuYod74sHkBJke9aRd5iydL3ZPK2R060A1(rzS8DLt1YkfE(I008X1LRnlRYHtWpoAI07hUxczAt(8d6HsorDuMk7xiHcjRrjlRX8sJrbqFqsOFi)HcniSIAJODsHUcKSoNfhWaXCN1rlWyM)6eueCe)(M1p4oDVTrU16i3yDKRnmcmbSiggA50J7novN6U399xLzfFnawvqPqRGqoYbXOeOpjLFtugbln9Px50llNt5IGXPjqQFmA5kwH)Rnh7ECQvd96(R6dxCmW6XqRN5KpcunsU0okodB1b2PHJIuzSkH2hwVrl75(cO34Fv(pBHNjY5vWUr2BswSMUDFqTBA74UgCXDbpvUSNewp5RwF8ZGTT4aO8ishbn6m8gLpm)ex7yIx49B3GDxoA1x8TbGsO8q5NCRQ6sjW1adkQ0WjgVWl7Ojl)TIDTtdyQwZrEe76dXjLgwwJBuDOgMMNXstcokJ39lKY9nPgnBxwIT8eK9zqtm6a5qPMWtgSigTqiGTYFdGSUkgT9gPFPLF9u(Cu(7JMbj5LBbkYsu69cVohZzPEJzLlerXBEMtBn5jNT1TeESSeocoBlGhjS8ciPBzC0OK1Dv01IWcOBJbmgKuYQLXeVcUbtiRalBiaEEa2vjSxOn(o35IbQ(iUVByLPmkg8umKs9H)dminNeluHs2lk3bOSfmDhrLMUYcoNycukAmG7h7lOfdoMMeQRKdf8renaYp)yVycstjVEc1DZ)f5(sYd8SamQKxUH18(E6EZy)2YCB3WTbXv4EO5PZDS6Xf3YmTn5EJZZTk1DSxMbwUIZJX78PmcAnSUIkvHD1k(OvBOkmCRktxsrTsdY3i0QRjmpPlm(HeltEGzTBwe2G6P9zZ7DT(5eXpz(84TlVXO9MrDQcowXN2XSp9dUVF4(YJvQNBQoAPE)lkH)HAir(W1fgVYOQ8esF0OmcK3mSD3WYndEZEesO8xO1fJyUjHkACsEle4p(jrJukmHEFN3SacIB2qaVzDOc7LL(3BwXl9Mj(IBM4zCqOPdPVpMnJQfNxhBfmy5M3Uux(tTW8z7GB02bLiwQq9kWUejkfS3wf7ZuWTTKIowogJ6ZqXK7EX8ZWZ0tdp1cO6kVT1sMNbQ3zXkilhvyyrAMk)wRQ)2zB70qhaQvOzuX30w7tvlcm6VymwmBzrNP33BXei6wGk3xtH4RPs81uk(AQf)zOZb136GVOiwR9bz8(hSW7AFJqXc0L2kCw7RqgGNCvB9qB4geZFKS56ez9WSnyV)LOO3NuDITwolbbR)L724sC2Vq8nRtVAkrRjOxfBiH7wBdItwXQFZP(Qgxtb0RVIYnws5Mj7(YO9LqZzuBbv2MdWTTJgNuln(FLjPfn24l2MUJqx4n12miSF(S3GxQXhcO02KhYtFvbeLwD5CUnMCDt9ePVnf5LRRiN72IiOA9uISr1s9nrlk923XKw1YK23ZKo30KwvJNcEPT5hP0wfzMXswdcHBljOJ7KMKepVbHK0dRx2YuFNw(VTvlh3ZfYsRGp6b)lTVoJTFrk9tf5Pbg9aLT5lCSdonwgSA7DZP28gBDVrSz0ddR6U0knO6fzRToDTVo9TXon3zNZvRDe0JTyQuRzDJ2x798PUM(iqG(3HlrqjH2jDRu34wD)NLzzRi3DQk3DRm3nvN7gJOOPcDlOB9ynkP7J3l(gHFMi8E0YOg7zKWgARUUAnrYy0QVint6nd)ZoPXeXkLXIaJ9nQ0MPul(o07h1aXy5AeKYwHjEZ(z4Aum6W8b)yX)pued79V]]
 )

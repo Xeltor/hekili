@@ -97,14 +97,14 @@ describe("Forever Mage", function()
         end
     end)
 
-    it("places every DB2 talent in its tree and keeps the Forever-only ones at tree 0", function()
+    it("places every talent in its tree (Forever's)", function()
         local n = { [0] = 0, 0, 0, 0 }
         for _, t in pairs(w.talents) do
             n[t[1]] = n[t[1]] + 1
         end
-        assert.are.same({ [0] = 6, 16, 16, 17 }, n)
-        assert.are.same({ 0, 400588, 2 }, w.talents.missile_barrage)
-        assert.are.same({ 0, 400624, 1 }, w.talents.heating_up)
+        assert.are.same({ [0] = 0, 18, 17, 18 }, n) -- Forever's tree (trees/mage.json)
+        assert.are.same({ 1, 400588, 2 }, w.talents.missile_barrage)
+        assert.are.same({ 2, 400624, 1 }, w.talents.heating_up)
     end)
 
     it(
@@ -307,10 +307,11 @@ describe("Forever Mage", function()
                 spells[#spells + 1] = id
             end
             table.sort(spells)
-            by[m.aura] = { m.pct, m.charges or false, spells }
+            by[m.aura .. (m.unless and (" unless " .. m.unless) or "")] = { m.pct, m.charges or false, spells }
         end
         assert.are.same({
-            clearcasting = { -1, 1, { 116, 133, 2136, 2948, 5143, 11366, 400574, 401502, 1326079 } },
+            clearcasting = { -1, 1, { 116, 133, 2136, 2948, 11366, 400574, 401502, 1326079 } },
+            ["clearcasting unless missile_barrage"] = { -1, 1, { 5143 } },
             missile_barrage = { -1, 1, { 5143 } },
             -- Arcane Wrath too: wowsims's mask (0x9000 of word 1 covers its 0x8000), its log's 513.5 = 395 x 1.3
             arcane_power = { 0.3, false, { 116, 133, 2136, 2948, 5143, 11366, 400574, 401502, 1326079 } },
@@ -434,6 +435,95 @@ describe("Forever Mage through the engine", function()
         )
         assert.are.same({}, H.errors)
     end)
+
+    -- CN11 parity: the cost modifier's `unless`, in the belief and the simulation alike (the kit's split Clearcasting).
+    for _, case in ipairs({
+        { 5143, "arcane_missiles", true, { 0, 0, true, false } },
+        { 5143, "arcane_missiles", false, { 0, 0, false, false } },
+        { 400574, "arcane_blast", true, { 0, 0, false, true } },
+        { 400574, "arcane_blast", false, { 0, 0, false, false } },
+    }) do
+        local id, key, barrage, want = case[1], case[2], case[3], case[4]
+        it(
+            "agrees on "
+                .. key
+                .. "'s price and spent charges with Clearcasting up, Missile Barrage "
+                .. (barrage and "up" or "down"),
+            function()
+                local H = headless.new({ character = character() })
+                local I, VS, S = H.ns.VirtualStateInternal, H.ns.VirtualState, H.Hekili.State
+                local t = H.ctl.now + 1
+                H.ctl.now = t
+                assert.is_true(headless.cycle(H, t)) -- the rebuild's player aura walk first (the client lists none)
+                VS.Drain(t)
+                I.AuraModel(1, I.auras.bySpell[12536], t, t + 15, 1, t, nil, false)
+                if barrage then
+                    I.AuraModel(1, I.auras.bySpell[400589], t, t + 15, 1, t, nil, false)
+                end
+                assert.is_true(headless.cycle(H, t + 0.05))
+                VS.Drain(t + 0.05)
+                S.reset("Primary", true)
+                S.applyBuff("clearcasting") -- the same procs in the simulation (it reads none from the belief)
+                if barrage then
+                    S.applyBuff("missile_barrage")
+                end
+                assert.are.same({ true, barrage }, { S.buff.clearcasting.up, S.buff.missile_barrage.up })
+                assert.are.same(
+                    { true, barrage },
+                    { VS.Aura("player", 12536, t + 0.05) ~= nil, VS.Aura("player", 400589, t + 0.05) ~= nil }
+                )
+                local belief, sim = { I.CostOf(I.ab.bySpell[id]) }, { S.action[key].cost }
+                H.ns.spendResources(key) -- the simulation's cast
+                sim[2], sim[3] = S.buff.clearcasting.up, S.buff.missile_barrage.up
+                H.ctl.now = t + 1
+                H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-1", id) -- the belief's
+                assert.is_true(headless.cycle(H, t + 1.1))
+                VS.Drain(t + 1.1)
+                belief[2] = VS.Aura("player", 12536, t + 1.1) ~= nil
+                belief[3] = VS.Aura("player", 400589, t + 1.1) ~= nil
+                assert.are.same({ want[1], want[3], want[4] }, belief)
+                assert.are.same({ want[2], want[3], want[4] }, sim)
+                assert.are.same({}, H.errors)
+            end
+        )
+    end
+
+    -- CN11 price parity on a cost that is not free: a test-only Arcane Power held by Missile Barrage (no pack's rule).
+    it("prices a non-free modifier with `unless` alike in both layers, its aura down and up", function()
+        local H = headless.new({ character = character() })
+        local list = H.ns.raceMods.costMods
+        for i, m in ipairs(list) do
+            if m.aura == "arcane_power" then
+                list[i] = { aura = "arcane_power", pct = 0.3, spells = { 400574 }, unless = "missile_barrage" }
+            end
+        end
+        H.ns.BuildTracked()
+        local I, VS, S = H.ns.VirtualStateInternal, H.ns.VirtualState, H.Hekili.State
+        local a = I.ab.bySpell[400574]
+        local t = H.ctl.now + 1
+        H.ctl.now = t
+        assert.is_true(headless.cycle(H, t)) -- the rebuild's player aura walk first (the client lists none)
+        VS.Drain(t)
+        local out = {}
+        for _, barrage in ipairs({ false, true }) do
+            I.AuraModel(1, I.auras.bySpell[12042], t, t + 15, 1, t, nil, false)
+            if barrage then
+                I.AuraModel(1, I.auras.bySpell[400589], t, t + 15, 1, t, nil, false)
+            end
+            S.reset("Primary", true)
+            S.applyBuff("arcane_power")
+            if barrage then
+                S.applyBuff("missile_barrage")
+            end
+            out[#out + 1] = { I.CostOf(a), S.action.arcane_blast.cost }
+        end
+        -- under 1 mana apart, not equal: on the stock kit too, Arcane Power's +30% on Arcane Blast's fraction-of-base
+        -- cost prices 235.3 in the belief and 236 in the simulation (rounding order; reported in CN11, not `unless`)
+        assert.is_true(math.abs(out[1][1] - out[1][2]) < 1, out[1][1] .. " vs " .. out[1][2])
+        assert.are.equal(out[2][1], out[2][2])
+        assert.is_true(out[1][1] > out[2][1], "Arcane Power prices Arcane Blast only while Missile Barrage is down")
+        assert.are.same({}, H.errors)
+    end)
 end)
 
 -- The priorities: the wowsims.com packs (generated from wowsims/forever's APLs by `make wowsims-packs`).
@@ -455,13 +545,16 @@ describe("Forever Mage priorities", function()
         local cls = ld.load(nil, FILE, "MAGE")
         local kinds = { buff = cls.auras, debuff = cls.auras, cooldown = cls.abilities, action = cls.abilities }
         -- Hekili's `all`: Hekili_Shared/Shared/Items.lua's use_items and the mana gem, and the High Order Skyborne race
-        -- file's Read Ley Line and Energized (Hekili_Shared/Races/)
+        -- file's Read Ley Line and Energized, and the racials rule 13 adds (Hekili_Shared/Races/)
         local shared = {
             use_items = true,
             mana_gem = true,
             call_action_list = true,
             read_ley_line = true,
             energized = true,
+            eureka = true,
+            blood_fury = true,
+            berserking = true,
         }
         for _, p in ipairs(assert(loadfile("tools/make_pack.lua"))("lists", "mage")) do
             for list, entries in pairs(p.lists) do

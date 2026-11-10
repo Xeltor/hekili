@@ -347,11 +347,20 @@ M.READY = {
     -- { 0.50, 5 } -> { 0.50, 9 } re-pin e2842f0a78 (adaptive list, 82 on-GCD decisions): median 0.500, 9 real (early 2,
     -- late 7); top shifting_power 4 (max 0.50: a not-ready flag's CD_PROBE push, shared), rake 2, rip 2 (energy is
     -- secret: the belief's lo under the truth at the cost)
-    druid_feral = { 0.50, 9 },
+    -- { 0.50, 9 } -> { 0.35, 10 } on the 0.7 floors run (integ/0.7 5deb101c4; R6): the never rows of the
+    -- old log are gone (CN8's cooldown countdown, pin-2 export: not separated) but cost rows rake 25.14 and
+    -- shifting_power 111.89 (0.47 / 0.45, the belief's lo under the truth) are now late; 10 real (early 2, late 8), median 0.350
+    -- { 0.35, 10 } -> { 0.40, 10 } (CN8 I1, R6: a probe stands until the game says ready): decision 12, shifting_power
+    -- at 11.75, the model's end short of the flag's, reads 0.500 late (0.350 while the probe counted down); real 10
+    -- (early 2, late 8), median 0.400
+    druid_feral = { 0.40, 10 },
     -- { 0.54, 41 } -> { 2.50, 10 } (lane 14, replay world fix): a GCD now ends at its cast's log time plus the GCD (a
     -- late line of its timestamp ended it after the next GCD's rise, clearing the client's flag), so the 11 early
     -- GCD-chain rows are in grain; the 10 left are the late ones, so the median rises by the metric alone
-    druid_guardian = { 2.50, 10 }, -- was 0.540, 41 (was 40): the world's parry haste (decision 63) and the tie hand-back
+    -- { 2.50, 10 } -> { 1.76, 55 } (re-pin e5a9cd2a2d, floors step): 55 late GCD-chain rows (median 1.751): with no rage from hits
+    -- yet (CN7) Lacerate/Primal Bite show a GCD after wowsims casts them (24 lacerate -> primal_bite replay misses); the median falls (1.751 measured; a ceiling rounds up)
+    -- 2.50 -> 1.75, the count rises by the same cause (not by the metric)
+    druid_guardian = { 1.76, 55 }, -- was 0.540, 41 (was 40): the world's parry haste (decision 63) and the tie hand-back
     -- re-pin 8b-2 (controller ruling, round 3): move-reached weave strikes show at the decision to walk (the Auto Shot that
     -- opens the weave window); wowsims logs the cast at arrival; the offset is the walk time, which Hekili does not model
     -- (owner rule: no movement in Hekili or the belief) and which is the lead a player needs to start walking. Every new
@@ -359,11 +368,17 @@ M.READY = {
     -- { 0.36, 7 } -> { 1.09, 13 } re-pin e2842f0a78 (Task 19, the new log, R51): the weave cause above at the new
     -- distance (11.67 yd): weave rows (wing_clip, immolation_trap) 1.03 to 1.37 s early, the off-GCD cooldowns at
     -- 6.22 and 127.83 (-1.12, -1.33), a Serpent Sting row late (0.17, the cast-anchored dot)
-    hunter_beast_mastery = { 1.09, 13 }, -- was { 0.32, 5 }: wing_clip 27.49 / 115.64 early (-1.59 / -0.74)
+    -- { 1.09, 13 } -> { 0.46, 28 } re-pin e5a9cd2a2d (0.7 floors, CN8 merged, steady icons on): upstream's new weave (melee strikes
+    -- on `ranged_remains>=ranged_speed-(mainhand_speed-mainhand_remains)`, shots otherwise): 28 real rows, 26 early (slack 26,
+    -- gcd 25, aura 10: wing_clip 22, max 3.32), the walk the replay cannot forecast (triage Case 1) plus the melee range
+    -- read as unknown (wing_clip:unknown 40; hotfix-0.6.2's maxRange 0 bug, probable, untraced); median is the larger set's
+    hunter_beast_mastery = { 0.46, 28 }, -- was { 1.09, 13 }; before that { 0.32, 5 }: wing_clip 27.49 / 115.64 early (-1.59 / -0.74)
     -- { 0.15, 7 } -> { 0.38, 13 } (re-pin 8b-2, the weave cause above): six strike rows early, strider_kick 11.40 -0.10 -> -0.70
     -- { 0.38, 13 } -> { 0.98, 10 } re-pin e2842f0a78 (Task 19, the new log, R51): the weave cause above, strike rows
     -- 0.48 to 1.32 s early at 11.67 yd
-    hunter_marksmanship = { 0.98, 10 }, -- was { 0.15, 10 } (b8d673eb8 raised it to 0.18 for gap BW, reverted with BW's fix): measured real 8 median 0.15 once the replay seeds the casting rate from unboosted ticks (168.28 strider_kick back to never); real 7 since gap CE's fractional read
+    -- { 0.98, 10 } -> { 0.32, 22 } re-pin e5a9cd2a2d (0.7 floors): the same new-weave cause as Beast Mastery (22 real, 20 early:
+    -- strider_kick 7, mongoose_bite 6 max 1.36, wing_clip 4); the median fell as the set grew
+    hunter_marksmanship = { 0.32, 22 }, -- was { 0.98, 10 }; before that { 0.15, 10 } (b8d673eb8 raised it to 0.18 for gap BW, reverted with BW's fix): measured real 8 median 0.15 once the replay seeds the casting rate from unboosted ticks (168.28 strider_kick back to never); real 7 since gap CE's fractional read
     -- { 0.14, 9 } -> { 0.14, 10 } (Task 5): row 91.49 mongoose_bite now late 0.14 s, a cost decision with the belief's
     -- lo 1.9 mana under truth (the lo lag, gaps BQ/BT, G7); the base row rested on the replay artifact (belief 5.5
     -- mana over truth); owner-approved 2026-10-30.
@@ -376,7 +391,10 @@ M.READY = {
     -- gone, Hunter's Mark leaves the real set (late 0.19 -> in the cost window), so the median of the 5 left is their 0.20
     -- { 0.20, 5 } -> { 0.63, 11 } (re-pin 8b-2, the weave cause above): six strike rows early (-0.39 to -1.59)
     -- { 0.63, 11 } -> { 0.39, 10 } re-pin e2842f0a78 (Task 19, the new log, R51): the weave cause above
-    hunter_survival = { 0.39, 10 },
+    -- { 0.39, 10 } -> { 0.29, 22 } re-pin e5a9cd2a2d (0.7 floors): the new weave's strikes: 22 real, all early (strider_kick 10 max
+    -- 2.34, wing_clip 6 max 2.80, immolation_trap 3): the walk the replay cannot forecast (triage Case 1) and the weave's omitted
+    -- `wait` rows #2/#3 (CN19, second translator lane); the median fell as the set grew
+    hunter_survival = { 0.29, 22 },
     -- { 0.47, 21 } -> { 0.76, 9 } re-pin e2842f0a78 (the new log): the 9 real rows late, cost class (gap BQ: lo reaches
     -- a cost after the truth), fire_blast 7 (max 0.76: the dry-mana waits on its 340)
     mage_arcane = { 0.76, 9 }, -- 0.760, 9 (ruling M13)
@@ -387,7 +405,9 @@ M.READY = {
     -- { 0.38, 31 } -> { 0.42, 9 } re-pin e2842f0a78: cost class (gap BQ), scorch 6 (max 1.39)
     mage_frostfire = { 0.42, 9 }, -- 0.420, 9 (Task FFB, ruling M13)
     -- { 0.86, 7 } -> { 0.00, 0 } re-pin e2842f0a78: real 0 once Holy Shield's block hits are procs (PROT_REPLAY)
-    paladin_protection = { 0.00, 0 }, -- 0.000, 0
+    -- { 0.00, 0 } -> { 0.43, 1 } pin move 2 on CN8 (rank 4 log, PROT_REPLAY's rank-4 procs, steady icons): one row, holy_strike
+    -- late 0.43 s, cost class: lo under the truth at the cost (-208 mana, the unmodelled Shieldsworn return, gaps.md CU)
+    paladin_protection = { 0.43, 1 }, -- 0.430, 1
     -- { 0.29, 10 } -> { 0.10, 7 } re-pin e2842f0a78 (fresh floor, Task 17: the Unsealed Wrath APL and the opener move):
     -- holy_strike 5 (max 0.10), seal_of_command 1 (0.23), seal_of_righteousness 1 (0.17)
     paladin_retribution = { 0.10, 7 }, -- 0.100, 7
@@ -413,7 +433,15 @@ M.READY = {
     -- { 0.23, 29 } -> { 0.23, 31 } R42 (the replay answers fight_remains from the log): only rows that were
     -- "never" moved, now timed
     -- (174.06 eviscerate in:reaction, 178.66 mutilate and 179.66 eviscerate late 0.16/0.20 s: the fight's last 6 s)
-    rogue_assassination = { 0.23, 31 }, -- 0.230, 31
+    -- { 0.23, 31 } -> { 0.20, 35 } (0.7 rogue lane's re-pin e5a9cd2a2d, R6; set on central-gatefix): lane-rogue e7fe801a4
+    -- re-recorded the fixture on the new log (58 -> 90 decisions) but kept the old row; 35 real, all late, median 0.20:
+    -- 32 cost (the belief's lo under the truth at the cost edge, gap BQ/CE; the two longest, 46.10 and 97.80 Mutilate
+    -- 1.15/1.44 s, follow an unseen Rogue Armor Energize 27788 at 46.08/97.17), 3 gcd, each a cost edge landing on the
+    -- GCD's end (class gcd: the later gate; no lo-truth recorded): 33.20 Eviscerate 0.23 (energy 10 -> 20 = cost over the
+    -- GCD after the 32.20 Mutilate), 47.10 Eviscerate 0.71 (the same, behind the 46.08 unseen Energize), 63.60 Mutilate
+    -- 1.12 (25 + Relentless Strikes 14179's 25 at 62.60 + regen = 60 = cost at the GCD's end; the belief's lo ~11 under,
+    -- not traced further)
+    rogue_assassination = { 0.20, 35 }, -- 0.200, 35
     -- { 0.20, 18 } -> { 0.24, 20 } re-pin e2842f0a78: cost class; 6 of the 7 large rows follow a 27788 energize (6 in
     -- the new log, 2 in the old: 21.18, 56.26, 64.69, 65.49, 69.00, 83.96), the rest the floor's lag (gap BQ/CE)
     -- { 0.24, 20 } -> { 0.24, 21 } R42 (the replay answers fight_remains from the log): only rows that were
@@ -422,8 +450,17 @@ M.READY = {
     rogue_subtlety = { 0.17, 40 }, -- 0.20, 45 -> 0.15, 32 -> 0.17, 40 (gap CE): as rogue_assassination, a mark inside the ready wait
     -- { 0.21, 7 } -> { 0.71, 16 } re-pin e2842f0a78 (lane 15, R6): the build's own list (Magma and Windfury Totems,
     -- Fire Nova the filler at 375, Skyborne); 85 decisions, 16 real (10 early, 6 late); by class cooldown 15, cost 9, gcd 43
-    shaman_enhancement = { 0.71, 16 },
-    shaman_elemental = { 0.48, 54 }, -- 0.480, 54 (Elemental lane, Task 14; first clean run on a21329fc)
+    -- { 0.71, 16 } -> { 0.38, 34 } 0.7 re-pin (e5a9cd2a2dfc, lane shaman, R6, owner ruling option b, reversible): 92
+    -- decisions, early 26 / late 8, by class cooldown 23 / cost 10 / gcd 46 (earth_shock 11, stormstrike 6, fire_nova 6,
+    -- shown 0.2-0.8 s before wowsims's cast). Cause as the Enhancement loop bar (pack_gate M.REACT_P90_BY): the
+    -- conservative mana lower bound loses cost ties at the oracle's exact edge, re-timed by CN8's queue window; no cast
+    -- lost. Not traced row by row (deferral)
+    shaman_enhancement = { 0.38, 34 },
+    -- { 0.48, 54 } -> { 2.20, 3 } re-pin 0.7 (lane shaman, R6): 91 decisions, 3 real (all late, cost class: the Major
+    -- Mana Potion / Demonic Rune refills the belief cannot see leave lo ~2630 under the truth, gaps.md "Potion mana
+    -- refill"; Lightning Bolt at its top rank's 198 where wowsims down-ranks, gap BL), median 2.20; the count falls from
+    -- 54 with the new build's list (Lava Burst gone)
+    shaman_elemental = { 2.20, 3 },
     -- 1.000, 18 (Warlock lane, Task 13; first clean run on 5d62f44c+): Shadow Bolt's 2.5 s cast, the next icon ready
     -- at the GCD's end inside it (Shadow's Mind Flay likewise). Count 18 -> 21 on fix 31 (06eec227): G4 keeps
     -- Corruption believed, so 12 more decisions are shown (never 22 -> 10), 3 of them a Shadow Bolt's early 1.0 s.
@@ -460,16 +497,21 @@ M.READY = {
     -- (3.80: a white crit's 34.2 rage logged at the cast, heard one landing lag later, so the queue waits a swing),
     -- 40.05 / 90.05 Sunder and 110.05 Mortal Strike (1.81 / 1.21 / 0.21: an Anger Management tick crosses the cost
     -- 0.05 s before the cast; the belief's lo sits 1.5-6.9 under the truth)
-    warrior_arms = { 1.21, 4 },
+    -- -> { 1.81, 2 } (0.7 warrior lane, R6; re-pin 4b0030a44b/e5a9cd2a2d, fixtures re-recorded): 67 decisions, 2 real, both late
+    -- cost waits (Execute 2.01, Sunder Armor 1.81 on a same-instant gain wowsims casts on)
+    warrior_arms = { 1.81, 2 },
     -- 0.51, 35 (was 0.48, 32): harness corrected to the measured swing timing (2026-10-22); 0.44 (fix 40): Whirlwind at
     -- 57.09 and 117.06 late -> early 0.09 and 0.06
     -- { 0.52, 26 } -> { 0.90, 19 } (lane 14, replay world fix, as druid_guardian's): 6 early GCD-chain rows in grain,
     -- the 19 left all late; -> { 0.42, 13 } re-pin e2842f0a78 (R6: the new log's 87 decisions, 13 real, all late)
-    warrior_fury = { 0.42, 13 },
+    -- -> { 0.42, 14 } (0.7 warrior lane, R6): 95 decisions, 14 real, all late (Bloodthirst x7, Whirlwind x3, Sunder x3), median 0.40
+    warrior_fury = { 0.42, 14 },
     -- { 0.38, 11 } -> { 0.37, 3 } re-pin e2842f0a78 (lane 14, R6; after 5049ede22's GCD fix): 98 decisions, 3 real, all
     -- early, class aura: Shield Slam 49.84 (0.24), Sunder Armor 71.77 / 143.44 (0.37 / 0.44): wowsims queues Shield Block
     -- (`Queueing up 2565 to cast at`) and casts the on-GCD ability at that instant, after ours shows it ready
-    warrior_protection = { 0.37, 3 },
+    -- -> { 0.37, 4 } (0.7 warrior lane, R6): 97 decisions, 4 real, all late, median 0.18 (Thunder Clap x2 0.32, Demoralizing
+    -- Shout 0.31, Revenge 0.18: cost and cooldown edges at the cast's instant)
+    warrior_protection = { 0.37, 4 },
 }
 
 --- The ready-time check of replay `R` (timing.lua) on spec `spec` after its run: prints "<label> wowsims timing:

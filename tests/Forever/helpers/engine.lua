@@ -146,6 +146,24 @@ local function newState(class, race)
     s.stat = function()
         return 0
     end
+    -- window.<name> (State.lua's and the belief's reader): every window down
+    local down = {
+        up = false,
+        down = true,
+        remains = 0,
+        elapsed = 0,
+        step = 0,
+        next = setmetatable({}, {
+            __index = function()
+                return false
+            end,
+        }),
+    }
+    s.window = setmetatable({}, {
+        __index = function()
+            return down
+        end,
+    })
     return setmetatable(s, {
         __index = function(_, k)
             if class.stateExprs[k] then
@@ -254,7 +272,7 @@ function M.load(classToken, race)
 
     local ns = vload.module() -- the real VirtualState (KnownRank, I.GCD_SPELL); Facade replaced below
     env.ns = ns
-    ns.L = english -- Spec.lua's pack notices (RestoreDefaults)
+    ns.L = english -- Spec/Packs.lua's pack notices (RestoreDefaults)
     local function spellInfo(id)
         return { name = "Spell " .. tostring(id), iconID = 0 }
     end
@@ -424,7 +442,7 @@ function M.load(classToken, race)
     return env
 end
 
--- Hekili.Class's abilities and auras after Engine/Schema/Spec.lua's SpecializationChanged merge of loaded `env`: the
+-- Hekili.Class's abilities and auras after Engine/Schema/Spec/Activation.lua's SpecializationChanged merge of loaded `env`: the
 -- kit's, then the shared `all` spec's for the keys the kit lacks, then the live race pack's over both (ns.applyRace).
 local function merged(env)
     local class = env.class
@@ -447,11 +465,12 @@ end
 --- items, auras) and the engine's own, a race pack's over both), each its registered object (gcd, cooldown, cast,
 --- known and the rest as registered). `race`: one race token (UnitRace's second return), that race's racials; nil:
 --- every race the registry holds (a pack's priority serves every race). Returns { abilities, auras (keyed like
---- Hekili.Class's: keys, names, IDs), talents (the kit's), racial = { [key] = race token } }.
+--- Hekili.Class's: keys, names, IDs), talents (the kit's), racial = { [key] = race token }, stateExprs (the kit's) }.
 function M.abilitySet(classToken, race)
     local base = M.load(classToken, race or "")
     local set = merged(base)
-    set.talents, set.racial = base.class.kit.talents, {}
+    -- stateExprs: the kit's state expressions (the translator's autoTimeToNext reads which hand clocks the kit has)
+    set.talents, set.racial, set.stateExprs = base.class.kit.talents, {}, base.class.kit.stateExprs
     for _, r in ipairs(race and { race } or base.races) do
         local env = race and base or M.load(classToken, r)
         local t = merged(env)

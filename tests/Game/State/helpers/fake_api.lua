@@ -421,7 +421,11 @@ function M.new()
     function api.GetLocale()
         return "enUS"
     end
-    api.GetCVar, api.GetCursorInfo, api.GetActionInfo, api.GetBindingKey = none, none, none, none
+    ctl.cvars = { cooldownViewerEnabled = "1" } -- GetCVar's answers (the game options' Cooldown Manager on)
+    function api.GetCVar(name)
+        return ctl.cvars[name]
+    end
+    api.GetCursorInfo, api.GetActionInfo, api.GetBindingKey = none, none, none
     api.GetSpecializationInfoByID, api.GetStablePetInfo = none, none
     function api.GetInventoryItemID(_, slot)
         return ctl.inventory[slot]
@@ -687,13 +691,42 @@ function M.new()
     -- is the client's show or hide 3-4 ms after the aura edge: auraInstanceID secret or nil, then the item's hooks. A
     -- shown item reads its `auraDataUnit` (set by the caller, else the item's `unit`); a hidden one reads no unit
     -- either (CDV_FRAME 5609).
-    ctl.viewer = { available = true, sets = { [0] = {}, [1] = {}, [2] = {}, [3] = {} }, infos = {}, items = {} }
+    ctl.viewer = {
+        available = true,
+        sets = { [0] = {}, [1] = {}, [2] = {}, [3] = {} },
+        unlearned = { [0] = {}, [1] = {}, [2] = {}, [3] = {} }, -- added by GetCooldownViewerCategorySet(c, true)
+        infos = {},
+        items = {}, -- [viewer name] = its children in order (items, unconfigured items, non-item children)
+        shown = {}, -- [viewer name] = false: that viewer is not visible (nil: visible)
+        parentShown = true, -- false: no viewer is visible (their parent is hidden)
+        plainSpell = false, -- an applied item's auraSpellID is plain (out of combat, probed) instead of SECRET
+        lag = false, -- ViewerAuraBySpell lights its items at the NEXT ctl.Tick, not in the same call
+        log = true, -- items record their writes (the order tests); the loops turn it off (bounded memory, L279)
+        applied = {}, -- the auras up on us: { unit, spellID }, for an item acquired while one is still running
+        pending = {}, -- the lagged lights: { item, unit, up }
+        hookCalls = {}, -- every HookScript / hooksecurefunc call (the leaf is asserted to make none)
+        reshuffle = false, -- true: ViewerRetarget also reshuffles every viewer's frames (ViewerReshuffle)
+        reshuffleN = 0, -- the counter ViewerRetarget passes ViewerReshuffle (the caller may seed it per fight)
+        reshuffleDark = false, -- true: a reshuffle is not atomic: a moved lit item reads dark until the next flush
+    }
+    ctl.overrides = {} -- [spellID] = C_Spell.GetOverrideSpell's answer (default: the ID itself)
     api.C_CooldownViewer = {
         IsCooldownViewerAvailable = function()
-            return ctl.viewer.available
+            return ctl.viewer.available, ctl.viewer.failureReason -- (isAvailable, failureReason)
         end,
-        GetCooldownViewerCategorySet = function(category)
-            return ctl.viewer.sets[category]
+        GetCooldownViewerCategorySet = function(category, allowUnlearned)
+            local set = ctl.viewer.sets[category]
+            if not allowUnlearned then
+                return set
+            end
+            local r = {}
+            for _, id in ipairs(set) do
+                r[#r + 1] = id
+            end
+            for _, id in ipairs(ctl.viewer.unlearned[category]) do
+                r[#r + 1] = id
+            end
+            return r
         end,
         GetCooldownViewerCooldownInfo = function(id)
             return ctl.viewer.infos[id]
@@ -702,23 +735,327 @@ function M.new()
     for _, name in ipairs(M.VIEWERS) do
         ctl.viewer.items[name] = {}
         api[name] = {
+            IsVisible = function()
+                return ctl.viewer.parentShown ~= false and ctl.viewer.shown[name] ~= false
+            end,
             GetChildren = function()
                 return unpack(ctl.viewer.items[name])
             end,
+            GetNumChildren = function()
+                return #ctl.viewer.items[name]
+            end,
+            GetItemFrames = function() -- the item children only (a non-item child is not an item frame)
+                local r = {}
+                for _, c in ipairs(ctl.viewer.items[name]) do
+                    if c.isItem then
+                        r[#r + 1] = c
+                    end
+                end
+                return r
+            end,
         }
+    end
+    function api.hooksecurefunc(...)
+        local h = ctl.viewer.hookCalls
+        h[#h + 1] = { ... }
     end
     local NO_HOOKS = {}
     local function hookScript(item, script, fn)
+        local c = ctl.viewer.hookCalls
+        c[#c + 1] = { item, script }
         local h = item.hooks[script] or {}
         item.hooks[script] = h
         h[#h + 1] = fn
     end
-    --- A child of viewer `name` tracking cooldown `id` at `layoutIndex`, hidden.
+    local function write(item, what) -- the client's write order, recorded for the order tests
+        if ctl.viewer.log then
+            item.writes[#item.writes + 1] = what
+        end
+    end
+    --- A child of viewer `name` tracking cooldown `id` at `layoutIndex` (`id` nil: an unconfigured slot), hidden.
     function ctl.ViewerItem(name, layoutIndex, id)
         local list = ctl.viewer.items[name]
-        local item = { layoutIndex = layoutIndex, cooldownID = id, hooks = {}, HookScript = hookScript }
+        local item = {
+            isItem = true,
+            layoutIndex = layoutIndex,
+            cooldownID = id,
+            hooks = {},
+            writes = {},
+            HookScript = hookScript,
+        }
         list[#list + 1] = item
         return item
+    end
+    --- A non-item child (no cooldownID, no layoutIndex).
+    function ctl.ViewerChild(name)
+        local list = ctl.viewer.items[name]
+        local child = {}
+        list[#list + 1] = child
+        return child
+    end
+    local function clearAura(item)
+        item.auraInstanceID, item.auraSpellID, item.auraDataUnit, item.litBy, item.litUnit = nil, nil, nil, nil, nil
+        item.shown = false
+        write(item, "clear")
+    end
+    --- The client's set (BD:368-392): a held aura is cleared first, then the new one set.
+    function ctl.ViewerAura(item, unit, spellID)
+        if item.auraInstanceID ~= nil then
+            clearAura(item)
+        end
+        item.auraInstanceID, item.auraDataUnit, item.litBy, item.litUnit = SECRET, unit, spellID, unit
+        if item.noUnit then -- a STRESS flag, not a client state (BD:368-379 always records the unit): held with
+            -- auraDataUnit nil, the shape of a secret or unread unit, which the leaf must never count as live (§2.2a)
+            item.auraDataUnit = nil
+        end
+        item.auraSpellID = ctl.viewer.plainSpell and spellID or SECRET
+        item.shown = true
+        write(item, "set")
+    end
+    function ctl.ViewerClear(item)
+        clearAura(item)
+    end
+    --- Release (BD:95-98): the cooldownID first, then the aura clear, then the layoutIndex.
+    function ctl.ViewerRelease(item)
+        item.cooldownID = nil
+        write(item, "cooldownID")
+        clearAura(item)
+        item.layoutIndex = nil
+        write(item, "layoutIndex")
+    end
+    --- Does `info` name `spellID`? As the client does (FindLinkedSpellForCurrentAuras): an info with linkedSpellIDs
+    --- matches ONLY those (its base spell stays dark, F4); otherwise spellID, overrideSpellID and overrideTooltipSpellID,
+    --- each also through GetOverrideSpell.
+    local function names(info, spellID)
+        local links = info.linkedSpellIDs
+        if links and links[1] ~= nil then
+            for _, l in ipairs(links) do
+                if l == spellID then
+                    return true
+                end
+            end
+            return false
+        end
+        local a, b, c = info.spellID, info.overrideSpellID, info.overrideTooltipSpellID -- (no ipairs: nil gaps)
+        return a == spellID
+            or b == spellID
+            or c == spellID
+            or (a ~= nil and ctl.overrides[a] == spellID)
+            or (b ~= nil and ctl.overrides[b] == spellID)
+            or (c ~= nil and ctl.overrides[c] == spellID)
+    end
+    local REFRESH_UNITS = { "player", "target" }
+    --- Re-point (BV:137-147): the cooldownID, then the refresh (a held aura clears, then sets again).
+    function ctl.ViewerRepoint(item, id)
+        item.cooldownID = id
+        write(item, "cooldownID")
+        if item.auraInstanceID ~= nil then
+            local info = ctl.viewer.infos[id]
+            if item.litBy and info and not names(info, item.litBy) then
+                clearAura(item) -- the new cooldownID does not name the aura it held: the refresh finds none
+            else
+                ctl.ViewerAura(item, item.auraDataUnit, item.litBy)
+            end
+        end
+        local info = ctl.viewer.infos[id]
+        if item.auraInstanceID == nil and info and not item.silent then -- the refresh finds an aura of the new entry,
+            -- the player's before the target's (the client's scan order; CooldownViewerItemData.lua:16-79)
+            for _, unit in ipairs(REFRESH_UNITS) do
+                for _, a in ipairs(ctl.viewer.applied) do
+                    if
+                        item.auraInstanceID == nil
+                        and a[1] == unit
+                        and (item.unit == nil or item.unit == unit)
+                        and names(info, a[2])
+                    then
+                        if ctl.viewer.lag then
+                            local p = ctl.viewer.pending
+                            p[#p + 1] = { item, a[1], true, a[2] }
+                        else
+                            ctl.ViewerAura(item, a[1], a[2])
+                        end
+                    end
+                end
+            end
+        end
+    end
+    local function light(item, unit, up, spellID)
+        if up then
+            ctl.ViewerAura(item, unit, spellID)
+        elseif item.auraInstanceID ~= nil then
+            clearAura(item)
+        end
+    end
+    --- An aura of `spellID` goes up or down on `unit`: every configured, non-`silent` item in any viewer whose info
+    --- names the spell lights (an info listing another rank stays silent). Only our own auras ("player") light items.
+    --- With ctl.viewer.lag the lights land at the next ctl.Tick instead.
+    function ctl.ViewerAuraBySpell(unit, spellID, up, source)
+        if source ~= "player" then
+            return
+        end
+        local ap = ctl.viewer.applied
+        for i = #ap, 1, -1 do
+            if ap[i][1] == unit and ap[i][2] == spellID then
+                table.remove(ap, i)
+            end
+        end
+        if up then
+            ap[#ap + 1] = { unit, spellID }
+        end
+        for _, name in ipairs(M.VIEWERS) do
+            for _, item in ipairs(ctl.viewer.items[name]) do
+                local info = item.cooldownID and ctl.viewer.infos[item.cooldownID]
+                if info and not item.silent and (item.unit == nil or item.unit == unit) and names(info, spellID) then
+                    if ctl.viewer.lag and up then -- removal stays immediate
+                        local p = ctl.viewer.pending
+                        p[#p + 1] = { item, unit, up, spellID }
+                    else
+                        light(item, unit, up, spellID)
+                    end
+                end
+            end
+        end
+    end
+    --- The pool grows (also in combat): a NEW frame table each time (an item can come back as a different frame for the
+    --- same cooldownID), at the next layout index. An aura of its spell still up lights it at once (F13) unless `silent`
+    --- (3rd argument) or ctl.viewer.lag (then at the next Tick). `frame`: a released child of `name` comes back from
+    --- the pool instead (the same table, no new child).
+    function ctl.ViewerAcquire(name, id, silent, frame)
+        local top = 0 -- max + 1: a removal must not make a live index repeat
+        for _, c in ipairs(ctl.viewer.items[name]) do
+            top = math.max(top, c.layoutIndex or 0)
+        end
+        local item = frame
+        if item then
+            item.cooldownID, item.layoutIndex = id, top + 1
+        else
+            item = ctl.ViewerItem(name, top + 1, id)
+        end
+        item.silent = silent or nil
+        local info = ctl.viewer.infos[id]
+        for _, a in ipairs(ctl.viewer.applied) do
+            if info and not silent and (item.unit == nil or item.unit == a[1]) and names(info, a[2]) then
+                if ctl.viewer.lag then
+                    local p = ctl.viewer.pending
+                    p[#p + 1] = { item, a[1], true, a[2] }
+                else
+                    light(item, a[1], true, a[2])
+                end
+            end
+        end
+        return item
+    end
+    --- The item leaves the pool: released, and its frame drops out of the viewer's children and GetItemFrames.
+    function ctl.ViewerRemove(name, item)
+        ctl.ViewerRelease(item)
+        local list = ctl.viewer.items[name]
+        for i, c in ipairs(list) do
+            if c == item then
+                table.remove(list, i)
+                return
+            end
+        end
+    end
+    local function flushLag()
+        local p = ctl.viewer.pending
+        ctl.viewer.pending = {}
+        for _, e in ipairs(p) do
+            local up = false -- an apply and its removal inside one poll: nothing to light (a held refresh stays lit)
+            for _, a in ipairs(ctl.viewer.applied) do
+                if a[1] == e[2] and a[2] == e[4] then
+                    up = true
+                end
+            end
+            if e[1].cooldownID ~= nil and up then
+                light(e[1], e[2], e[3], e[4])
+            end
+        end
+    end
+    ctl.ViewerFlush = flushLag -- the loop harness never calls ctl.Tick: its cycle calls this
+    local FRAME_OWN = { isItem = true, hooks = true, writes = true, HookScript = true } -- the rest is the item's
+    --- The full UNIT_AURA update's release and re-acquire (verdict spec §1, §2.4): in each viewer the configured items
+    --- move to other frames, a rotation by 1 + n % (count - 1) (deterministic from the caller's counter `n`, never
+    --- the identity). An item carries everything but the frame itself: its cooldownID, layoutIndex, flags and aura
+    --- state (a lit item stays lit on its new frame, as the client's refresh re-lights it); a pending light follows it.
+    --- With ctl.viewer.reshuffleDark a moved lit item clears on its new frame and re-lights at the next flush (the
+    --- verdict's settle under a non-atomic re-point; still applied then, else it stays dark).
+    function ctl.ViewerReshuffle(n)
+        local moved, order = {}, {} -- old frame -> new frame; the new frames in viewer order
+        for _, name in ipairs(M.VIEWERS) do
+            local frames, items = {}, {}
+            for _, f in ipairs(ctl.viewer.items[name]) do
+                if f.isItem and f.cooldownID ~= nil then
+                    local b = {}
+                    for k, v in pairs(f) do
+                        if not FRAME_OWN[k] then
+                            b[k] = v
+                        end
+                    end
+                    for k in pairs(b) do
+                        f[k] = nil
+                    end
+                    frames[#frames + 1], items[#items + 1] = f, b
+                end
+            end
+            local c = #frames
+            local r = c > 1 and 1 + n % (c - 1) or 0
+            for i, f in ipairs(frames) do
+                local from = frames[(i - 1 + r) % c + 1]
+                for k, v in pairs(items[(i - 1 + r) % c + 1]) do
+                    f[k] = v
+                end
+                moved[from], order[#order + 1] = f, f
+                write(f, "reshuffle")
+            end
+        end
+        for _, p in ipairs(ctl.viewer.pending) do
+            p[1] = moved[p[1]] or p[1]
+        end
+        if ctl.viewer.reshuffleDark then
+            local p = ctl.viewer.pending
+            for _, f in ipairs(order) do
+                if f.auraInstanceID ~= nil then
+                    local unit, spellID = f.litUnit, f.litBy
+                    clearAura(f)
+                    p[#p + 1] = { f, unit, true, spellID }
+                end
+            end
+        end
+    end
+    --- Our target changed (the client re-reads its target items): every item held for the target clears (a noUnit one
+    --- by the unit it was lit for), the target's applied auras and pending lights go; the caller lights the new target's.
+    --- With ctl.viewer.reshuffle the full update also re-points every frame in all four viewers (ViewerReshuffle).
+    function ctl.ViewerRetarget()
+        for _, name in ipairs(M.VIEWERS) do
+            for _, item in ipairs(ctl.viewer.items[name]) do
+                if item.isItem and item.auraInstanceID ~= nil and item.litUnit == "target" then
+                    clearAura(item)
+                end
+            end
+        end
+        for _, list in ipairs({ ctl.viewer.applied, ctl.viewer.pending }) do
+            local u = list == ctl.viewer.applied and 1 or 2
+            for i = #list, 1, -1 do
+                if list[i][u] == "target" then
+                    table.remove(list, i)
+                end
+            end
+        end
+        if ctl.viewer.reshuffle then
+            ctl.viewer.reshuffleN = ctl.viewer.reshuffleN + 1
+            ctl.ViewerReshuffle(ctl.viewer.reshuffleN)
+        end
+    end
+    --- A fresh fight (the loops): every item's aura cleared, no aura applied, no light pending; the frames stay.
+    function ctl.ViewerReset()
+        for _, name in ipairs(M.VIEWERS) do
+            for _, item in ipairs(ctl.viewer.items[name]) do
+                if item.isItem and item.auraInstanceID ~= nil then
+                    clearAura(item)
+                end
+            end
+        end
+        ctl.viewer.applied, ctl.viewer.pending = {}, {}
     end
     function ctl.ViewerShow(item, up)
         item.shown = up
@@ -732,6 +1069,9 @@ function M.new()
         end
     end
     local C = api.C_Spell
+    function C.GetOverrideSpell(id)
+        return ctl.overrides[id] or id
+    end
     local info = {} -- [spellID] = GetSpellInfo's table, built once
     function C.GetSpellInfo(id)
         local i = info[id]
@@ -812,6 +1152,9 @@ function M.new()
     function ctl.Tick(now)
         if now then
             ctl.now = now
+        end
+        if ctl.viewer.pending[1] then
+            flushLag()
         end
         local fn = api.frame and api.frame.scripts.OnUpdate
         if fn then

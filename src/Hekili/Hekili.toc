@@ -51,6 +51,7 @@ Game\State\Sources\Totems.lua
 Game\State\Sources\Pets.lua
 Game\State\Sources\Enchants.lua
 Game\State\Sources\Outcomes\Meter.lua
+Game\State\Sources\Presence\Reduce.lua
 Game\State\Sources\Presence\CooldownViewer.lua
 Game\State\Sources\Presence\Router.lua
 Game\State\Snapshot.lua
@@ -78,8 +79,16 @@ Engine\Schema\Races.lua
 Engine\Sim\Events.lua
 
 Engine\Schema\Trees.lua
+Engine\Schema\Selectors.lua
 Engine\Schema\Tracked.lua
 Engine\Schema\Spec.lua
+Engine\Schema\Spec\Regen.lua
+Engine\Schema\Spec\Auras.lua
+Engine\Schema\Spec\Abilities.lua
+Engine\Schema\Spec\Kits.lua
+Engine\Schema\Spec\All.lua
+Engine\Schema\Spec\Packs.lua
+Engine\Schema\Spec\Activation.lua
 Engine\Schema\Shared.lua
 Engine\Schema\Threat.lua
 Engine\Output.lua

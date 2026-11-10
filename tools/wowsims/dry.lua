@@ -1,7 +1,7 @@
 -- tools/wowsims/dry.lua (re-pin plan, docs/superpowers/plans/2026-11-03-wowsims-repin.md, Task 2): the dry run.
 --   .lua/bin/lua tools/wowsims/dry.lua <spec>...
 -- prints `<spec> omitted <N> lines <M> [sequence=a wait=b waitUntil=c move=d other=e]` per spec: export.lua's request
--- built from the wowsims checkout (WOWSIMS, at M.PIN; a `siml` recipe reads its checked-in M.OUT/<spec>.build.json),
+-- built from the wowsims checkout (WOWSIMS, at the spec's pin, export.lua M.pin; a `siml` recipe reads its checked-in M.OUT/<spec>.build.json),
 -- translated as `export.lua pack` does (with the checked-in log), N its `# Omitted:` entries, M its non-empty .simc
 -- lines, the bracket N by the omit reason's node kind (its first word; `resetSequence`, `never`, `hidden` ... are
 -- other). A spec whose build or translation raises prints `<spec> error <message>`. Writes nothing.
@@ -32,14 +32,15 @@ end
 
 local function dry(ex, apl, root, spec)
     local r = ex.recipe(spec)
-    local player = ex.request(r, root, spec).raid.parties[1].players[1]
+    local req = ex.request(r, root, spec)
+    local player = req.raid.parties[1].players[1]
     local lf = io.open(ex.OUT .. spec .. ".log", "rb")
     local log = lf and lf:read("*a")
     if lf then
         lf:close()
     end
     local set = require("Forever.helpers.engine").abilitySet(r.class)
-    local text, omitted = apl.translate(player.rotation, apl.context(set, r, log, player))
+    local text, omitted = apl.translate(player.rotation, apl.context(set, r, log, player, req.encounter))
     local lines = 0
     for _ in text:gmatch("[^\n]+") do
         lines = lines + 1
@@ -53,8 +54,9 @@ if #specs == 0 then
 end
 local ex = loadfile("tools/wowsims/export.lua")()
 local apl = require("tools.wowsims.apl")
-local root = ex.checkout()
 for _, spec in ipairs(specs) do
-    local ok, line = pcall(dry, ex, apl, root, spec)
+    local ok, line = pcall(function() -- each spec from a checkout at its own pin (export.lua M.pin)
+        return dry(ex, apl, (ex.checkout(spec)), spec)
+    end)
     print(ok and line or ("%s error %s"):format(spec, (tostring(line):gsub("\n", " "))))
 end

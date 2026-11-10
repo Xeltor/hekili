@@ -464,7 +464,7 @@ describe("the headless loop's replay injection (o.replay)", function()
         assert.is_truthy(
             loop.line(m):find("; decision flips 0 (0.0 per 100), retracted confirmed by wowsims 0", 1, true)
         )
-        local t = loop.tally(L, 1, { duration = 6, hold = true })
+        local t = loop.tally(L, 1, { duration = 6, hold = true, steady = false }) -- the hold experiment alone
         assert.is_nil(loop.summary(t).decisions) -- the normal tally: unchanged
         -- every line carries the ledger's fields, and says when the hold experiment was on
         assert.is_truthy(loop.line(t):find("; dips 0.00 flashes 0.00; top []", 1, true))
@@ -586,5 +586,29 @@ describe("the headless loop's flicker counter (loop.flips)", function()
 
     it("does not excuse the blip for a press of a different ability", function()
         assert.are.equal(1, loop.flips(seq, 4, { "a", "c", "a", false }))
+    end)
+end)
+
+describe("the headless loop's verdict truth check (loop.verdictTruth)", function()
+    it("counts a close of an aura the world still has as wrong, a close of an absent one not", function()
+        local VI = { AURA_UNIT = 100, presenceVerdict = { [3] = 0, [103] = 0 }, def = { auraIds = { [3] = { 11 } } } }
+        local mob = { auras = { [11] = { stacks = 1, expires = 10 } } }
+        local us = { auras = {}, target = mob }
+        local run, vt = { verdictsWrong = { 0, 0 } }, { VI = VI, seen = { [3] = 0, [103] = 0 } }
+        VI.presenceVerdict[103] = 1 -- a target close at 5: the mob still carries 11 (up to 10)
+        loop.verdictTruth(vt, run, us, 5)
+        assert.are.same({ 0, 1 }, run.verdictsWrong)
+        VI.presenceVerdict[103] = 2 -- at 12: expired in the world, a correct close
+        loop.verdictTruth(vt, run, us, 12)
+        VI.presenceVerdict[3] = 1 -- the player's: 11 is not on us
+        loop.verdictTruth(vt, run, us, 12)
+        assert.are.same({ 0, 1 }, run.verdictsWrong)
+        loop.verdictTruth(vt, run, us, 13) -- no count rose: nothing
+        assert.are.same({ 0, 1 }, run.verdictsWrong)
+        VI.presenceVerdict[103] = 0 -- the belief's per-fight reset resets the tally
+        loop.verdictTruth(vt, run, us, 14)
+        assert.are.same({ 0, 0 }, run.verdictsWrong)
+        assert.is_true(loop.auraUp(mob, { 12, 11 }, 9.9) and not loop.auraUp(nil, { 11 }, 1))
+        assert.is_true(loop.VERDICT_ARM["viewer-swap"] and not loop.VERDICT_ARM["viewer-buffs"])
     end)
 end)

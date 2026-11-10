@@ -345,19 +345,14 @@ I.On(Obs.Cooldown, function(o, t)
 end)
 
 -- The standing flags at `now` (TDF constrain): ready pulls a later ready time back to now (and restores a charge);
--- not ready pushes an earlier one to at least now + CD_PROBE, but keeps a modelled end the flag agrees with while the
--- GCD's or a hard cast's end (`busy`) covers it (gap CQ: the push froze the wait at 0.5 for a cooldown's last polls, so
--- a filler showed for the poll the GCD or cast ended on). No press lands before `busy`, and the flag is read again
--- there; only for an ability on the GCD (an off-GCD or on-next-swing one presses during it). Uncovered, the probe
--- stands as before: a free GCD (the loops' grid ends a ulp after the tick), a modelled end
--- already past (the model may be short), or one within READY with `busy` within READY too (a press would meet the
--- client's no, 4bd02bde0). A probe already pushed is no modelled end: re-pushed, not counted down.
+-- not ready keeps a modelled end not already past now by more than EPS, and pushes one that is to now + CD_PROBE
+-- (the model is provably short); a probe in force (ready0 is the pinned sample's value) is pushed again each poll,
+-- frozen at CD_PROBE, so it never counts down to a ready shown while the flag says no (review I1). Not by basis
+-- alone: a model sampled at a pin's own t ties to "pinned" (I.Basis), and that end must still count down. Gap CQ: pushing an end the flag agrees
+-- with froze the wait at 0.5 for a cooldown's last polls, so a filler showed for a poll at each end, covered by the
+-- GCD or not (A1: an end just past the GCD's; A2: an end on the poll tick whose real end is a float ulp later). A
+-- press within the client's spell queue window of a kept end is held to it, not refused.
 I.OnSettle(function(now)
-    local busy = I.gcdStart > 0 and I.gcdStart + I.gcdDur or 0 -- the end no press lands before (0: none)
-    if I.castAb > 0 and not I.channel and I.castEnd > busy then
-        busy = I.castEnd
-    end
-    local held = busy > now + I.CAP_WAIT -- no press this poll
     for a = 1, A.n do
         local flag = A.flag[a]
         if flag == YES then
@@ -376,15 +371,7 @@ I.OnSettle(function(now)
                     A.next0[a] = probe
                 end
             elseif
-                A.ready0[a] < probe
-                and (
-                    A.cd[a].basis ~= "modelled"
-                    or A.gcdKind[a] == 0
-                    or A.obj[a].onNextSwing
-                    or A.ready0[a] <= now - I.EPS
-                    or A.ready0[a] > busy + I.EPS
-                    or (A.ready0[a] <= now + I.CAP_WAIT and not held)
-                )
+                A.ready0[a] < now - I.EPS or (A.cd[a].basis == "pinned" and A.ready0[a] == A.cd[a].last.pinned.v)
             then
                 A.ready0[a] = probe
                 I.Sample(A.cd[a], "pinned", probe, now, Obs.Cooldown)

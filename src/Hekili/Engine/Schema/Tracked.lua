@@ -1,6 +1,6 @@
 -- Engine/Schema/Tracked.lua
 -- The tracked set (VirtualState spec §3.6, decision 8; border batch 3): what the belief tracks, built from the active
--- spec's registrations (class.*, the race pack's modifiers, the passives, the experimental toggles) and handed to
+-- spec's registrations (class.*, the race pack's modifiers, the passives, the providers) and handed to
 -- it through ns.VirtualState.Build(def), the core's one build-time call into the belief. `def` carries plain records
 -- (border batch 4, the owner's design 2026-11-01): no metatable, never a live Hekili table. Each field is a value, a
 -- function the belief runs in its own `now` context, or absent; Spec.lua's `funcs` are flattened in beside the raw
@@ -36,7 +36,7 @@ local def = {
     talents = {},
     units = {},
     pets = {}, -- the guardians: { key, cap, duration, slot } of each pet registered with a `cap` (Families/Pets.lua)
-    providers = {}, -- outcomes, presence, viewer, coalesceCooldown, narrowUnitAura: the experimental toggles (providersOf)
+    providers = {}, -- outcomes, presence, viewer (providersOf)
     settings = {}, -- the spec's settings as plain values (Families/Now.lua's `settings`; refreshed by Hekili:SettingsChanged)
     windows = {}, -- the rotation windows (RegisterWindow's records; `steps` as ability indexes): Families/Windows.lua
     reactions = {}, -- RegisterReaction's records { key, who, outcome, hand, now }: Families/Now.lua (no ability index)
@@ -63,7 +63,7 @@ local HANDS = { mainhand = 1, offhand = 2 }
 local ON_TARGET = { combo_points = true }
 -- a test's stand-in class may have no `pets`, `windows`, `reactions`, `gear` or `setBonuses`
 local NO_PETS, NO_WINDOWS, NO_GEAR = {}, {}, {}
--- The sim's own generated entries (Spec.lua RegisterResource: the stepped decay and the hits taken), reserved names
+-- The sim's own generated entries (Spec/Regen.lua RegisterResource: the stepped decay and the hits taken), reserved names
 -- the walk below skips: they are no regen entries of the belief.
 local DECAY, TAKEN = "__decay", "__taken"
 
@@ -162,9 +162,9 @@ local function sortedKeys(t)
     return keys
 end
 
--- (providers spec §3.4, decision 82) The experimental toggles as the build config's providers. The router is always
--- injected; without the viewer leaf it covers nothing (the Default path). No engine where a test loads the schema alone.
-local NO_PERF, NO_META, NO_SETTINGS = {}, {}, {}
+-- (providers spec §3.4, decision 82) The build config's providers. The router is always injected; without the viewer
+-- leaf it covers nothing (the Default path). No engine where a test loads the schema alone.
+local NO_META, NO_SETTINGS = {}, {}
 -- The active spec's settings (Engine.settings.specs[id].settings, the profile's) copied as plain values into
 -- def.settings, which Families/Now.lua's `settings` reads: a pack's `usable` may gate on one (`settings.behind`).
 -- The sim's `state.settings` reads the profile live; the record is refreshed by Hekili:SettingsChanged at every write.
@@ -214,14 +214,27 @@ function ns.TrackedStatics()
 end
 
 local function providersOf()
+    -- no option for the adaptive providers (cdm-default decision 107): the Outcomes provider is the default one and the
+    -- Cooldown Manager is on unless the debug-only session switch Hekili.cdmOff is true; a saved value is ignored
+    return "default", "router", Hekili.cdmOff ~= true
+end
+
+-- (cdm-panel) The Cooldown Manager switch of aura record `rec` (the Cooldown Manager panel, Options.lua): the profile's
+-- per-spec value by aura key when set (profile.specs[id].cdm[key]), else the pack's `cdm = false` (RegisterAura data,
+-- copied raw by recordOf), else on (nil). False: the leaf maps none of the aura's items (Presence/CooldownViewer.lua).
+local function cdmOf(rec)
     local e = Hekili.Engine
-    -- a non-dev build hides these switches (Options.lua) and ignores a saved value: each reads as its default, off
-    local p = Hekili.IsDev and e and e.settings.performance or NO_PERF
-    return p.damageMeter == true and "meter" or "default",
-        "router",
-        p.cooldownViewer == true,
-        p.coalesceCooldown == true,
-        p.narrowUnitAura == true
+    local specs = e and e.settings.specs
+    local spec = specs and state and state.spec and specs[state.spec.id]
+    local cdm = type(spec) == "table" and spec.cdm
+    if type(cdm) == "table" and type(cdm[rec.key]) == "boolean" then
+        return cdm[rec.key]
+    end
+    local aura = class.auras[rec.key]
+    if aura and rawget(aura, "cdm") == false then
+        return false
+    end
+    return nil
 end
 
 local function buildDef()
@@ -229,7 +242,7 @@ local function buildDef()
         wipe(def[name])
     end
     local pv = def.providers
-    pv.outcomes, pv.presence, pv.viewer, pv.coalesceCooldown, pv.narrowUnitAura = providersOf()
+    pv.outcomes, pv.presence, pv.viewer = providersOf()
     def.school = ns.SCHOOL -- the spell schools by name (Families/Expect.lua compiles an ability's `school` to the mask)
     def.error = ns.Error -- the core's error channel (Sources/Forms.lua warns once per untracked form)
     -- the game constants, defined once in Engine/Sim/Constants.lua (border batch 3 item 4): the five-second rule's
@@ -336,7 +349,9 @@ local function buildDef()
                 ids[1] = a.id -- an id-less weapon-enchant aura (C4): RegisterAura's negative pseudo-ID
             end
             if #ids > 0 then
-                insert(def.auras, recordOf(a))
+                local rec = recordOf(a)
+                rec.cdm = cdmOf(rec)
+                insert(def.auras, rec)
                 def.auraIds[#def.auras] = ids
             end
         end
@@ -391,12 +406,22 @@ local function buildDef()
     settingsOf()
 end
 
---- (providers spec §3.4, decision 82; audit E17) The experimental toggles changed (Options' setters): the build's
---- providers follow Engine.settings.performance; the belief swaps at its next drain (out of combat; at combat end
+--- (providers spec §3.4, decision 82; audit E17) The providers' inputs changed (Hekili.cdmOff, the harness's arms): the
+--- build's providers follow providersOf; the belief swaps at its next drain (out of combat; at combat end
 --- otherwise), keeping its records. Never a rebuild.
 function Hekili:ProvidersChanged()
     local pv = def.providers
-    pv.outcomes, pv.presence, pv.viewer, pv.coalesceCooldown, pv.narrowUnitAura = providersOf()
+    pv.outcomes, pv.presence, pv.viewer = providersOf()
+end
+
+--- (cdm-panel) A Cooldown Manager switch changed (the Cooldown Manager panel's setters): each aura record's `cdm`
+--- follows the profile, and def.providers.cdmGen moves so the belief re-activates the presence provider at its next
+--- drain, out of combat (at combat end otherwise: Belief.lua I.SetProviders): the leaf rebuilds its map. Never a rebuild.
+function Hekili:CdmSwitchChanged()
+    for j = 1, #def.auras do
+        def.auras[j].cdm = cdmOf(def.auras[j])
+    end
+    def.providers.cdmGen = (def.providers.cdmGen or 0) + 1
 end
 
 --- Rebuilds the belief's tracked set from the active spec (decision 8). Called at the end of

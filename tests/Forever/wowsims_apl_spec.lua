@@ -2,7 +2,7 @@
 -- wowsims/forever's JSON shape (MIT) with a stand-in class context.
 local apl = require("tools.wowsims.apl")
 
-local function ctx(r, player)
+local function ctx(r, player, encounter)
     local kit = {
         abilities = {
             strike = { key = "strike", id = 100, copy = { 101 }, gcd = "spell" },
@@ -18,6 +18,8 @@ local function ctx(r, player)
                     return 6
                 end,
             },
+            drain = { key = "drain", id = 700, cast = 5, channeled = true, gcd = "spell" },
+            bolt = { key = "bolt", id = 800, cast = 2.5, velocity = 20, gcd = "spell" },
             trinket = { key = "trinket", id = -1, item = 555, gcd = "off" },
             stone = { key = "stone", id = -2, items = { 556, 557 }, gcd = "off" },
         },
@@ -30,7 +32,7 @@ local function ctx(r, player)
         },
         talents = { furious = { 2, 900, 1 }, cuts = { 1, 950, 1 } },
     }
-    return apl.context(kit, r or { executePhase = "execute_phase", focus = { strike = 1 } }, nil, player)
+    return apl.context(kit, r or { executePhase = "execute_phase", focus = { strike = 1 } }, nil, player, encounter)
 end
 local function cast(id, cond)
     return { action = { castSpell = { spellId = { spellId = id } }, condition = cond } }
@@ -466,6 +468,27 @@ describe("the wowsims APL translator", function()
                 )
             end
         )
+
+        -- L102: a condition that already has the guard's term as an `&` term does not take it twice (Enhancement's
+        -- `water_shield,if=!buff.water_shield.up&!buff.water_shield.up`)
+        it("adds no guard term the line's condition already has", function()
+            local down = NOT({ auraIsActive = { auraId = { spellId = 2001 } } })
+            local text = apl.translate({
+                prepullActions = {
+                    at(1001, "-5s", down),
+                    at(1001, "-4s", AND(down, { isExecutePhase = { threshold = "E20" } })),
+                    at(1001, "-3s", OR(down, { isExecutePhase = { threshold = "E20" } })),
+                },
+            }, guardCtx())
+            assert.are.equal(
+                table.concat({
+                    "actions.precombat=shout,if=!buff.shout.up",
+                    "actions.precombat+=/shout,if=(!buff.shout.up&execute_phase)",
+                    "actions.precombat+=/shout,if=!buff.shout.up&(!buff.shout.up|execute_phase)",
+                }, "\n"),
+                text
+            )
+        end)
 
         it("guards a mutually exclusive group's first line by every member's aura, later ones by their own", function()
             local text = apl.translate({
@@ -1273,6 +1296,18 @@ describe("the wowsims APL translator", function()
         end
     )
 
+    -- L11: the recipe's condition replaces the APL's even where the APL's folds false (it was "never", then a
+    -- spurious "condition: no <key> cast line" error)
+    it("replaces an APL condition that folds false with the recipe's condition", function()
+        local never = AND(ready, const("false"))
+        local text, omitted = apl.translate(
+            { priorityList = { cast(200, never), cast(100, never) } },
+            ctx({ condition = { big_hit = "rage.lo>40" } })
+        )
+        assert.are.equal("actions=big_hit,if=rage.lo>40", text)
+        assert.are.same({ "default #2: never" }, omitted)
+    end)
+
     it("takes the character's ability set: a shared racial is mapped and off the GCD", function()
         local set = require("Forever.helpers.engine").abilitySet("WARRIOR")
         local c = apl.context(set, {})
@@ -1462,8 +1497,10 @@ describe("the wowsims APL translator", function()
             local hit = { auraIsActive = { auraId = { spellId = 200 } } } -- wowsims's window aura under big_hit's own ID
             local rot =
                 { priorityList = { cast(200, hit), cast(100, { auraIsKnown = { auraId = { spellId = 200 } } }) } }
+            -- no aura registered under big_hit: an ability's key is an aura read only where the kit has that aura
+            -- (rule 12's nil, its branch dropped); its auraIsKnown stays the ability's known test (rule 4)
             assert.are.equal(
-                "actions=big_hit,if=buff.big_hit.up\nactions+=/strike,focus=1,if=action.big_hit.known",
+                "actions=big_hit\nactions+=/strike,focus=1,if=action.big_hit.known",
                 (apl.translate(rot, ctx({ focus = { strike = 1 } })))
             )
             assert.are.equal( -- the cast is still big_hit; the aura reads stance (registered: known, true)
@@ -1614,6 +1651,131 @@ describe("the wowsims APL translator", function()
         local _, none = apl.translate({ priorityList = { { action = { autocastOtherCooldowns = {} } } } }, ctx())
         assert.are.same({ "default #1: autocastOtherCooldowns (no log)" }, none)
     end)
+
+    -- Rule 13's racials: wowsims's autocast uses every racial major cooldown the class can have (sim/core/racials.go),
+    -- not only the sampled race's; a defensive one only for a tank.
+    it("expands every racial the class can have that wowsims's autocast would use, at the racial's place", function()
+        local kit = {
+            abilities = {
+                roar = { key = "roar", id = 300, gcd = "off" },
+                trinket = { key = "trinket", id = -1, item = 555, gcd = "off" },
+                stoneform = { key = "stoneform", id = 20594, gcd = "spell" },
+                eureka = { key = "eureka", id = 1259813, copy = { 1259812, 1259817, 1259821, 1259823 }, gcd = "off" },
+                elunes_light = { key = "elunes_light", id = 1259799, gcd = "off" },
+                blood_fury = { key = "blood_fury", id = 20572, gcd = "off" },
+                shatter_curse = { key = "shatter_curse", id = 1299026, gcd = "spell" },
+                berserking = { key = "berserking", id = 20554, gcd = "off" },
+            },
+            auras = {},
+        }
+        local function log(...)
+            local out = { "# wowsims 0123 test seed 1 10 s target 63" }
+            for i, b in ipairs({ ... }) do
+                out[#out + 1] = ("[%d.00] [Tester (#1)] Major cooldown used: {%s}"):format(i, b)
+            end
+            return table.concat(out, "\n")
+        end
+        local orc = log("ItemID: 555", "SpellID: 20572", "SpellID: 300") -- the sampled Orc's Blood Fury second
+        local auto =
+            { action = { autocastOtherCooldowns = {}, condition = cmp("OpGe", { currentTime = {} }, const("5s")) } }
+        local function lines(class, text, tank, ...)
+            local rotation = { priorityList = { ... } }
+            rotation.priorityList[#rotation.priorityList + 1] = auto
+            return (apl.translate(rotation, apl.context(kit, {}, text, { class = class }, nil, tank)))
+        end
+        local function want(...)
+            local out = {}
+            for i, x in ipairs({ ... }) do
+                out[i] = (i == 1 and "actions=" or "actions+=/") .. x .. ",if=time>=5"
+            end
+            return table.concat(out, "\n")
+        end
+        -- every class racial in racials.go's order, where the sampled one was used; Stoneform and Shatter Curse
+        -- (defensive only) are a tank's
+        assert.are.equal(
+            want(
+                "trinket,use_off_gcd=1",
+                "eureka,use_off_gcd=1",
+                "elunes_light,use_off_gcd=1",
+                "blood_fury,use_off_gcd=1",
+                "berserking,use_off_gcd=1",
+                "roar,use_off_gcd=1"
+            ),
+            lines("ClassWarrior", orc)
+        )
+        assert.are.equal(
+            want(
+                "trinket,use_off_gcd=1",
+                "stoneform",
+                "eureka,use_off_gcd=1",
+                "elunes_light,use_off_gcd=1",
+                "blood_fury,use_off_gcd=1",
+                "shatter_curse",
+                "berserking,use_off_gcd=1",
+                "roar,use_off_gcd=1"
+            ),
+            lines("ClassWarrior", orc, true)
+        )
+        -- only the class's races (capabilities_auto_gen.ts CLASS_RACES): a Hunter is never a Gnome
+        assert.are.equal(
+            want(
+                "trinket,use_off_gcd=1",
+                "elunes_light,use_off_gcd=1",
+                "blood_fury,use_off_gcd=1",
+                "berserking,use_off_gcd=1",
+                "roar,use_off_gcd=1"
+            ),
+            lines("ClassHunter", orc)
+        )
+        -- a sample with no racial (a Human's): the racials lead (registered first, all ready at the pull)
+        assert.are.equal(
+            want(
+                "eureka,use_off_gcd=1",
+                "blood_fury,use_off_gcd=1",
+                "berserking,use_off_gcd=1",
+                "trinket,use_off_gcd=1",
+                "roar,use_off_gcd=1"
+            ),
+            lines("ClassMage", log("ItemID: 555", "SpellID: 300"))
+        )
+        -- a racial the APL casts itself is not wowsims's to autocast: its own line stands, not repeated, no note
+        local text, omitted = apl.translate({
+            priorityList = { cast(20572), cast(1259813), auto },
+        }, apl.context(kit, {}, orc, { class = "ClassWarrior" }))
+        assert.are.equal(
+            table.concat({
+                "actions=blood_fury,use_off_gcd=1",
+                "actions+=/eureka,use_off_gcd=1",
+                "actions+=/trinket,use_off_gcd=1,if=time>=5",
+                "actions+=/elunes_light,use_off_gcd=1,if=time>=5",
+                "actions+=/berserking,use_off_gcd=1,if=time>=5",
+                "actions+=/roar,use_off_gcd=1,if=time>=5",
+            }, "\n"),
+            text
+        )
+        assert.are.same(
+            { "default #3: autocastOtherCooldowns: spell 20572 is blood_fury, which the APL casts itself" },
+            omitted
+        )
+        -- a Paladin tank's only racial cooldown is the Dwarf's; no log line at all still gives it
+        assert.are.equal(want("stoneform"), lines("ClassPaladin", log(), true))
+        assert.are.equal("", lines("ClassPaladin", log()))
+        -- a defensive-health threshold or a cooldown timing (the player's `cooldowns`) is not modelled: an error
+        local ok, err = pcall(
+            apl.translate,
+            { priorityList = { auto } },
+            apl.context(
+                kit,
+                {},
+                orc,
+                { class = "ClassWarrior", cooldowns = { hpPercentForDefensives = 0.4 } },
+                nil,
+                true
+            )
+        )
+        assert.is_false(ok)
+        assert.matches("hpPercentForDefensives", err)
+    end)
 end)
 
 -- Re-pin Phase 2 (docs/superpowers/plans/2026-11-03-wowsims-repin.md, Task 3): the reads e2842f0a78's APLs add.
@@ -1733,6 +1895,74 @@ describe("the wowsims APL translator's re-pin reads", function()
         assert.are.equal("actions=strike,if=!druid_bleed_active", lines(NOT({ druidBleedIsActive = {} })))
     end)
 
+    -- CN4: the APL values upstream added after the pin (apl.proto 13813515ea, 39b31a66ee, baf3cc4c10; read at
+    -- upstream/master 4b0030a44b, sim/core apl_values_targets.go, apl_values_aura.go, apl_values_dot.go)
+    it("reads the on-any/all-target auras and DoTs on the current target, each with its deviation", function()
+        local aura = function(k, id)
+            return { [k] = { auraId = { spellId = id }, includeReactionTime = true } }
+        end
+        local text, omitted, _, header = apl.translate({
+            priorityList = {
+                cast(100, aura("auraIsActiveOnAllTargets", 400)),
+                cast(100, aura("auraIsActiveOnAnyTarget", 400)),
+                cast(100, NOT(spell("dotIsActiveOnAnyTarget", 400))),
+                cast(100, aura("auraIsActiveOnAnyTarget", 999)), -- unresolved: wowsims's nil, dropped
+            },
+        }, ctx({}))
+        assert.are.equal(
+            table.concat({
+                "actions=strike,if=(!action.dot.known|debuff.dot.up)",
+                "actions+=/strike,if=(!action.dot.known|debuff.dot.up)",
+                "actions+=/strike,if=(!action.dot.known|!debuff.dot.up)",
+                "actions+=/strike",
+            }, "\n"),
+            text
+        )
+        assert.are.same({ "default #4: dropped the unresolved aura 999 (its branch only)" }, omitted)
+        local all, any =
+            'an "on all targets" read is the current target\'s only.',
+            'an "on any target" read is the current target\'s only.'
+        assert.are.same({
+            "# Deviation: default #1: " .. all,
+            "# Deviation: default #2: " .. any,
+            "# Deviation: default #3: " .. any,
+        }, header)
+    end)
+
+    it("reads the current target as active now and its death at the fight's end; other units unsupported", function()
+        local other = { type = "Target", index = 1 }
+        local text, omitted = apl.translate({
+            priorityList = {
+                cast(100, { targetIsActive = {} }),
+                cast(
+                    200,
+                    cmp("OpLe", { timeUntilTargetActive = { targetUnit = { type = "CurrentTarget" } } }, const("0s"))
+                ),
+                cast(300, cmp("OpGt", { timeUntilTargetDies = {} }, const("20s"))),
+                cast(400, { targetIsActive = { targetUnit = other } }),
+                cast(400, cmp("OpGt", { timeUntilTargetDies = { targetUnit = other } }, const("1s"))),
+                cast(400, cmp("OpGt", { numActiveAdds = {} }, const("0"))),
+                cast(400, cmp("OpGt", { remainingCastTime = {} }, const("0s"))),
+                cast(400, AND(E, { isExecutePhase = { threshold = "E20", targetUnit = other } })),
+            },
+        }, ctx())
+        assert.are.equal(
+            table.concat({
+                "actions=strike,focus=1",
+                "actions+=/big_hit,if=0<=0",
+                "actions+=/roar,use_off_gcd=1,if=fight_remains>20",
+            }, "\n"),
+            text
+        )
+        assert.are.same({
+            "default #4: targetIsActive of Target",
+            "default #5: timeUntilTargetDies of Target",
+            "default #6: numActiveAdds",
+            "default #7: remainingCastTime",
+            "default #8: isExecutePhase of Target",
+        }, omitted)
+    end)
+
     it("strictMultidot is rule 17's current-target multidot line, with its deviation", function()
         local m = { spellId = { spellId = 400 }, maxDots = 2, maxOverlap = const("1s") }
         local text, omitted, _, header = apl.translate({
@@ -1803,7 +2033,7 @@ describe("the wowsims APL translator's casting, range, curse and cast-time pre-p
                 at(300, "-10s"),
                 at(200, mul({ math = { op = "OpAdd", lhs = castTime(500), rhs = castTime(600) } }, "-1")), -- -9
                 at(400, mul(castTime(100), "-1")), -- an instant: at the pull
-                at(500, mul(spell("spellTravelTime", 600), "-1")), -- no kit constant
+                at(500, mul(spell("spellTravelTime", 600), "-1")), -- no velocity: wowsims's 0 s travel, at the pull
                 at(500, mul(castTime(999), "-1")), -- an unresolved spell
             },
         }, ctx())
@@ -1814,13 +2044,58 @@ describe("the wowsims APL translator's casting, range, curse and cast-time pre-p
                 "actions.precombat+=/pyroblast",
                 "actions.precombat+=/strike",
                 "actions.precombat+=/dot",
+                "actions.precombat+=/starfire",
             }, "\n"),
             text
         )
         assert.are.same({
-            "precombat #6: doAtValue not a constant",
             "precombat #7: doAtValue not a constant",
         }, omitted)
+    end)
+
+    -- CN4: upstream 901c5b8cfd times Arcane's Read Ley Line at -(Arcane Wrath's cast + its own GCD)
+    it("a doAtValue that folds a spell's GCD (spellGcdHastedDuration) uses the kit's unhasted GCD, noted", function()
+        local function at(id, v)
+            local e = cast(id)
+            e.doAtValue = v
+            return e
+        end
+        local function neg(x)
+            return mul(x, "-1")
+        end
+        local function add(a, b)
+            return { math = { op = "OpAdd", lhs = a, rhs = b } }
+        end
+        local text, omitted, _, header = apl.translate({
+            prepullActions = {
+                at(500, neg(spell("spellCastTime", 500))), -- -3
+                -- off the GCD: wowsims's floor, max(1 s, hasted 0) (apl_values_spell.go:402-409; 0 only for a spell
+                -- that ignores haste, which the kit cannot tell): -1, before the -0.5 line
+                at(300, neg(spell("spellGcdHastedDuration", 300))),
+                at(200, neg(add(spell("spellCastTime", 500), spell("spellGcdHastedDuration", 200)))), -- -4.5
+                at(100, const("-0.5s")),
+                at(400, neg(spell("spellGcdHastedDuration", 999))), -- an unresolved spell
+            },
+        }, ctx({}))
+        assert.are.equal(
+            table.concat({
+                "actions.precombat=big_hit",
+                "actions.precombat+=/starfire",
+                "actions.precombat+=/roar,use_off_gcd=1",
+                "actions.precombat+=/strike",
+            }, "\n"),
+            text
+        )
+        assert.are.same({ "precombat #5: doAtValue not a constant" }, omitted)
+        local cast, gcd =
+            "the pre-pull time uses the kit's base cast time; wowsims uses the hasted cast.",
+            "the pre-pull time uses the kit's unhasted GCD (1 s off the GCD, wowsims's floor); wowsims uses the hasted GCD."
+        assert.are.same({
+            "# Deviation: precombat #3: " .. cast,
+            "# Deviation: precombat #3: " .. gcd,
+            "# Deviation: precombat #1: " .. cast,
+            "# Deviation: precombat #2: " .. gcd,
+        }, header)
     end)
 
     it(
@@ -2503,14 +2778,16 @@ describe("the wowsims APL translator's auto-attack clocks", function()
             }
         end
         -- the recipe's open line wants its raptor_strike; its leveling line (BM's Arcane Shot below Summon Hawk, Task 19)
-        -- is not one of the three timing lines under test
-        local lines = setmetatable({ extra = {}, leveling = {} }, { __index = r })
+        -- is not one of the three timing lines under test, nor is its `guard` (a move entry of the full APL; CN12 refuses
+        -- a guard key that names nothing)
+        local lines = setmetatable({ extra = {}, leveling = {}, guard = {} }, { __index = r })
         local text = apl.translate(rotation, apl.context(set, lines, nil, player))
         assert.are.equal(
             table.concat({
                 "actions=arcane_shot,if=(ranged_remains<=0|ranged_remains>=(ranged_speed-(ranged_speed-ranged_remains)))",
-                -- "Weave fits" (R17 refined): "Weave done" keeps its timing addends, the walk times drop alone
-                "actions+=/arcane_shot,if=(ranged_remains+max(2.4,min(4,(((mainhand_remains+(max(0,0.25)+0))-ranged_speed)+1))))>=(mainhand_remains+(max(0,0.25)+0))",
+                -- 0.7 re-pin (e5a9cd2a2d, acc6bcb5f8's weave): "Weave fits" no longer carries the walk and swing addends; the
+                -- variable keeps its ranged clock term alone
+                "actions+=/arcane_shot,if=ranged_remains>ranged_speed-0",
             }, "\n"),
             text
         )
@@ -2522,5 +2799,339 @@ describe("the wowsims APL translator's auto-attack clocks", function()
             waits = waits + ((o:find(": wait$") or o:find(": waitUntil$")) and 1 or 0)
         end
         assert.is_true(waits > 0)
+    end)
+end)
+
+-- CN2 (.siml recipes, L141): upstream moved the Paladin APLs to .apl.siml (2fe0846044). export.lua turns a .siml file
+-- into protojson with the CLI's `siml parse -json` (its `siml` step; a recipe `apl` path is CN1's); the translator then
+-- reads the request's rotation as it reads a JSON APL. The fixtures are upstream/master 4b0030a44b's
+-- ui/specs/paladin/{retribution,protection}/apls/default.apl.siml through a CLI built at that commit (the pin's CLI
+-- cannot parse them). SIML writes no `rank` fields; the translator ignores ranks (rule 5), so the pack is the same.
+describe("the wowsims APL translator on a .siml-parsed APL", function()
+    local json = require("dkjson")
+    local function slurp(path)
+        local f = assert(io.open(path, "rb"))
+        local s = f:read("*a")
+        f:close()
+        return s
+    end
+    for _, spec in ipairs({ "paladin_retribution", "paladin_protection" }) do
+        it(spec .. "'s upstream .apl.siml translates as the checked-in request's JSON APL", function()
+            local r = dofile("tools/wowsims/specs/" .. spec .. ".lua")
+            local set = require("Forever.helpers.engine").abilitySet(r.class)
+            local log = slurp("tests/Forever/wowsims/" .. spec .. ".log")
+            local player = json.decode(slurp("tests/Forever/wowsims/" .. spec .. ".json")).raid.parties[1].players[1]
+            local want = { apl.translate(player.rotation, apl.context(set, r, log, player)) }
+            local siml = json.decode(slurp("tests/Forever/fixtures/wowsims_siml_" .. spec .. ".apl.json"))
+            assert.are.equal("TypeAPL", siml.type)
+            local got = { apl.translate(siml, apl.context(set, r, log, player)) }
+            assert.are.same(want, got)
+        end)
+    end
+end)
+
+-- CN3 (L124): upstream 60b9eec562 gates the Warlocks' curse group on `warlockIsAssignedCurse` (sim/warlock/apl_values.go:
+-- the option equals the value's curseType). That is rule 16's `is` value: a recipe whose `select` names it as `is`
+-- translates the group; one that does not (every Warlock recipe at the pin) omits the line, leaving the group empty.
+-- The group below is upstream/master 4b0030a44b's demo_fire_brand.build.json "Single/Multi Target Curse Logic" #1.
+describe("the wowsims APL translator on the Warlocks' assigned-curse check", function()
+    it("translates warlockIsAssignedCurse once the recipe's select names it `is`", function()
+        local rotation = {
+            priorityList = { { action = { groupReference = { groupName = "Single/Multi Target Curse Logic" } } } },
+            groups = {
+                {
+                    name = "Single/Multi Target Curse Logic",
+                    actions = {
+                        {
+                            action = {
+                                castWarlockAssignedCurse = {},
+                                condition = {
+                                    ["and"] = {
+                                        vals = {
+                                            { ["not"] = { val = { warlockAssignedCurseIsActive = {} } } },
+                                            {
+                                                ["not"] = {
+                                                    val = { warlockIsAssignedCurse = { curseType = "NoCurse" } },
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        local r = dofile("tools/wowsims/specs/warlock_demonology.lua")
+        local set = require("Forever.helpers.engine").abilitySet(r.class)
+        local player = { warlock = { options = { classOptions = {} } } } -- the zero value, Elements
+        r.select.castWarlockAssignedCurse.is = nil -- the shipped recipes name it now (CN3, the 0.7 re-pin): drop it for the "before"
+        local before, omitted = apl.translate(rotation, apl.context(set, r, nil, player))
+        assert.are.equal("", before)
+        assert.are.same({
+            "single_multi_target_curse_logic #1: warlockIsAssignedCurse",
+            "default: empty group single_multi_target_curse_logic",
+        }, omitted)
+        r.select.castWarlockAssignedCurse.is = "warlockIsAssignedCurse"
+        local text, none = apl.translate(rotation, apl.context(set, r, nil, player))
+        assert.are.same({}, none)
+        local up = "(settings.assigned_curse='elements'&debuff.curse_of_the_elements.up)"
+            .. "|(action.curse_of_recklessness.known&settings.assigned_curse='recklessness'&debuff.curse_of_recklessness.up)"
+            .. "|(action.curse_of_weakness.known&settings.assigned_curse='weakness'&debuff.curse_of_weakness.up)"
+        assert.are.equal(
+            "actions=call_action_list,name=single_multi_target_curse_logic\n"
+                .. "actions.single_multi_target_curse_logic=curse_of_the_elements,focus=2,"
+                .. "if=settings.assigned_curse='elements'&(!("
+                .. up
+                .. ")&!(settings.assigned_curse='nocurse'))",
+            (text:gsub("\nactions%.single_multi_target_curse_logic%+=/.*", ""))
+        )
+    end)
+end)
+
+-- CN12: a recipe `guard`, `requires` or `windowVars` key that names nothing raises, as `condition` does. Upstream
+-- renamed the hunters' weave entries ("weave #6" is gone; "Just shot" became 'shot_since_swing' in
+-- weave_common.apl.siml at 4b0030a44b), so a re-export would otherwise drop the guard and the window read silently.
+describe("the wowsims APL translator's recipe keys", function()
+    local rotation = { priorityList = { cast(100) } }
+    it("refuses a guard key no line or move entry has", function()
+        assert.has_error(function()
+            apl.translate(rotation, ctx({ guard = { ["weave #6"] = "window.weave.up" } }))
+        end, "guard: no weave #6 line")
+        assert.has_error(function()
+            apl.translate(rotation, ctx({ guard = { strike = "buff.fury.up", nope = "x" } }))
+        end, "guard: no nope line")
+    end)
+    it("refuses a requires key no line has", function()
+        assert.has_error(function()
+            apl.translate(rotation, ctx({ requires = { nope = "furious" } }))
+        end, "requires: no nope line")
+    end)
+    -- fix round 1 (review I2, probes P3-P5): the error means only "the APL has no entry of that name"; an entry that
+    -- exists but is omitted (folds false, hidden, an unsupported node) matches its key
+    it("matches a guard or requires key whose entry exists but is omitted", function()
+        local never = AND(ready, const("false"))
+        for _, e in ipairs({
+            cast(200, never), -- P3: its condition folds false
+            { hide = true, action = { castSpell = { spellId = { spellId = 200 } } } }, -- P4: hidden
+            cast(200, { brandNewValue = {} }), -- P5: a node the translator does not know
+        }) do
+            for _, r in ipairs({ { guard = { big_hit = "buff.fury.up" } }, { requires = { big_hit = "furious" } } }) do
+                local text = apl.translate({ priorityList = { cast(100), e } }, ctx(r))
+                assert.are.equal("actions=strike", text)
+            end
+        end
+    end)
+
+    -- review I2: rule 16's select lines take a guard on a candidate, as every other cast line does
+    it("appends a guard to a select candidate's line", function()
+        local r = {
+            guard = { dot = "buff.fury.up" },
+            select = {
+                castAssigned = {
+                    setting = "pick",
+                    option = "pickOption",
+                    zero = "Elements",
+                    candidates = { Elements = "dot", NoCurse = false },
+                },
+            },
+        }
+        local text = apl.translate(
+            { priorityList = { { action = { castAssigned = {} } } } },
+            ctx(r, { warlock = { options = { classOptions = {} } } })
+        )
+        assert.are.equal("actions=dot,if=settings.pick='elements'&buff.fury.up", text)
+    end)
+
+    -- review M1 (probe P1): a recipe condition on an action cast only inside a group
+    it("finds a condition's cast line inside a group", function()
+        local text = apl.translate({
+            priorityList = { { action = { groupReference = { groupName = "G" } } } },
+            groups = { { name = "G", actions = { cast(200) } } },
+        }, ctx({ condition = { big_hit = "rage.lo>40" } }))
+        assert.are.equal("actions=call_action_list,name=g\nactions.g=big_hit,if=rage.lo>40", text)
+    end)
+
+    it("refuses a windowVars variable nothing reads", function()
+        assert.has_error(function()
+            apl.translate(rotation, ctx({ windowVars = { ["Just shot"] = "weave" } }))
+        end, "windowVars: no Just shot read")
+    end)
+end)
+
+describe("the wowsims APL translator's second-lane reads (CN14, CN16, the travel-time fold)", function()
+    local function spell(k, id)
+        return { [k] = { spellId = { spellId = id } } }
+    end
+    local function one(cond, player, encounter)
+        return apl.translate({ priorityList = { cast(100, cond) } }, ctx({}, player, encounter))
+    end
+    local inRange = spell("spellInRange", 100)
+    local FACING = "frontOfTarget is the request's in-front setting (behind the target); the client gives no facing."
+
+    -- CN16 (rogue-1.md): Ghostly Strike's `not frontOfTarget | Dirty Deeds Known`
+    it("frontOfTarget folds to the request's inFrontOfTarget (absent: false, behind), noted", function()
+        local text, omitted, _, header = one(AND(NOT({ frontOfTarget = {} }), inRange))
+        assert.are.equal("actions=strike,if=action.strike.in_range", text)
+        assert.are.same({}, omitted)
+        assert.are.same({ "# Deviation: default #1: " .. FACING }, header)
+        local text2, omitted2 = one(AND(NOT({ frontOfTarget = {} }), inRange), { inFrontOfTarget = true })
+        assert.are.equal("", text2)
+        assert.are.same({
+            "default #1: never: frontOfTarget is the request's in-front setting (in front of the target);"
+                .. " the client gives no facing.",
+        }, omitted2)
+        local _, _, _, header3 = one(AND({ frontOfTarget = {} }, inRange), { inFrontOfTarget = true })
+        assert.are.same({
+            "# Deviation: default #1: frontOfTarget is the request's in-front setting (in front of the target);"
+                .. " the client gives no facing.",
+        }, header3)
+    end)
+
+    -- CN16 (warrior-2.md): Fury #15's Spearing Strike weave for Dragonkin or Giants
+    it("targetIsMobType folds against the request's target mob type, noted; no encounter: unknown", function()
+        local enc = { targets = { { mobType = "MobTypeGiant" } } }
+        local dragon = { targetIsMobType = { mobType = "MobTypeDragonkin" } }
+        local giant = { targetIsMobType = { mobType = "MobTypeGiant" } }
+        local text, omitted, _, header = one(AND(OR(dragon, giant), inRange), nil, enc)
+        assert.are.equal("actions=strike,if=action.strike.in_range", text)
+        assert.are.same({}, omitted)
+        assert.are.same({
+            "# Deviation: default #1: targetIsMobType is the request's target type (giant); the client's creature"
+                .. " type is not read.",
+        }, header)
+        local text2, omitted2 = one(AND(OR(dragon, giant), inRange), nil, {
+            targets = { { mobType = "MobTypeMechanical" } },
+        })
+        assert.are.equal("", text2)
+        assert.are.same({
+            "default #1: never: targetIsMobType is the request's target type (mechanical); the client's"
+                .. " creature type is not read.",
+        }, omitted2)
+        local text3, omitted3 = one(AND(dragon, inRange)) -- protojson's zero: MobTypeUnknown
+        assert.are.equal("", text3)
+        assert.are.same({ "default #1: never" }, omitted3)
+    end)
+
+    -- CN14 (lane-warlock-report.md): Affliction's Siphon Life `not spellIsChanneling(Wrack)`
+    it("spellIsChanneling is the ability's channeling for a channeled spell, false otherwise, guarded", function()
+        assert.are.equal(
+            "actions=strike,if=(!action.drain.known|!action.drain.channeling)",
+            (one(NOT(spell("spellIsChanneling", 700))))
+        )
+        local text = apl.translate({ priorityList = { cast(700, spell("spellIsChanneling", 700)) } }, ctx({}))
+        assert.are.equal("actions=drain,if=action.drain.channeling", text)
+        assert.are.equal("actions=strike", (one(NOT(spell("spellIsChanneling", 500))))) -- a hard cast: never
+        assert.are.equal("actions=strike", (one(NOT(spell("spellIsChanneling", 100))))) -- an instant: never
+        local text2, omitted = one(spell("spellIsChanneling", 999))
+        assert.are.equal("actions=strike", text2)
+        assert.are.same({ "default #1: dropped the unresolved spell 999 (its branch only)" }, omitted)
+    end)
+
+    -- the travel fold puts Shadow Bolt in Affliction's precombat: its per-occurrence tiers are the role lines'
+    it("a recipe's per-occurrence focus tiers count the rotation's lines, not a pre-pull one", function()
+        local pre = cast(200)
+        pre.doAtValue = const("-1s")
+        local text = apl.translate(
+            { prepullActions = { pre }, priorityList = { cast(200), cast(100), cast(200) } },
+            ctx({ focus = { big_hit = { 1, 2 } } })
+        )
+        assert.are.equal(
+            "actions.precombat=big_hit\nactions=big_hit,focus=1\nactions+=/strike\nactions+=/big_hit,focus=2",
+            text
+        )
+    end)
+
+    -- Enhancement's AoE line reads Stormstrike's debuff (17364), which the Shaman kit does not register: the ID resolves
+    -- to the ability's key, and `debuff.stormstrike.up` was an unknown aura (shaman_spec's registered-names check)
+    it("reads an aura through an ability's key only where the kit registers that aura; else rule 12's nil", function()
+        local function on(id)
+            return { auraIsActive = { auraId = { spellId = id }, sourceUnit = { type = "CurrentTarget" } } }
+        end
+        local text, omitted = one(AND(on(200), inRange))
+        assert.are.equal("actions=strike,if=action.strike.in_range", text)
+        assert.are.same({ "default #1: dropped the unresolved aura 200 (its branch only)" }, omitted)
+        assert.are.equal("actions=strike,if=(!action.dot.known|debuff.dot.up)", (one(on(400)))) -- dot: both
+    end)
+
+    -- translator-5.md: Fury #29's Bloodrage (MeleeAuto) and Enhancement's AoE Chain Lightning (AnyAuto)
+    it(
+        "autoTimeToNext MeleeAuto / AnyAuto is the min of the kit's hand clocks (AnyAuto: and its ranged one)",
+        function()
+            local function auto(t)
+                return cmp("OpGt", { autoTimeToNext = { autoType = t } }, const("0.5s"))
+            end
+            local c = ctx({})
+            c.set.stateExprs = { mainhand_remains = true, offhand_remains = true }
+            local function at(t)
+                return (apl.translate({ priorityList = { cast(100, auto(t)) } }, c))
+            end
+            assert.are.equal("actions=strike,if=min(mainhand_remains,offhand_remains)>0.5", at("MeleeAuto"))
+            assert.are.equal("actions=strike,if=min(mainhand_remains,offhand_remains)>0.5", at("AnyAuto")) -- no ranged clock
+            c.set.stateExprs.ranged_remains = true
+            assert.are.equal(
+                "actions=strike,if=min(mainhand_remains,offhand_remains,ranged_remains)>0.5",
+                at("AnyAuto")
+            )
+            c.set.stateExprs = { mainhand_remains = true } -- a kit with no off-hand clock: unsupported, as before
+            local text, omitted = apl.translate({ priorityList = { cast(100, auto("MeleeAuto")) } }, c)
+            assert.are.equal("", text)
+            assert.are.same({ "default #1: autoTimeToNext MeleeAuto: the kit has no offhand_remains" }, omitted)
+        end
+    )
+
+    -- translator-2.md: the Warlocks' `-0.9 * (cast + travel)` pre-pull opener
+    it("a doAtValue folds a spell's travel time as the request's distance over the kit's velocity", function()
+        local function at(id, v)
+            local e = cast(id)
+            e.doAtValue = v
+            return e
+        end
+        local opener = {
+            math = {
+                op = "OpMul",
+                lhs = {
+                    math = { op = "OpAdd", lhs = spell("spellCastTime", 800), rhs = spell("spellTravelTime", 800) },
+                },
+                rhs = const("-0.9"),
+            },
+        }
+        local rot = {
+            prepullActions = {
+                at(200, const("-2.5s")), -- between: -(2.5 + 20/20) * 0.9 = -3.15 at 20 yd, -2.25 at 0 yd
+                at(800, opener),
+                at(100, { math = { op = "OpMul", lhs = spell("spellTravelTime", 100), rhs = const("-1") } }),
+            },
+        }
+        local text, omitted, _, header = apl.translate(rot, ctx({}, { distanceFromTarget = 20 }))
+        assert.are.equal(
+            table.concat({
+                "actions.precombat=bolt",
+                "actions.precombat+=/big_hit",
+                "actions.precombat+=/strike", -- no velocity: wowsims's 0 s travel, at the pull
+            }, "\n"),
+            text
+        )
+        assert.are.same({}, omitted)
+        assert.are.same({
+            "# Deviation: precombat #2: the pre-pull time uses the kit's base cast time; wowsims uses the hasted cast.",
+        }, header)
+        local c = ctx({}, { distanceFromTarget = 20 })
+        c.set.abilities.bolt.flightTime = 0.5 -- a kit flight time wins over distance / velocity
+        assert.are.equal( -- -(2.5 + 0.5) * 0.9 = -2.7: still before big_hit's -2.5
+            "actions.precombat=bolt\nactions.precombat+=/big_hit\nactions.precombat+=/strike",
+            (apl.translate(rot, c))
+        )
+        c.set.abilities.bolt.flightTime = 0 -- -(2.5 + 0) * 0.9 = -2.25: after big_hit (distance / velocity unused)
+        assert.are.equal(
+            "actions.precombat=big_hit\nactions.precombat+=/bolt\nactions.precombat+=/strike",
+            (apl.translate(rot, c))
+        )
+        c.set.abilities.bolt.flightTime = nil
+        assert.are.equal( -- protojson omits a 0 distance: the travel time is 0
+            "actions.precombat=big_hit\nactions.precombat+=/bolt\nactions.precombat+=/strike",
+            (apl.translate(rot, ctx({})))
+        )
     end)
 end)

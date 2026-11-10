@@ -30,7 +30,8 @@ local IsCurrentSpell = C_Spell.IsCurrentSpell
 local floor, max, min = math.floor, math.max, math.min
 
 -- The class kit and its specs (ids the core's: Balance 100111, Feral 100112, Guardian 100113, Restoration 100114).
--- Feral and Guardian ride the Feral Combat tree: its points pick Feral; Guardian is chosen (/hekili spec guardian).
+-- Feral and Guardian ride the Feral Combat tree: its points pick Feral, with Thick Hide 3/3 Guardian (the selector below
+-- RegisterTalents); /hekili spec guardian or feral keeps one for the tree.
 local spec = Hekili:NewClass("DRUID", {
     specs = {
         {
@@ -58,6 +59,7 @@ local spec = Hekili:NewClass("DRUID", {
             icon = 132276,
             role = "tank",
             package = "Guardian (wowsims.com)",
+            movement = true, -- the pack reads toggle.movement: the run into melee reaches the damage lines (R8)
         },
         { key = "restoration", name = L["Restoration"], tree = 3, icon = 136041, role = "healer", unsupported = true },
     },
@@ -217,6 +219,9 @@ spec:RegisterResource(
         -- `aura` gates it in both layers (the belief's swing entry, spec §0.3; Hekili's forecast); `stop` too.
         -- A white crit adds one more base swing (without the two-hand factor), as wowsims's, and Primal Fury's rage:
         -- `crit`. A yellow crit's Primal Fury is the strikes' `onCrit`.
+        -- NAMED GAP (owner 2026-11-07): no `taken` (rage from hits) until CN7 gives the belief its hook; the archived rule
+        -- (lane-feralguardian-taken-wip.patch) lifts the Guardian replay 0.632 -> 0.923 but with replay flicker 14.65/min: land it
+        -- only with CN7 + CN9, never blind.
         -- shortcut: misses, Natural Reaction and rage from damage taken are unmodelled; the belief's swing-scale
         -- calibration absorbs a steady bias. Upgrade from the combat-log rows once a non-cast `now` exists.
         mainhand = {
@@ -308,68 +313,77 @@ spec:RegisterResource(
     }
 )
 
--- Talents: { talent tree (1 Balance, 2 Feral Combat, 3 Restoration: the dominant tree picks the spec), rank 1's spell,
--- max rank }: the DB2's 47 Classic nodes (16 Balance, 16 Feral Combat, 15 Restoration; the tree is the DB2's
--- Talent.TabID), keys Classic's, until the live export (checkpoint Q1) replaces them. The last two are placeholders
--- the export replaces, so no reader names an unregistered key; their tree is 0 until the export places them.
+-- Talents: { talent tree (1 Balance, 2 Feral Combat, 3 Restoration: the dominant tree picks the spec), rank 1's
+-- spell, max rank }: Forever's tree as wowsims/forever's ui/sim/talents/trees/druid.json lists it
+-- (tools/wowsims/talents.lua writes it; tests/Forever/talent_trees_spec.lua checks it and the spec detection over it). A
+-- key is Classic's where the talent exists there (code reads `talent.<key>.rank`), else the snake_case of the node's
+-- name.
 spec:RegisterTalents({
-    -- Balance (16)
+    -- Balance (tree 1)
     improved_wrath = { 1, 16814, 5 },
-    natures_grasp = { 1, 16689, 1 },
-    improved_natures_grasp = { 1, 17245, 4 },
-    improved_entangling_roots = { 1, 16918, 3 },
-    improved_moonfire = { 1, 16821, 5 },
-    natural_weapons = { 1, 16902, 5 },
-    natural_shapeshifter = { 1, 16833, 3 },
-    improved_thorns = { 1, 16836, 3 },
-    omen_of_clarity = { 1, 16864, 1 },
+    genesis = { 1, 1223081, 5 },
+    moonglow = { 1, 16845, 3 },
+    improved_moonfire = { 1, 16821, 2 },
+    natures_majesty = { 1, 1223082, 2 },
     natures_reach = { 1, 16819, 2 },
+    improved_entangling_roots = { 1, 16918, 3 },
+    natures_splendor = { 1, 1223083, 1 },
+    insect_swarm = { 1, 5570, 1 },
     vengeance = { 1, 16909, 5 },
     improved_starfire = { 1, 16850, 5 },
+    improved_natures_grasp = { 1, 17245, 2 },
     natures_grace = { 1, 16880, 1 },
-    moonglow = { 1, 16845, 3 },
+    eclipse = { 1, 408248, 3 },
     moonfury = { 1, 16896, 5 },
     moonkin_form = { 1, 24858, 1 },
-    -- Feral Combat (16)
+    -- Feral Combat (tree 2)
     ferocity = { 2, 16934, 5 },
-    feral_aggression = { 2, 16858, 5 },
-    feral_instinct = { 2, 16947, 5 },
-    brutal_impact = { 2, 16940, 2 },
-    thick_hide = { 2, 16929, 5 },
-    feline_swiftness = { 2, 17002, 2 },
-    feral_charge = { 2, 16979, 1 },
-    sharpened_claws = { 2, 16942, 3 },
-    -- Shredding Attacks: wowsims/forever's 3 points (Shred 42 at 3/3, its log; the DB2 node lists 2 rank spells)
-    improved_shred = { 2, 16966, 3 },
-    predatory_strikes = { 2, 16972, 3 },
-    blood_frenzy = { 2, 16952, 2 },
-    primal_fury = { 2, 16958, 2 }, -- "Blood Frenzy" on Forever
-    savage_fury = { 2, 16998, 2 },
-    faerie_fire_feral = { 2, 16857, 1 },
-    heart_of_the_wild = { 3, 17003, 5 }, -- hotfix 113554: moved to Restoration
-    leader_of_the_pack = { 2, 17007, 1 },
-    predatory_discipline = { 2, 1328613, 1 }, -- hotfix 113554: Bite keeps its extra energy
-    lacerate = { 2, 1328617, 1 }, -- hotfix 113554: Lacerate's rank 1 is a talent
-    -- Restoration (15)
-    improved_mark_of_the_wild = { 3, 17050, 5 },
     furor = { 2, 17056, 5 }, -- hotfix 113554: moved to Feral Combat
-    improved_healing_touch = { 3, 17069, 5 },
+    feline_swiftness = { 2, 17002, 2 },
+    feral_instinct = { 2, 16947, 3 },
+    brutal_impact = { 2, 16940, 2 },
+    thick_hide = { 2, 16929, 3 },
+    improved_shred = { 2, 16966, 3 },
+    savage_fury = { 2, 16998, 2 },
+    feral_charge = { 2, 1238122, 1 },
+    sharpened_claws = { 2, 16942, 2 },
+    predatory_strikes = { 2, 16972, 3 },
+    lacerate = { 2, 1328617, 1 }, -- hotfix 113554: Lacerate's rank 1 is a talent
+    predatory_discipline = { 2, 1328613, 1 }, -- hotfix 113554: Bite keeps its extra energy
+    primal_fury = { 2, 16958, 2 }, -- "Blood Frenzy" on Forever
+    leader_of_the_pack = { 2, 17007, 1 },
+    natural_instinct = { 2, 1223242, 2 },
+    rend_and_tear = { 2, 1223246, 5 },
+    natural_reaction = { 2, 417051, 5 },
+    primal_bite = { 2, 407995, 1 },
+    shifting_power = { 2, 1322605, 1 },
+    -- Restoration (tree 3)
     natures_focus = { 3, 17063, 5 },
-    improved_enrage = { 3, 17079, 2 },
+    heart_of_the_wild = { 3, 17003, 5 }, -- hotfix 113554: moved to Restoration
+    improved_healing_touch = { 3, 17069, 5 },
     reflection = { 3, 17106, 3 },
-    insect_swarm = { 3, 5570, 1 },
-    subtlety = { 3, 17118, 5 },
+    natural_shapeshifter = { 3, 16833, 3 },
+    subtlety = { 3, 17118, 3 },
+    gift_of_nature = { 3, 17104, 5 },
+    bloom = { 3, 1328621, 1 },
     tranquil_spirit = { 3, 24968, 5 },
     improved_rejuvenation = { 3, 17111, 3 },
+    swiftmend = { 3, 18562, 1 },
     natures_swiftness = { 3, 17116, 1 },
-    gift_of_nature = { 3, 17104, 5 },
+    living_spirit = { 3, 1309631, 3 },
     improved_tranquility = { 3, 17123, 2 },
     improved_regrowth = { 3, 17074, 5 },
-    swiftmend = { 3, 18562, 1 },
-    -- Forever-only placeholders, replaced by the export (checkpoint Q1).
-    natures_splendor = { 0, 1223083, 1 },
-    eclipse = { 0, 408248, 3 },
+    wild_growth = { 3, 408120, 1 },
 })
+
+-- Spec and pack from the talents (Engine/Schema/Selectors.lua; after the Hekili classic branch's pack selectors).
+-- wowsims's Guardian and Feral builds both spend 32 points in Feral Combat; only Guardian takes Thick Hide (3/3, with
+-- Feral Instinct, Lacerate and Primal Bite), so Feral Combat ahead with all of Thick Hide is Guardian (one stray point
+-- does not turn a Feral build). Anything else on the tree is Feral (the tree's first spec), unless the player
+-- activated Guardian for it.
+spec:RegisterSelector("guardian", { spec = "guardian", pack = "Guardian (wowsims.com)" }, function(tab1, tab2, tab3)
+    return tab2 > tab1 and tab2 > tab3 and talent.thick_hide.rank >= 3
+end)
 
 spec:RegisterGear("swarming_idol", GEAR.swarming_idol)
 spec:RegisterGear("grovekeeper_eclipse", unpack(GEAR.grovekeeper_eclipse))
@@ -452,6 +466,14 @@ spec:RegisterAuras({
         icd = 10,
         icdSpell = 16864,
     },
+    -- Poised (passive 1328829, buff 1328827; wowsims dd2fda98b9, hotfix 113351/113578): out of combat at full energy
+    -- the next Claw, Rake, Shred, Ravage, Pounce, Rip, Ferocious Bite or Cower costs 10 less (the cost modifier
+    -- below). Not yet checked in game.
+    poised = {
+        id = 1328827,
+        duration = 3600,
+        max_stack = 1,
+    },
     dash = {
         id = 1850,
         copy = rest(DASH),
@@ -527,7 +549,8 @@ spec:RegisterAuras({
     },
     hurricane = {
         id = 16914,
-        copy = rest(HURRICANE),
+        -- 1278965/1278968/1278759: the debuff each rank's tick puts on the target (ranks 1-3), the IDs the viewer reports
+        copy = { 17401, 17402, 1278965, 1278968, 1278759 },
         duration = 10,
         tick_time = 1,
         max_stack = 1,
@@ -553,14 +576,15 @@ spec:RegisterAuras({
     },
     lacerate = {
         id = 1328617,
-        copy = rest(LACERATE),
+        copy = { 1328616, 414644, 1235826, 1235827, 414647 }, -- 414647: the viewer's Lacerate (no rank text)
         duration = 15,
         tick_time = 3,
         max_stack = 5,
     },
     mark_of_the_wild = {
         id = 1126,
-        copy = rest(MARK_OF_THE_WILD),
+        -- 1291335/1310503: Forever's own rank 7 (level 60) beside 9885, same name
+        copy = { 5232, 6756, 5234, 8907, 9884, 9885, 1291335, 1310503 },
         duration = 3600,
         max_stack = 1,
     },
@@ -691,6 +715,15 @@ spec:RegisterCostMod({
         407995,
         99,
     },
+})
+
+-- Poised (1328827): aura 107 misc 14 -10 flat Energy on the class mask {8622080, 536870912} against SpellClassSet 7 (the
+-- eight abilities wowsims's mechanics_test names; rank-1 IDs, the ranks through each ability's `copy`); one charge.
+spec:RegisterCostMod({
+    aura = "poised",
+    flat = -10,
+    charges = 1,
+    spells = { 1082, 1822, 5221, 6785, 9005, 1079, 1328618, 8998 },
 })
 
 -- wowsims's druidBleedIsActive (wowsims/forever sim/druid/feral.go targetIsBleeding, apl_values.go): Rake, Rip, Lacerate
@@ -1575,7 +1608,7 @@ spec:RegisterAbilities({
         startsCombat = true,
         refundOnAvoid = true, -- wowsims rake.go; DB2 Discount Power On Miss
         known = knows(RAKE),
-        -- a dodged, parried or missed cast leaves no debuff (core: Engine/Schema/Spec.lua trackMisses)
+        -- a dodged, parried or missed cast leaves no debuff (core: Engine/Schema/Spec/Abilities.lua trackMisses)
         missable = true,
         form = "cat_form",
 
@@ -1873,41 +1906,74 @@ spec:RegisterAbilities({
     },
 })
 
--- The setting Shred's `usable` reads (TDF's name and default).
-spec:RegisterSetting("behind", false, {
+-- The setting Shred's `usable` reads (TDF's name and default); Guardian's is below (its imported cat lists).
+local behind = {
     type = "toggle",
     name = L["Always Behind"],
     desc = L["When enabled, Shred is recommended over Claw as if you always stand behind the target."],
     width = "full",
-})
+}
+spec:RegisterSetting("behind", false, behind, "feral", "balance")
 
 -- The maintenance debuff (tools/wowsims/apl.lua rule 15; the recipe's `maintenance`): a raid's debuff, off in game
 -- (open-world mobs die before it pays off), on under the harness (`sim`: wowsims's raid boss).
-spec:RegisterSetting("maintain_demoralizing_roar", false, {
+local roar = {
     type = "toggle",
     name = L["Maintain Demoralizing Roar"],
     desc = L["Keep Demoralizing Roar on the target, as a raid tank does, and recast it only when it is missing (that includes the levels before " .. "Lacerate). Off: the priority never shows it, and Berserk no longer waits for it."],
     width = "full",
     sim = true,
-}, "guardian")
+}
+spec:RegisterSetting("maintain_demoralizing_roar", false, roar, "guardian")
+
+-- The settings the imported lists read (APLs/packs.lua: Guardian's lists in Feral's pack for Bear Form, Feral's in
+-- Guardian's for Cat Form), on the importing spec's page too, below its own under a section. Each spec keeps its own
+-- value: `settings.x` reads the active spec's (sharing the other spec's would need a cross-spec read in the core).
+local function imported(option, name, desc)
+    local o = { section = { name = name, desc = desc } }
+    for k, v in pairs(option) do
+        o[k] = v
+    end
+    return o
+end
+spec:RegisterSetting(
+    "maintain_demoralizing_roar",
+    false,
+    imported(
+        roar,
+        L["Bear Form (Guardian)"],
+        L["These settings come from the Guardian priority. They apply only while you are in Bear Form."]
+    ),
+    "feral"
+)
+spec:RegisterSetting(
+    "behind",
+    false,
+    imported(
+        behind,
+        L["Cat Form (Feral)"],
+        L["These settings come from the Feral priority. They apply only while you are in Cat Form."]
+    ),
+    "guardian"
+)
 
 -- The priorities, written by `make packs` (tools/make_pack.lua) from APLs/packs.lua and APLs/*.simc (a wowsims.com
 -- pack's from its recipe, `make wowsims-packs`); edit those and run it, never these blocks
--- (tests/Forever/druid_spec.lua checks they match). Pick one with /hekili priority <name>. Restoration is deferred.
+-- (tests/Forever/druid_spec.lua checks they match). Your talents pick one (the selector); /hekili priority <name> keeps another. Restoration is deferred.
 spec:RegisterPack(
     "Feral (wowsims.com)",
-    20261106004,
-    [[Hekili:TRvBVTQnu4Fl5lmyTIqYnPnR6sL2u1vRtBxnTC3xjXbmjEHGJSnjktr8BFhducqmTjqRUPQRFOI4xoNNZRy)iC658nNXEib25R9T6FtVEw3yznWzSy3ASZ41i3LO5WdHOvW))cMHcINQVLULtwXnDPRmKlAxaf5jf0SisG4XqNzkLjFn21z8d)1F)4d35lfLZ4feppC66XCx1A4U4PIf44PzJ11NYWBWS4PEyFuuGiE6p)N)E8uy44PpT)isxP24D9yreVUjAZfj6IwhW7I8qRfKnyt4xM)dNgACnOcgkKhaG2dEMkvjHhpf55rd)b4HL4DCZ4PpGeO7uaf9)4XVbczHqSMFx3UZjIfrZKOVBLLAaYeqmU)Ob99Tq3oAGNj4czuFsa4HrUccnKBUMHHnpdjSHP2gCDehpH67pzURNDVRj(2DMf57BMmPz064F7OnELDxpeFr5DMVoBFeMrWt8jmSuC6PJBwyyZLH0THAE4envCcgEfIeY)STLHMENSDMcLK9SVm4mY1kGjgAdKqLOsv7S8g10f05ZdWMROBWRWHcnbInhlmPrcoXdpCF2V3c(Bs4WsAcc3taN(QdERNgbeDRKmKnrDj0i(KzerQTKBm56OG9uqVgA(K5letYDH90KHl6K1usOaY3Jyman3B3VDgpoikeZNeiv2XjpzyT4IYI2TrNQClcuaifzwj0pGY2nXJWDjRdiHytCiAwa2t709DQDvdoibgzD2MZsBLdK5RL(uWPQRNk3amI5I4cs4Cz(aoeZMVZmGEV9nwg7178sRA0qdyzQr0qqnVOaUvQMxArdTmK)1Q4cFbXxkAaMBXSZmDnhlF2E4TAz7QSebhmYBx7WyRkPQniCczF7lAGdRwEoQDwfFbO5R9PUr80cp9ZWQuLAyO15cSM6setVpRZBzLo4fYY26FMLq61yHsF(HGlzfkyIFeBNjCyPL2w7RBkigutVIeaaE0ACO77Ca0jvpziU0qz9BkvQEVT(OR6v48if3TEUN(QEwg3NFAN014s5IRkKyj)DASOtHSliEvrHJAB0cTe30WvoYazCm0UPLilTV1z2VQq28rU3lZEexIy6dzFl3a02QVMuxTt)4QBaLNEesz7HoQ6UOCLpBoUHQAaPP9)LaNfM(qwcqcbjUb1GZ(sd8GPmZfqAcSwQXLGtY)cPOaOxHcrYd62BGLv(p0l9QJFeSgn4EIfUJFXRa8jln1oTkVAS3WM4nCgVbZ4GzxH3OacxWt4PkLWh4XVMWBvw6PZV8eXjoJlWtHZyxgCzcgb5m(1LFJQeC4iaexdGsj8OewukYYs8L9EvDFsm8PAWWtzmfrrdOerLkhuxCO0f6kz(1LC)2swIkWpSc4lquImdl3yksusrtjZoAcpkQGZnnWx2MU3TR9DB7FFQnWBDh8tUfEZIA3wtuR8fFAAfWRj)lQq)OgKZD6OVvmZ0EQzuzW)ufdUOHDgwMQuQwFCQt2dEEfKxMO6DBBIg1OOqBbiga1xYB7iFjdKs2Z6zYjp9Gsd5WPfK4ullo1rJtl5X57jro1hrbHMhp7NepRE40ggpFfi55zqni0kWUUJWMLY2WoLVP8c9g1B6YevFS6ykZiREHMYPG1qrKsoIQNKOtLLOZGMOVR8e9gL8DzIQpwLehUqpKTu5me1Dr8CEHA6RHEhZWKIEkc5hBt2NiJkEKQJcGeMzoM)KNiSrfdq1jk5NLtcsaSGIelOWLd)v8ssajEQ(xY(mHsM25)(]]
+    20261110000,
+    [[Hekili:TVvBVTTUv4Fl(lEYlzYV042ClQdWUOOBz4UIH5UVAzgjkBUilzisfJue4F73dLOKOKiLLSLtCbsaABKi5HpNx15qE6IXl(XI5oigEX3NmAYhhpE8i4NfZzpVfVy(wK9JOvWV4J2a)93WHiV9ln2fSJs2qnTd2mGpPN9cqoCc9qeXJDV)Ihust6wS9I5F9)()U)RF2LtQfZxtCCWjZhtTvVdFE)s2A8(LI3n0nie)eoC)shSlkYJTF5F))8h7xcVE)Y01hrgY3n6qNWiIZW4DZgXgI26rhICqBzKNWMWtM)FAG)GRHTie5t9aq7a)EaFlj09lroob()f4xEe)m1C)YVIyOpRakg)77)bqK1m2w6NhoCfHTo6bo6hwAQdaAcigpf9B2otqtCCTbYE)MTbHmyB(hrOqhcYVKiawevifEaJG9ZJqzuydX(mCihY7wt84Jg56AYNIfSFBmJ2Ac6NWaxyWfZr2msGpDMnYZZk5bloHUMRDNXx11e3zviX()LyHxnBOlchsWwUKqmFUggjdzk9EZh9d2533bhti5bcXBqeF6xMnAqFJEIvcOBNxYAEPx8ssEt02bd63RwWeIEcmotWHkYvKA9nybRw5Hn3e8eEdi46ZqHRWmZGigL4GN(I45DGYJ4p9GBpypf)6yaKm10xbZSZ3oWgoWMeerTEGWeCDgBNTXsCUeyg03LSAnZktdmUpyw9qG12aIpdSXIcdbiE3SjDVyc7f5JPGHgaGRJOyRaxxRv2oZghZdcgqEwclOUgikfGmKhqAWkbdbSccF2YHqTjB9i(ytSp6bpSt)MlLvluVjNcHKTIfl8p4VqOv4sFq8ByKqxpGnSrugXFf3Cc7Jdx9SPxWDZ(4ObVKAWPFw3csKxmuJOPW2Cqc8j(2COjnD0a(pDUYIUM4Y3oa67WHT1ApdGFz20p1xSQIKeK6iNN7EGFAUPAvxnWo9fzUEAzx(B7EwLUgqZ1Ub2ruHZCByvvwwWoEb6sEjIPFndtCgcuasgHj4K26SzOHT5kICnozdYZYnk8ztidXhNn6fDdbkM(IHkfQryHacAnY5x6Ld7yVkbMl8kraRcU13nZ42RglLoL8QnYuaxnE0G7Y(wBYCSdOSRKS34pNOI6jz0bQXsB4TNdLi6r8rRfZGlqKQ49JNb4Me4RTb8KChQOiUmdYCjIP3d8jmcT9q7Q8Xxd1AIQbhaO3C1MYOl9ufCs5mR1WFGkhdoV9UFrRW07(fc)cIpSlpHoMCVd8CGHmZOqIvTy)Ibp5NGDlWjBq(iEI2JVz0OShmk8LN)kWI9H6CLo2d56s(WO(QLKL(C74PDSik(TZYgIlLo0StkRbY1XEnFJQwfFj8uz1pGcFK(iXNp31yKhBT5wB2xalYQ8MrjIL7eiJbHwmtNvySKGrdklwQaR6pAcXU2KtM4veZUGN4pjyhWczf3CcXhTKCDY03uiI9drQSsYoRN4XfYYsEigzhPOi9AEv0PI9E6gkhWYdjWBDRlgiG7OIjK81PxY)M6zaqEiBUgudAYgnn183uTA5J(nDFA9j)(gYdPs0I1AiaCM4gccx(vugYgkWdIfxEKmw7dVTSMdEtaSmYp5LDggGcL5rkMX)8c1KJvg8hRktNxZBVurrLrL1GVQ8zvgvYHskkTcNZxpqwbJ0DKTyR0Buj2v5jSfeUEdbZZxRF81szbzjcbYtg9vvQ2mhJ3q8Sbf5v6diYL6icucsYr1fewFKBnHNtY5AS50b1S20D)VjMbhRjHOVtL1yAvoxKIZyfTwbyr6ybf7WllaXAx2J5RJNjy9Rm7GUDJcdYo4S(PFyC8Ob1qBv5DKp9C0R)(pZjx93eQP82gFdJkY2P0TzwBo5Y0ZbrxxLCQw9I5pHdPabkDr7X3oC89Xdth(3VhFl)cH5IFp9MGtgpMClMBhcQ9qcAX8Q70cgSbCsiHkorLwujB58Tq2Evgdaj)GoujQwqM(DAvdhWBQS7ehR3up7l2RoVwH2I0mzOmskj2NQrSRSYcn6GtUcJ2YyaU)y9QGZy1fnmBEfl8W1xCSfy0qmvQcJZDjgTvTMBVgR1kzP(jDwQ5LwOYc4vUKK2YZaJDRgglvDuGRUuQpPT8584um4F5a44FtdhxPsdzw)IQSLwY(L4)XJ0iaK8Ev8bLUUSMwYeXixxYd5f5uXj8CxSZXWgtAJp3Rk6kAOuoRiju1WYEoP6EU0k85yfMJRMRqQgNJ7yr9nAf1AfUskRdrFMi)6SC77YmXpEsC4sSYYnxhdQ6J1mES84(XvfBMdOQSugzlxxwsHmwj9ECCCMA4ED5eC8jfKBdK3sPnPfvRR0MKwwTiavUpLQD8G3autUcOS6yuaS0BcRa06v(sY6oCOTiKcTpxrbvMKQ0v5DEB31MYrnT8KguI4rbHMu6N2eQRtQFkx19PDx3N6LD30B7(KVU7gFF3DKUUMsik26zhTdux2bTnLL0vJqhft4K6T2tV5ABQuqBLcXnntjUVfSVkl0tUvwASyUD(3xMO6x2OoDwCN8KRRRWqqWD0oPhzp5EsnLR2UYvxB5EI9L7BzJ52k18KAlCM3VThVEUd6A3JGx0Lx(jgB9S2AVNPOzxMO69ySQoyIuZuEFXwXkvtp)QSPF131VnTTFBrF)(M24VNj7Zltu9UxtXmt0D6czD27r)DRFHBs4gjhJpiVApXYU5O8Kov0d3CbnOvkKVqfywLo3dLNMzTNZA(fuHORlFsNa7GIyRdGYR)N4hjEK9ln(M4)F)XdV4p)]]
 )
 spec:RegisterPack(
     "Balance (wowsims.com)",
-    20261104001,
-    [[Hekili:1svxpTnpu4FlCdJQvL0uYauffPxeAAG2lAAHDRBCIpPXRo2r2o0H0u(TVJtHGBA7y7IDtL754NpSppoKiYdKeg1cK7Noz6zrrtINmjIKyFQgij108v0L4cjTc)9AQGkZH20twRwB4vMGCv1i32EsOOmhvznCH9wjjBVSAQHCsYnF9B3EZSSnKrsk5mgSbbyYpKkZAtTLyXNRfwO0WJGUnLbf0gHTn9)(YNBtXYTPVYqdp0PPjKPB4SWN1mKwlWsBagG)j47gLC0yucnvAeOXz4ALtsUPnLYyk57WfRGNmbTP3qT0z7XkN8)3(assP1wBMfgUKBlBYCUpCWwhHCIogMEr80Ij0ZViMfGxJAvbxG3i0Clxjnb1AabNrTZRuk5kUCbIVAmVy(rznffb(vdAQBVBhGVFE4An1w6W4A(iSaKqfhmxg3V9)s2robrJemle8LL2XngyHQOyXYC28i)DXLsq)iEz64SIkPb152fc1LXtoUWbDHgQOCP5QtN4JZjCbxdJlu5nM5t7Sed6nLR3adHKai3M1u8eShy(9haTSrR55ujS7D0vZJ93PXs1E(kYb4Ko6HCbV24m1XBxaHKV6QOFE0gwcEHIa4hqEJLlxoAKVeDdR27ijyiXG1g8(rWnwt3l2nzxC59DVGbjntamY1VeEij(JpssUMBbnNss27WLyrLgqK3C1PspX(dFhUtpGb6h)(Q)gXahFXd4ZZ67gc2(86kss6gpUZds2hEtYgen89)Rn2M0ZoWjUpk5RZorkhdNFqB9hgO(TjQxD0lD79FKt9loG)7sFe3qnP)li)tJyBl8bV0UmUZuOTOn2sLMK8jyfxWXV4(XN)GAxBYV(d]]
+    20261107001,
+    [[Hekili:1sv3oTnmu4NfUHr1QsAkfydrrAi00aTHMwy36ex7tA8QJDKTdDinLN9DCkeC)BSDXUPY9C83p2Nphsc5EskN6aYDJhn(0KKrNnAucj19ynqsRPSf054cfTc)9kQKQyqB(rl1lTIkBetxnWVThLAk3t1SgH0DJImBNSARbgj96V99BU(8zRiJKwk4CyfcWY2NkN3M7kXIpvlUqBGhatBohkOnsxB(h(6NBZXYT5VWqJi2RPnMBAe84N0mMwlXsRagH)j6hwTAWqucdvzLOX54ATxsHTnNY5A1BWflGhTrT5xtD0Z3Hvo6l3CpssPZvBppoEUWv2mZ7(4n26aKt0XWj03Z4JPJ5fSi8A0Oles8gHYCcTYgvBae8mQBALwRwiuzi(QHIIPhmRPOikSAutD7TBb8TtJxAOUspgFZhGmqbvcWEXK(T)pYoYjiBuGntkMx6g2yHmDrr2CgFAs4UekfyEaVm9Cwrv0OAMltQVyYOdl8qZmqfvOSxE8OqCEHlegyyHM1yNoUZsCO3u(EByiKea52UKINGDalS)gqlBmgbJQGTVJUC6KWDADutGVs8aoQJEGjf1wVPoC9cie2Ilt(1bRyj6zkIGFcSgNqnFWGqj6gwT3ssXqIfRTX7hPW6SDVyxLDXL319cgu0zsGtU65WdjnC8rszgHdmckjDNdxIdvAdIcMREv6joC47XD8Emq)4pu9xjg45BYg8fy9TdbRFE9fjPDJh)5bj7KxLSnIgH()LgRt6P75e3hLc1zRiLNHZ2RT(ldu)Xe1lo65U9(pXR(72J)7sFe)qnT)li)xJyRl8EV0UysNPqBrBCLAdj9tWcHuGFX9Jp9b1U2KFd]]
 )
 spec:RegisterPack(
     "Guardian (wowsims.com)",
-    20261105000,
-    [[Hekili:LJvBVnQrq4Fl(lPGQfy7MCxAuisTkQT5u7PQY1VcSMDWERxyr7UCP5Kf)27SgS9ABW21nsPv9djb2DE5zEMxyuIgh9POqkrdrFCYOjVB84r3mA0OOq9lLquyjjDbzg(qbjh)9pwrKugPOoX5zXZkwUYlvK7AK7fUGqn2AAfJRFQiAANMvvcPrHp(B)(tpE3SwRffoNrPqJkGkTx)CxDIEouN0EMFMqcFgK1juiJuX11jF3V(Z1j4X1jwMOI5BCRYNkRyu)mqs4tbI0NuYv(ekPuZ(m4HV59hkrH7q0nssHIJWNIplmULPQtiuQO4RWhwaVO8QtEKOj31bCC(LN(eAK5ADP6oF)zm98QPMiWFprDrBIOgMC71tYgrE)Txt9qYukYyCKUjPAMOqfKs484MxI5mLEOjBeKkeCQ45cv9hAf8Rd8ZKqXxyanwcZGcmsnxmKLfmhiC9CVYu99tgzRr3gFbaLXvLNwqkjhlqSLlhtfdRuqSillEwkny8WmrALc)lIdjkThx8qWUOOxLMyuAqJGELswoHhpLPbVffySBBckKlWml7lSIzXsbrA0ubAn(UYlNWk04pXhi2vodOW0QSmVdUYRQ8Q1(Mtsn0zRJrL6dtlxNy25kjyqG6bm2qS8NlB5H77WkPcL21DNSkbKmioJjHv0rlETo(neP2a10wfJf35RG5kqU5ipRYjVnfVbtbPcKl2l5JQ706WwbAJMnqE9XsGqFzBqEyoSjupskE5GZOkX9I5XGRTsMBdCKTaEvbOWMPzZ1De)DtaTKAZrvLUlh0LywESTvoyDzHDJLJJtlXSPOblK2)iLg)mWdb34EWnTX49bJ9WBh0nID6eHl7ot6(V9u5HmBNZESi5ZasxDSrqBDyZW2alOT)Diw6kp))Imt9hIcXpQQq13BRdZNRuMLt209HV8XvR(afKPCGg99rHwDGMlB)8lUrtdlGAlrxkzKOWx3zthL3(NtCNM5I0iHDMSH9qRDOKZCCvpZRqiOnBmAkI7k5S29wHqxOElE(7vYF518V9jVnCZ6o)OWvT(g2PHvBwp(y06(l310Ze3S2)2UMoy81wOZnpTti7SbQXsFZLGL2zUg9V(s0VTcdv)MElDS2rDdvoU)ocZURgd(U(Rf7l9ALPoP5FFpH7b1t2E(mk)E13)98wR8K7vUAQ0T9vTTD13Di6xRnJFLIbti8T9ecBwmENa4GDMBAHxx23rlS9i43UT5(p8a0tnb9iFK5ma3rxT7ODX7mehRbiv65c88FcwW4S6eNFO9)IWQRJ(R]]
+    20261110000,
+    [[Hekili:TVvBVTTnq4Fl5lE2lzYV0600I6aSHIULHTIH5UVkzAjkBollzqsfJue4F77OKSSinPTSKDRkYArADejp(CVWJhFKPDF7pBp2dXX2FAqVb32VF)EWFShZFAf2E8kK7c0m4dHOLW)(RXiQhbfUzs71rRzKLml3OLDe97PGiKNqwtJjb8hcTNQvSSvyx7XF4V)Nh(W7MLjn7XZjEE40HGzUgNN3TzcFoEZKSN11pIIFet3mXd7JId4BM8Z)1FSzc84ntkiIysxX0Y66rJjED9XuuWumI2fTkG1f5HwXjpITGFZ6FzrHDUbMgkkKfaW3d(CKyAjSntqEErH)a8Hf4NywBM8beh9onWP9F(WNbHmNZxXEx3UZi85XtfAqxLU2bKjGA8q0BD9gGg457cI9HLRIOCyA(OaPk2ayeSmZGRySbegNbtgoKJPc4UEojaACASVVf0dhyQwAfVYcCs0iFOn7XixojkKnYffe4K(loc5CJWldpLFdXFKQa287zd76rDfwVKNl6y7Rs6A(ZG(2P1vhA4jEah35i6m8nXmStKVVZmxVr9tKhx8CUvumNr8WdpIWMIOlyliHjdDogfWNBTYL)(r32RvBE0SzbyRLrpIxcwOwQYUv7RsLKvrmzTimAD4ZUrrbEWhKBJIrEp1PZZzsAn4CjHd7CeuIdIdXmWkpBoxJkNbII9kfenivWNId)cb75qXZWHG8enOA1hmSbHyCifPncl3EN0Hmln0mmplrKq27hbXo59AfLSeGYucFBxZvG9AAh(l2ug8p04sasq0710b3igh092xDbbuaYv4rnGM8wtHIyGngNSpctjyhFcfl5Bl88mJKhorofByN)UjPsBn334h5gZgnivVANH)CNr8QwQpIXHnSVFeKZuTLCn9vnjn1dVmcec5lKWzo0ievsLzyohAGzjGoh(XzV(dif(BMYUxRf9VFDv7JO3fwlwm)VMf2FfX8HHmBnzf2rSl)ULzpIDGDcwsWS7hnOvs5votdWWEePT(11MxLfvng4TekGvzNQuGMTJvwgzWo37qz7nhjzyFGK1h333AyNdm2TZ(pL1dbyt3l4(rg3WQj58nADtddmAppKyfpCK6UpvEZNDqiADqMfiDUtFcuuT0mdkff9OO8gzfy3OLh8(odfFHQfvD22AceZ3EgLAlDWhh5sIIz7YjMRu5Ztb9QWC3PLVOEzNCZzFiwF50iNvrWUgWeetHkx5WkN6BeoCz8z4TmvXFIZRoZdhfasc8Wy4C2r0NC8imxYQasigkSfb5H9AvEBOEt2R3jbkzv2GZcLfpyB(dW22ruXCQCdGnjCrmXE3IydXHfM9usYRB7jQJ9y96UHIYD1JiiNXXfWBetZX60WED0xk7j6ByZj(cXdqDnMEIHU5459Jg(MwzJswIzP8QnoR1smJoJsef(CrLCO6Y17QVMXMdZU82LLxZ0fMaP9BGRVAIy67Z18NHv9GLqUsYsB1BBqlf29Do4Kcr8JPpzrrHlg17ztnjQ8oRjL8gzbeGD1Gz95R2b7K1qzyw6rzzFKw0E)O23DD)cvTuC0TZT3x3VhuGyBP(iQn86cHxBzuacVleJbEnLj8UZHpdTaxvNwo6azSp8U9mGU0SyNy2RcX27zMBMzmAIy6fBwm3a0A1noBR3WV)kDaPL3lPnvXv6Y0OTNhmoVJU1bcv7)xgCsy6f7Yasii1hrvOQ4mkkYfqAqCgRbjyL8fimfa(suisucC)x3Rx(V0wABKFe0i1xdrHANFvVw6nCkBv2FynTioqiPW5H4Js4py)t6kZmHHbl43fXMlp6D9D3Ky89qUtwh8nsAvCkRZ7M8Keu(zFGsXIYR2Q12xDs)EhKukPPY0lQsZWTh)iMYajO8I1tEpWI3)o0B4)(uY71pdt2)Y235R94ceqb9LcNeKsq2JpVexPYCLnhqRbaLYILew0kszjE8aC1iCbgELbmS1cxefvGJlDt5Rn5hKonUK6Bk)ZLL5lDGFOa8fIkfHvfqAgmRcFx7nB5gMIsROLdGZTvWwwNnzR3US1DB2YUpBT3OT070wb3k41EJbVM8PvR6kGZjbA6q)DviMR8OVw0QvFE10PWV1O7cWISEEckQUiSAxeCPnON26ZMjQ(UnRrLYBmo5qPI9BGqY(9mv7azvvx5vrw4QfnCg5HZerC1KjUVLuXz0JoiXJAQ8ub9Av2LEg4O7iW2urS1l54fLeVlu6OMjQEzLKuerA8inbO1QbKgy2tl1EM52RSK7DcS79nLEVluOyZevVSwGixfHPJINtExv3457yAa1KtHNYhso)u5SjzMiaz6E2zztEIYH4hOtuBhGGVq5(Zf3jKKB3HowT2bbvVsrYDKzxmLRmN0B0cmIdrovoFFY8tLmzhHuXC(MmB2u)6WPtkfpWz(3coftQPa7TxncP58SEfjoYxsVs8T0Re0mDXUDeNb0xlAR0DHkm5RQ9fR4mOSBjZ5aUQl4nROK3Kbnd843TIQE5kkjMuUDfx6RxXzWvVlUoXrQerBKumdVCHQ)2f(wBhoaHyB9Akvz3qULgNbDx(OVM4GzVlDHK9OrDfoovBYXnkMOXOq2aD7KDUVNhNQIPpq3m7g5x9J9xvFPVciNjvZ0XK1Vi(BnILdYulVRisl51cPw3lKM2fd5mAG7B(OicvjX8p0S53Ob)Wo1JnNCrce1tFDMp1tHZ3DHp)tneBRQ8vSi)erh78QLUENepckMppcsa(B4fKaYMjT)y2D4pPz7)l]]
 )
 
 -- The hand-built lists the wowsims.com packs replace (wowsims packs plan, P9): a saved choice of one falls back to the

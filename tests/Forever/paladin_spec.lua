@@ -105,12 +105,12 @@ describe("Forever Paladin", function()
         assert.is_nil(w.options)
     end)
 
-    it("places every DB2 talent in a tree and keeps the Forever-only ones at tree 0", function()
+    it("places every talent in a tree (Forever's)", function()
         local n = { [0] = 0, 0, 0, 0 }
         for _, t in pairs(w.talents) do
             n[t[1]] = n[t[1]] + 1
         end
-        assert.are.same({ [0] = 5, 14, 16, 16 }, n)
+        assert.are.same({ [0] = 0, 17, 17, 17 }, n) -- Forever's tree (trees/paladin.json)
     end)
 
     it("declares mana under the five-second rule", function()
@@ -358,8 +358,10 @@ describe("Forever Paladin priorities", function()
                 for i, e in ipairs(entries) do
                     local where = name .. " " .. list .. " " .. i
                     local isList = e.action == "run_action_list" or e.action == "call_action_list"
+                    -- stoneform: the Dwarf racial (Hekili_Shared/Races), rule 13's line for a tank
                     -- use_items is Hekili's `all` (Hekili_Shared/Shared/Items.lua), as in druid_spec
-                    assert.is_true(cls.abilities[e.action] ~= nil or isList or e.action == "use_items", where)
+                    local shared = e.action == "use_items" or e.action == "stoneform"
+                    assert.is_true(cls.abilities[e.action] ~= nil or isList or shared, where)
                     for kind, key in (e.criteria or ""):gmatch("(%a+)%.([%w_]+)") do
                         if kinds[kind] then
                             assert.is_not_nil(kinds[kind][key], where .. ": no " .. kind .. " " .. key)
@@ -704,5 +706,45 @@ describe("Retribution (wowsims.com)'s opener and the Movement toggle", function(
         local on, off = both(H, pick)
         assert.are.same({ false, false }, { (H.ns.Facade.Window("move1")), (H.ns.Facade.Window("move2")) })
         assert.are.same({ true, true }, { on.judgement ~= nil, off.judgement ~= nil })
+    end)
+end)
+
+-- L237/L238: in a dungeon the client hides the target's creature type; Exorcism's 879 ranks (Undead and Demon only)
+-- then fall to the client's range answer, a plain nil on a target the spell cannot hit. Asked by the known rank.
+describe("Exorcism's 879 ranks with the creature type hidden", function()
+    local SECRET = require("Game.State.helpers.fake_api").SECRET
+
+    it("are refused on a plain nil range answer, usable on true; the type decides once known", function()
+        local H = headless.new({
+            character = {
+                class = "PALADIN",
+                classID = 2,
+                specID = 1486,
+                level = 60,
+                known = { 879, 5614, 5615, 10312, 10313, 10314 },
+                power = { type = 0, token = "MANA", max = 5000 },
+                speed = { 3.6 },
+            },
+            pack = "Retribution (wowsims.com)",
+        })
+        assert.are.same({}, H.loadErrors)
+        assert.are.equal(10314, H.ns.VirtualState.KnownID(879)) -- the facade asks the client by the known rank
+        H.ctl.level.target, H.ctl.distance.target, H.ctl.creature.target = 60, 3, SECRET
+        H.ctl.ranges[10314] = { 0, 0 } -- the client's plain nil
+        H.Fire("PLAYER_TARGET_CHANGED")
+        local t = H.ctl.now
+        local function usable()
+            t = t + 0.2
+            H.ctl.now = t
+            assert.is_true(headless.cycle(H, t))
+            return { H.Hekili.State:IsUsable("exorcism") }
+        end
+        assert.are.same({ false, "creature type unknown; range nil: wrong target type" }, usable())
+        H.ctl.creature.target = "undead"
+        assert.are.same({ true }, usable())
+        H.ctl.creature.target = SECRET
+        H.ctl.ranges[10314] = { 0, 30 } -- in range: true
+        assert.are.same({ true }, usable())
+        assert.are.same({}, H.errors)
     end)
 end)

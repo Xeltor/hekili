@@ -8,8 +8,8 @@
 -- slot order fire, earth, water, air: checkpoint), the shocks' shared cooldown, Fire Nova needing a fire totem,
 -- Maelstrom Weapon stacked by our landed melee (10 a minute, wowsims's rate) and spent by Lightning Bolt, Elemental
 -- Focus's Clearcasting (10% after a Fire or Nature damage spell, spent by the next one), Lightning Shield's charges
--- spent by the mob's hits on us, mana under the five-second rule; Elemental's casts (Lightning Bolt, Chain Lightning,
--- Lava Burst) shortened by Elemental Alacrity and Elemental Mastery, Convection's cost cut, Chain Lightning's cooldown
+-- spent by the mob's hits on us, mana under the five-second rule; Elemental's casts (Lightning Bolt, Chain Lightning;
+-- Lava Burst is gone from the game) shortened by Elemental Alacrity and Elemental Mastery, Convection's cost cut, Chain Lightning's cooldown
 -- lifted by Elemental Mastery. Damage amounts, the weapon, the regen parts and the mana pool are UNMEASURED.
 -- shortcut: no Revelation proc (the weapon enchant's: its rate is the enchant's, by our crit), so Elemental's
 -- Revelation Earth Shock never runs here; add it with the Elemental gate if that gate needs the line.
@@ -53,25 +53,22 @@ local COST = {
     strength_of_earth_totem = { 25, 65, 125, 225, 275 },
     mana_spring_totem = { 40, 60, 80, 100 },
     grace_of_air_totem = { 155, 250, 310 },
-    chain_lightning = { 145, 200, 250, 315 }, -- wowsims/forever's spell data (the DB2's 225..485)
-    lava_burst = { 135, 165, 230, 265 }, -- wowsims/forever's spell data (the DB2's 165/230/265 for ranks 1-3)
+    chain_lightning = { 245, 360, 425, 495 }, -- wowsims/forever's spell data at 4b0030a44b (the DB2's 225..485)
     magma_totem = { 230, 360, 500, 650 },
     windfury_totem = { 115, 175, 250 },
 }
 local FOCUSED = { earth_shock = true, flame_shock = true, lightning_shield = true }
 -- Convection (16039, DB2 aura 108 misc 14): -2% a rank on these.
-local CONVECTION =
-    { lightning_bolt = true, chain_lightning = true, lava_burst = true, earth_shock = true, flame_shock = true }
+local CONVECTION = { lightning_bolt = true, chain_lightning = true, earth_shock = true, flame_shock = true }
 local SHAMANISTIC_FOCUS = 1223030
--- The casts' times by rank (DB2; Lava Burst's rank 4 wowsims/forever's), Elemental Alacrity's cut by rank (Forever's
--- trait curve, wowsims/forever's data) off all three, Elemental Mastery's 0.5 s off Lightning Bolt and Lava Burst.
+-- The casts' times by rank (DB2), Elemental Alacrity's cut by rank (Forever's trait curve, wowsims/forever's data) off
+-- both, Elemental Mastery's 0.5 s off Lightning Bolt.
 local CAST = {
     lightning_bolt = { 1.5, 2, 2.5, 2.5, 2.5, 2.5, 2.5, 2.5, 2.5, 2.5 },
     chain_lightning = { 2, 2, 2, 2 },
-    lava_burst = { 2.5, 2.5, 2.5, 2.5 },
 }
 local ALACRITY = { 0.17, 0.33, 0.5 }
-local MASTERED = { lightning_bolt = true, lava_burst = true }
+local MASTERED = { lightning_bolt = true }
 
 -- UNMEASURED: the hits' amounts.
 local AMOUNT = {
@@ -81,15 +78,13 @@ local AMOUNT = {
     lightning_bolt = 550,
     fire_nova = 350,
     chain_lightning = 500,
-    lava_burst = 700,
 }
-local FIRE = { flame_shock = true, fire_nova = true, lava_burst = true } -- school 4; the rest Nature's 8
+local FIRE = { flame_shock = true, fire_nova = true } -- school 4; the rest Nature's 8
 
 -- The spells Clearcasting covers (the class file's cost modifier) and whose casts roll it (Fire, Nature damage).
 local ELEMENTAL = {
     lightning_bolt = true,
     chain_lightning = true,
-    lava_burst = true,
     earth_shock = true,
     flame_shock = true,
     fire_nova = true,
@@ -187,7 +182,6 @@ end
 M.OUTCOMES = {
     lightning_bolt = "spell",
     chain_lightning = "spell",
-    lava_burst = "spell",
     earth_shock = "spell",
     flame_shock = "spell",
     fire_nova = "spell",
@@ -228,7 +222,6 @@ M.MAP = {
         end,
     },
     chain_lightning = spell("chain_lightning"), -- one target: no chain
-    lava_burst = spell("lava_burst"),
     elemental_mastery = {
         effect = function(W, e, _, X)
             aura(W, X, e, "elemental_mastery")
@@ -288,7 +281,10 @@ local PACKS = {
         spec = 100072,
         weapon = { 180, 260, 3.6 },
         parry = true, -- the build's Spirit Weapons (wowsims's applySpiritWeapons: CanParry)
-        talents = { [1223031] = 2 }, -- Improved Stormstrike 2/2 (rank 2: always; wowsims talents_enhancement.go:188-210)
+        -- Improved Stormstrike 2/2 (rank 2: always; wowsims talents_enhancement.go:188-210); Maelstrom Weapon 5/5 (the
+        -- build's 408498=5@2: the world stacks it on every landed swing, and the pack's Lightning Bolt line reads the talent
+        -- since central-talents registered it)
+        talents = { [1223031] = 2, [408498] = 5 },
         -- wowsims's log (shaman_enhancement.log, re-pin e2842f0a78: Windshaper Skyborne, was 5000 / 9.8 / 38.42 as an
         -- Orc): 6565 mana, 17.8 a second while casting, 49.05 outside; Improved Stormstrike (1238931, DB2 aura 134 = 50)
         -- adds half the spirit part while casting (33.42: the log's 3.342 a tick); the 17.8 is 12.8 without Mana Spring
@@ -297,7 +293,7 @@ local PACKS = {
         fsr = { 31.25, 12.8, auras = { [1238931] = { share = 0.5 }, [10494] = { mp5 = 5 } } },
         uptime = { "flame_shock" },
     },
-    -- wowsims/forever's Elemental build (builds/testing.build.json, talents 5500331023001351-053002001-053): the casts,
+    -- wowsims/forever's Elemental build (builds/testing.build.json, talents 5500331023001351-05500001-053): the casts,
     -- the totems its pre-pull and list summon, at a caster's range. Mana Tide Totem and Water Shield are left out:
     -- the build lacks their Restoration talents, so wowsims never casts them.
     Elemental = {
@@ -306,7 +302,6 @@ local PACKS = {
         kit = {
             "lightning_bolt",
             "chain_lightning",
-            "lava_burst",
             "earth_shock",
             "flame_shock",
             "fire_nova",
@@ -325,13 +320,12 @@ local PACKS = {
             [16164] = 1, -- Elemental Focus
             [16086] = 2, -- Improved Fire Nova (wowsims's Trial by Fire)
             [29062] = 3, -- Eye of the Storm
-            [408490] = 1, -- Lava Burst (wowsims's tree; not in the DB2's Talent table)
+            [16120] = 1, -- Call of Thunder (took Lava Burst's slot at 4fe09d45b7; unmodelled)
             [408438] = 3, -- Lightning Overload (the same)
             [16089] = 1, -- Elemental Fury (wowsims 5; the DB2's 1)
             [16166] = 1, -- Elemental Mastery
             [16255] = 5, -- Thundering Strikes
-            [17485] = 3, -- Ancestral Knowledge
-            [16262] = 2, -- Improved Ghost Wolf
+            [17485] = 5, -- Ancestral Knowledge
             [1223030] = 1, -- Shamanistic Focus
             [16179] = 5, -- Tidal Focus
             [1223033] = 3, -- Mindfulness (wowsims's tree; not in the DB2's Talent table)

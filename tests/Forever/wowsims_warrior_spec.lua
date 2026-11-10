@@ -30,8 +30,7 @@ local ARMS = {
         end,
     },
 }
--- The pinned fight predates launch tuning and was simulated with the old 15 s Improved Slam cooldown.
-local ARMS_REPLAY = { hidden = { [1282733] = true }, procs = {}, cooldowns = { slam = 15 } }
+local ARMS_REPLAY = { hidden = { [1282733] = true }, procs = {} }
 
 -- https://www.icy-veins.com/wow-forever/arms-warrior-leveling#leveling-talent-build (level 40)
 local ARMS_LEVEL_40 = {
@@ -71,7 +70,7 @@ local ARMS_CHAR = setmetatable({
 
 -- Fury: the same Overpower window (its Overpower Weaving group reads 1282733); Berserker Rage is a trained ability the
 -- loop kit lacks. The base is the dual-wield world (ww.Fury), the log's own weapon speeds.
-local FURY = { kit = { "berserker_rage" }, requires = ARMS.requires }
+local FURY = { kit = { "berserker_rage", "reckless_swings" }, requires = ARMS.requires }
 -- Whirlwind's off-hand hit (1680 Tag 15, the off hand's item slot) is logged as its own Casting line: a hit of the one cast, not a decision.
 -- wowsims logs the Heroic Strike queue (25286 Tag 1) as an aura the client never shows (the client sees
 -- IsCurrentSpell): hidden.
@@ -90,7 +89,8 @@ local FURY_REPLAY = { hidden = hideQueue({ [1282733] = true }), procs = { ["1680
 -- window stays in the truth (`hidden`) and answers Revenge's usability; the live world's mob swings at us, so there
 -- Revenge keeps the world's own requirement. The Heroic Strike queue (25286 Tag 1) as Fury's. Shield Slam is the talent's
 -- rank 1 plus its trained ranks (the log casts rank 4, 23925).
-local PROT_KIT = { "berserker_rage", "revenge", "shield_block", "shield_slam", "shield_wall", "shield_bash", "taunt" }
+local PROT_KIT =
+    { "berserker_rage", "retaliation", "revenge", "shield_block", "shield_slam", "shield_wall", "shield_bash", "taunt" }
 local PROT = {
     kit = PROT_KIT,
     requires = {
@@ -113,7 +113,11 @@ describe("the Warrior wowsims.com packs #slow #wowsims", function()
             -- parry haste (decision 63): the same-frame Bloodrage gap (gaps.md, fix 40); 0.896 (60 of 67) with fix 40.
             -- Re-pin e2842f0a78 (lane 14, R6): 0.917 (66 of 72; base 0.943, inside max(0.02, 2/72)); the recipe header
             -- names each disagreement
-            0.91,
+            -- Re-pin 4b0030a44b/e5a9cd2a2d (0.7 warrior lane, R6): 0.88 (62 of 70; measured 0.886 under steady icons) from 0.91: the
+            -- ruled berserker_rage gate (1), Overpower weaves (overpower -> rend 9.55 and 92.45, -> sunder 65.85, -> slam 101.55:
+            -- the usability answer's delay after a dodge), spearing_strike -> mortal_strike (50.65, 100.05) and mortal_strike
+            -- slam (131.95) at the cooldown's edge
+            0.88,
             ARMS_REPLAY
         )
     end)
@@ -134,7 +138,8 @@ describe("the Warrior wowsims.com packs #slow #wowsims", function()
     -- Sunders up, the rage going to the off-GCD Heroic Strike; L40 the same with Slam and Spearing Strike cooling.
     -- Re-pin e2842f0a78 (lane 14): 7.4 / 8.6 / 5.6 measured; L40 12.8 -> 8.6 (R6, R41: 37.4-45.4 s, Slam 8.5 s and
     -- Spearing Strike cooling, Rend up 8.1 s, five Sunders up, rage 12-28 pooling to the off-GCD Heroic Strike: nothing
-    -- useful to cast). L40 now uses the launch leveling build, and L60 runs the long-fight priority in a raid context.
+    -- useful to cast). L40 uses the leveling talent build with Improved Slam and Mortal Strike.
+    -- L60 runs the long-fight priority in a raid context.
     local ARMS_LIVE = { [10] = 7.4, [40] = 8.6, [60] = 6 }
     for _, level in ipairs({ 10, 40, 60 }) do
         it("Arms (wowsims.com) stays live at level " .. level, function()
@@ -157,7 +162,10 @@ describe("the Warrior wowsims.com packs #slow #wowsims", function()
             -- (1.5 s main hand, 2.0 s off hand: Events/Rows.lua, Events/Melee.lua L.PAIR_WINDOW_MS), so the dodge row the
             -- Overpower Weaving swap reads (enemy_dodged) reaches the kit 1.57-2.17 s late, after wowsims has swapped and
             -- cast (0.1-1.1 s after the dodge): the top misses are overpower -> bloodthirst / whirlwind / execute (3, 3, 2)
-            0.85,
+            -- Re-pin 4b0030a44b/e5a9cd2a2d (R6): 0.86 (86 of 99; measured 0.869) from 0.85: Overpower weaves (the R46 latency, and
+            -- the stance keep fixed to 25: 4 overpower -> bloodthirst), 3 Reckless Swings (the 20-rage shortcut moves the belief's
+            -- rage, blocker note warrior-1), execute -> death_wish, execute -> reckless_swings
+            0.86,
             FURY_REPLAY
         )
     end)
@@ -299,7 +307,10 @@ describe("the Warrior wowsims.com packs #slow #wowsims", function()
             -- (presets.ts ProtectionTalents) and gear; the Revenge window's id 5302 mapped (recipe `auras`); the one
             -- miss is shatter_curse -> shield_slam (45.03: the Orc racial at <= 50% health; the replay does not replay our
             -- health, the old class)
-            0.98,
+            -- Re-pin 4b0030a44b/e5a9cd2a2d (R6): 0.92 (92 of 100; measured 0.920) from 0.98: the new rotation (Revenge reorder, Retaliation
+            -- precombat) leaves Shield Slam ties at the cooldown's edge (sunder_armor -> shield_slam x2, rend -> shield_slam),
+            -- shatter_curse -> revenge (our health is not replayed: the old class), shield_slam -> thunder_clap 5.50
+            0.92,
             PROT_REPLAY
         )
     end)
@@ -313,7 +324,13 @@ describe("the Warrior wowsims.com packs #slow #wowsims", function()
     -- talents; the pack's lines unchanged): this check's fight 6.0 / 17.2 / 17.2 (was 6.0 / 10.2 / 14.6), L60 at its
     -- limit; re-traced (95-112 s): rage 0.9-9.1, Rend, Shield Block and Sunder waiting on rage: rage-starved, gap CK's
     -- cause. The seeds 1-20 sweep behind 19.0 / 17.2 predates the new export (not re-run)
-    local PROT_LIVE = { [10] = 6, [40] = 19.0, [60] = 17.2 }
+    -- L40 19.0 -> 21.8, L60 17.2 -> 21.8 (CN8 D2; this check's fight, seed 1): the same rage-starved stretch (95-116.6 s,
+    -- rage 4-7, Shield Block and Sunder waiting on rage, only Shield Wall usable), 4.6 s longer on the re-timed fight
+    -- 0.7 warrior lane (R6): CN8's steady-icons limits 21.8 at L40/L60 kept; this check's fight measures 10.2 / 14.6 at the new pin; the
+    -- seeds 1-20 stretch the cause names is rage-starved (gap CK: rage 0.9-9, only Shield Wall usable), not re-swept here
+    -- Release fix (batch review B S5): 21.8 -> 10.2 (L40) / 14.6 (L60), the worst idle this check measures (seed 1) at the new pin; the older
+    -- 21.8 was the re-timed fight under CN8 D2 and no longer happens, so the limit follows the measurement (a larger idle fails)
+    local PROT_LIVE = { [10] = 6, [40] = 10.2, [60] = 14.6 }
     for _, level in ipairs({ 10, 40, 60 }) do
         it("Protection (wowsims.com) stays live at level " .. level, function()
             ws.live(

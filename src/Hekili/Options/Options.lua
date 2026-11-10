@@ -308,10 +308,6 @@ do
                 performance = {
                     frameBudget = 0.7,
                     forecastWindow = 15, -- Forever E9
-                    damageMeter = false, -- experimental (providers spec decision 82): the meter as the Outcomes provider
-                    cooldownViewer = false, -- experimental: the Cooldown Manager as the presence leaf (providers Task 7)
-                    coalesceCooldown = false, -- perf 2.2: SPELL_UPDATE_COOLDOWN once per frame (EventFacade.lua)
-                    narrowUnitAura = false, -- perf 2.3: UNIT_AURA for player and target only (Sources.lua)
                 },
                 toggles = {
                     pause = {
@@ -325,7 +321,6 @@ do
                     mode = {
                         key = "ALT-SHIFT-N",
                         value = "automatic",
-                        -- type = "AutoSingle",
                         automatic = true,
                         single = true,
                         reactive = "false",
@@ -906,17 +901,6 @@ return end
     end
 
 
-    local function setWidth( info, field, condition, if_true, if_false )
-        local tab = getOptionTable( info )
-
-        if condition then
-            tab.args[ field ].width = if_true or "full"
-        else
-            tab.args[ field ].width = if_false or "full"
-        end
-    end
-
-
     local function rangeIcon( info )
         local tab = getOptionTable( info )
 
@@ -1401,45 +1385,6 @@ return L["Position"] end,
                                 order = 10,
 
                                 args = {
-                                    --[[
-                                    relativeTo = {
-                                        type = "select",
-                                        name = "Anchored To",
-                                        values = {
-                                            SCREEN = "Screen",
-                                            PERSONAL = "Personal Resource Display",
-                                            CUSTOM = "Custom"
-                                        },
-                                        order = 1,
-                                        width = 1.49,
-                                    },
-
-                                    customFrame = {
-                                        type = "input",
-                                        name = "Custom Frame",
-                                        desc = "Specify the name of the frame to which this display will be anchored.\n" ..
-                                                "If the frame does not exist, the display will not be shown.",
-                                        order = 1.1,
-                                        width = 1.49,
-                                        hidden = function() return data.relativeTo ~= "CUSTOM" end,
-                                    },
-
-                                    setParent = {
-                                        type = "toggle",
-                                        name = "Set Parent to Anchor",
-                                        desc = "If checked, the display will be shown/hidden when the anchor is shown/hidden.",
-                                        order = 3.9,
-                                        width = 1.49,
-                                        hidden = function() return data.relativeTo == "SCREEN" end,
-                                    },
-
-                                    preXY = {
-                                        type = "description",
-                                        name = " ",
-                                        width = "full",
-                                        order = 97
-                                    }, ]]
-
                                     x = {
                                         type = "range",
                                         name = L["X"],
@@ -2844,6 +2789,16 @@ do
         self.DB.profile.specs[ spec ] = self.DB.profile.specs[ spec ] or {}
         self.DB.profile.specs[ spec ][ option ] = val
 
+        -- the player's pick: a selector never replaces it, and it activates its spec (Hekili:ActivatePack); "(none)"
+        -- only marks it, activating nothing (as a pack's Active toggle switched off)
+        if option == "package" then
+            if val == "(none)" then
+                self.DB.profile.specs[ spec ].packManual, self.DB.profile.specs[ spec ].packAuto = true, nil
+            else
+                self:ActivatePack( spec )
+            end
+        end
+
         if option == "package" then self:UpdateUseItems()
 self:ForceUpdate( "SPEC_PACKAGE_CHANGED" )
         elseif option == "enabled" then ns.StartConfiguration() end
@@ -3582,8 +3537,206 @@ found = true end
     local tAbilities = {}
     local tItems = {}
 
+    -- The Cooldown Manager panel's walk: which item names which of the active spec's auras, by the belief's own match
+    -- (§3.1, Presence/CooldownViewer.lua: an entry's linkedSpellIDs, else its spell, override and tooltip spells, each
+    -- also through GetOverrideSpell; an entry that also names another aura, an untracked or a secret spell maps
+    -- nothing), and which items are on a bar. Read from the client out of combat, never from the belief. Allocates: on
+    -- draw only. (The Performance tab's coverage line was removed 2026-11-10, owner: the panel shows the same.)
+    local CDM_VIEWERS = { "EssentialCooldownViewer", "UtilityCooldownViewer", "BuffIconCooldownViewer", "BuffBarCooldownViewer" }
+
+    local function CdmPlain( v )
+        if not Facade.issecretvalue( v ) then return v end
+    end
+
+    local function CdmNote( byId, keys, x )
+        if Facade.issecretvalue( x ) then keys[ 0 ] = true
+        elseif x ~= nil then keys[ byId[ x ] or 0 ] = true end
+    end
+
+    local function CdmNoteOver( byId, keys, x )
+        CdmNote( byId, keys, x )
+        x = CdmPlain( x )
+        local over = C_Spell and C_Spell.GetOverrideSpell
+        if x ~= nil and over then
+            local ok, o = pcall( over, x )
+            if ok then CdmNote( byId, keys, o ) end
+        end
+    end
+
+    -- The walk: out of combat, from the client. nil and the reason when it cannot read (in combat: "combat"; not
+    -- available: the game's reason, or the plain text). Else { auras, toKey (cooldownID -> aura key, or false: names
+    -- several), onBar (cooldownID -> true), pool (cooldownIDs in category order), info (cooldownID -> its info), off
+    -- (the player turned the Cooldown Manager off) }. Allocates: on draw only.
+    local function CdmWalk()
+        if InCombatLockdown() then return nil, "combat" end
+        local CV = Facade.C_CooldownViewer
+        local ok, avail, reason = false, nil, nil
+        if CV and CV.IsCooldownViewerAvailable then ok, avail, reason = pcall( CV.IsCooldownViewerAvailable ) end
+        if not ok or CdmPlain( avail ) ~= true then -- not available to this player: the game's reason, no advice
+            reason = ok and CdmPlain( reason )
+            if type( reason ) == "string" and reason ~= "" then
+                return nil, format( L["The Cooldown Manager is not available: %s"], reason )
+            end
+            return nil, L["The Cooldown Manager is not available."]
+        end
+
+        local byId, auras = {}, Registry.Auras()
+        for k, a in orderedPairs( auras ) do -- the belief's order (Tracked.lua: sorted keys, the later key wins an ID)
+            if a.key == k then
+                if type( a.id ) == "number" and a.id > 0 then byId[ a.id ] = k end
+                local copy = a.copy
+                if type( copy ) == "number" and copy > 0 then byId[ copy ] = k
+                elseif type( copy ) == "table" then
+                    for _, v in ipairs( copy ) do
+                        if type( v ) == "number" and v > 0 then byId[ v ] = k end
+                    end
+                end
+            end
+        end
+
+        local toKey, pool, infos = {}, {}, {} -- cooldownID -> aura key, or false (names more than one)
+        for c = 0, 8 do
+            local okS, set = pcall( CV.GetCooldownViewerCategorySet, c, true )
+            set = okS and CdmPlain( set )
+            if type( set ) == "table" then
+                for n = 1, #set do
+                    local id = CdmPlain( set[ n ] )
+                    local okI, info = pcall( CV.GetCooldownViewerCooldownInfo, id )
+                    info = okI and CdmPlain( info )
+                    if id ~= nil and type( info ) == "table" and toKey[ id ] == nil then
+                        local keys = {}
+                        local links = CdmPlain( info.linkedSpellIDs )
+                        if type( links ) == "table" and #links > 0 then
+                            for i = 1, #links do CdmNote( byId, keys, links[ i ] ) end
+                        else
+                            CdmNoteOver( byId, keys, info.spellID )
+                            CdmNoteOver( byId, keys, info.overrideSpellID )
+                            CdmNoteOver( byId, keys, info.overrideTooltipSpellID )
+                        end
+                        local one, many = nil, false
+                        for k in pairs( keys ) do
+                            if k ~= 0 then
+                                many = many or one ~= nil
+                                one = one or k
+                            end
+                        end
+                        if one then
+                            toKey[ id ] = not ( many or keys[ 0 ] ) and one
+                            pool[ #pool + 1 ], infos[ id ] = id, info
+                        end
+                    end
+                end
+            end
+        end
+
+        local onBar = {}
+        for _, name in ipairs( CDM_VIEWERS ) do
+            local f = CdmPlain( _G[ name ] )
+            local n = type( f ) == "table" and f.GetNumChildren and CdmPlain( f:GetNumChildren() )
+            if type( n ) == "number" and n > 0 then
+                local kids = { f:GetChildren() }
+                for i = 1, n do
+                    local c = CdmPlain( kids[ i ] )
+                    if type( c ) == "table" then
+                        local id = CdmPlain( rawget( c, "cooldownID" ) )
+                        if id ~= nil and CdmPlain( rawget( c, "layoutIndex" ) ) ~= nil then
+                            onBar[ id ] = true
+                        end
+                    end
+                end
+            end
+        end
+
+        return { auras = auras, toKey = toKey, onBar = onBar, pool = pool, info = infos,
+            off = CdmPlain( GetCVar( "cooldownViewerEnabled" ) ) ~= "1" }
+    end
+
+    -- (cdm-panel, owner 2026-11-09) The Cooldown Manager panel: one switch per pack aura that an item of the class's
+    -- Cooldown Manager pool names alone (the coverage walk's toKey), stored per aura key and per spec in the profile
+    -- (profile.specs[ id ].cdm[ key ]; unset: the pack's `cdm`, else on) whether or not the item is on a bar. Gold: an
+    -- item of the aura on a bar; grey: in the pool only. One grid, as the game's own Cooldown Settings shows them (owner
+    -- 2026-11-09: the client's selfAura flag is no buff/debuff split). A change reaches the belief through
+    -- Hekili:CdmSwitchChanged (Tracked.lua): the leaf's map is rebuilt out of combat, at combat end otherwise.
+    -- Rebuilt when the options open (ns.StartConfiguration), out of combat; in combat the last cards stay.
+    local CDM_GOLD, CDM_GREY = "|cffffd100", "|cff808080"
+
+    local function CdmSpec()
+        local spec = Status.specID
+        local specs = Hekili.DB.profile.specs
+        return spec and type( specs[ spec ] ) == "table" and specs[ spec ]
+    end
+
+    local function CdmGet( info )
+        local key = info[ #info ]
+        local cdm = CdmSpec()
+        cdm = cdm and cdm.cdm
+        if type( cdm ) == "table" and type( cdm[ key ] ) == "boolean" then return cdm[ key ] end
+        local aura = Registry.Auras()[ key ]
+        return not ( aura and rawget( aura, "cdm" ) == false )
+    end
+
+    local function CdmSet( info, val )
+        local sp = CdmSpec()
+        if not sp then return end
+        sp.cdm = sp.cdm or {}
+        sp.cdm[ info[ #info ] ] = val == true
+        Hekili:CdmSwitchChanged()
+    end
+
+    function Hekili:EmbedCdmOptions( db )
+        db = db or self.Options
+        if not db then return end
+        local panel = db.args.cdm
+        local W, why = CdmWalk()
+        panel.args.state.name = W and W.off
+            and L["Turn on the Cooldown Manager in the game options: it tells Hekili when your buffs and debuffs are up."]
+            or why ~= "combat" and why or ""
+        if why == "combat" then return end -- keep the last cards
+
+        local args = panel.args.items.args
+        wipe( args )
+        if not W then return end
+        local auras, getName, getIcon = W.auras, C_Spell.GetSpellName, C_Spell.GetSpellTexture
+        for _, id in ipairs( W.pool ) do
+            local key, info = W.toKey[ id ], W.info[ id ]
+            local aura = key and auras[ key ]
+            if aura then
+                local card = args[ key ]
+                if card then -- one card per aura: gold when any of its items is on a bar
+                    if W.onBar[ id ] then card.name = CDM_GOLD .. card.label .. "|r" end
+                else
+                    local sid = CdmPlain( info.overrideSpellID ) or CdmPlain( info.spellID )
+                    local name = type( sid ) == "number" and getName and CdmPlain( getName( sid ) )
+                    if type( name ) ~= "string" or name == "" then
+                        name = type( aura.name ) == "string" and aura.name or key
+                    end
+                    local icon = type( sid ) == "number" and getIcon and CdmPlain( getIcon( sid ) )
+                    if not icon and type( aura.id ) == "number" and aura.id > 0 and getIcon then
+                        icon = CdmPlain( getIcon( aura.id ) )
+                    end
+                    args[ key ] = {
+                        type = "toggle",
+                        name = ( W.onBar[ id ] and CDM_GOLD or CDM_GREY ) .. name .. "|r",
+                        label = name,
+                        image = icon or nil, -- AceConfig validates a toggle's keys: image yes, imageWidth/Height no; never false
+                        width = 1,
+                        get = CdmGet,
+                        set = CdmSet,
+                    }
+                end
+            end
+        end
+        local keys = {} -- by name
+        for k in pairs( args ) do keys[ #keys + 1 ] = k end
+        sort( keys, function( a, b ) return args[ a ].label < args[ b ].label end )
+        for i, k in ipairs( keys ) do
+            args[ k ].order, args[ k ].label = i, nil
+        end
+    end
+
     -- (spec tree) The right half of a spec page's top row: "Activate <Spec>" while another spec is active (as
-    -- /hekili spec: kept for the current talent tree), else the gold "Active" marker.
+    -- /hekili spec: it activates the spec's pack in place, the player's from then on, kept for the current talent tree:
+    -- Hekili:ActivatePack), else the gold "Active" marker.
     local function AddActivateOptions( args, key, name, texture )
         args.activate = {
             type = "execute",
@@ -3643,7 +3796,6 @@ found = true end
                 local slot = i -- this spec's slot for the order function (`i` moves on)
                 local options = {
                     type = "group",
-                    -- name = specs[ id ],
                     -- the active spec in gold when the tree's mark cannot be placed (the FeedGroup wrapper not live)
                     name = function()
                         return feedDepth == nil and Status.specID == id and ( "|cFFFFD100" .. name .. "|r" ) or name
@@ -4096,7 +4248,6 @@ found = true end
 
                                         -- Safeguard: ensure FPS is reasonable (between 10 and 300)
                                         if fps < 10 then
-                                            -- print( "[Hekili Debug] WARNING: Unreasonable FPS value detected:", fps, "- using fallback" )
                                             fps = 60
                                         end
 
@@ -4162,102 +4313,6 @@ found = true end
                                     order = 12,
                                     width = "full",
                                 },
-                                experimentalHeader = {
-                                    type = "header",
-                                    name = L["Experimental"],
-                                    order = 20,
-                                },
-                                -- stored in this spec's settings by the spec node's GetSpecOption / SetSpecOption
-                                steadyIcons = {
-                                    type = "toggle",
-                                    name = L["Experimental: steady icons (hold a swap between two countdown icons)"],
-                                    desc = L["When an icon that is still counting down would be replaced by another icon that is also counting down, "
-                                        .. "keep the shown icon for a few more updates (set below) and show the new one if it is still there after that.\n\n"
-                                        .. "An icon that is ready to press, a ready icon that goes back to waiting, and anything after your own "
-                                        .. "cast always show at once, so what you can press and when never changes; the icons just flicker less.\n\n"
-                                        .. "|cFFFF7F00Experimental|r: off by default while it is being play-tested."],
-                                    order = 21,
-                                    width = "full",
-                                },
-                                steadyHold = {
-                                    type = "range",
-                                    name = L["Steady icons: updates to hold"],
-                                    desc = L["How many updates a swap between two countdown icons is held. Each update is about 0.1 to 0.2 s, so 1 holds a swap "
-                                        .. "for about 0.1 to 0.2 s and 3 for about 0.3 to 0.6 s; more updates flicker less but show a changed countdown icon later.\n\n"
-                                        .. "An icon that is ready to press, a ready icon that goes back to waiting, and anything after your own "
-                                        .. "cast are never held.\n\nTurn on steady icons above first."],
-                                    min = 1,
-                                    max = 3,
-                                    step = 1,
-                                    disabled = function( info ) return Hekili:GetSpecOption( { info[1], info[2], info[3], "steadyIcons" } ) ~= true end,
-                                    order = 21.5,
-                                    width = "full",
-                                },
-                                damageMeter = {
-                                    type = "toggle",
-                                    hidden = not Hekili.IsDev, -- dev builds only; providersOf (Tracked.lua) ignores it otherwise
-                                    name = L["Experimental: use the damage meter for swing outcomes"],
-                                    desc = L["Reads the game's damage meter events (they work with the Damage Meter window hidden or disabled) to know "
-                                        .. "at once whether your white swing hit, and that another player's hit was not yours.\n\n"
-                                        .. "Changes apply at once out of combat, otherwise when the fight ends. Applies to every specialization.\n\n"
-                                        .. "|cFFFF7F00Experimental|r: off by default while it is being play-tested."],
-                                    get = function() return Hekili.DB.profile.performance.damageMeter == true end,
-                                    set = function( _, v )
-                                        Hekili.DB.profile.performance.damageMeter = v
-                                        Hekili:ProvidersChanged()
-                                    end,
-                                    order = 22,
-                                    width = "full",
-                                },
-                                cooldownViewer = {
-                                    type = "toggle",
-                                    hidden = not Hekili.IsDev, -- dev builds only; providersOf (Tracked.lua) ignores it otherwise
-                                    name = L["Experimental: use the Cooldown Manager for aura presence"],
-                                    desc = L["Reads whether your own buffs and your debuffs on the target are up from the game's Cooldown Manager, "
-                                        .. "for the auras it tracks; the others keep their timers. Needs the Cooldown Manager enabled in the game options. "
-                                        .. "Shows presence only (no durations or stacks), and only auras you applied.\n\n"
-                                        .. "Changes apply at once out of combat, otherwise when the fight ends.\n\n"
-                                        .. "|cFFFF7F00Experimental|r: off by default while it is being play-tested."],
-                                    get = function() return Hekili.DB.profile.performance.cooldownViewer == true end,
-                                    set = function( _, v )
-                                        Hekili.DB.profile.performance.cooldownViewer = v
-                                        Hekili:ProvidersChanged()
-                                    end,
-                                    order = 23,
-                                    width = "full",
-                                },
-                                coalesceCooldown = {
-                                    type = "toggle",
-                                    hidden = not Hekili.IsDev, -- dev builds only; providersOf (Tracked.lua) ignores it otherwise
-                                    name = L["Experimental: read cooldown changes once per frame"],
-                                    desc = L["When the game reports several cooldown changes in one frame, reads them once, at the end of the frame. "
-                                        .. "Costs less in busy fights; a changed cooldown shows up to one frame later.\n\n"
-                                        .. "Applies at once to every specialization.\n\n"
-                                        .. "|cFFFF7F00Experimental|r: off by default while it is being play-tested."],
-                                    get = function() return Hekili.DB.profile.performance.coalesceCooldown == true end,
-                                    set = function( _, v )
-                                        Hekili.DB.profile.performance.coalesceCooldown = v
-                                        Hekili:ProvidersChanged()
-                                    end,
-                                    order = 26,
-                                    width = "full",
-                                },
-                                narrowUnitAura = {
-                                    type = "toggle",
-                                    hidden = not Hekili.IsDev, -- dev builds only; providersOf (Tracked.lua) ignores it otherwise
-                                    name = L["Experimental: listen for aura changes on you and your target only"],
-                                    desc = L["Asks the game for buff and debuff changes on you and your target only, instead of every unit, "
-                                        .. "which matters most in raids.\n\n"
-                                        .. "Changes apply at once out of combat, otherwise when the fight ends. Applies to every specialization.\n\n"
-                                        .. "|cFFFF7F00Experimental|r: off by default while it is being play-tested."],
-                                    get = function() return Hekili.DB.profile.performance.narrowUnitAura == true end,
-                                    set = function( _, v )
-                                        Hekili.DB.profile.performance.narrowUnitAura = v
-                                        Hekili:ProvidersChanged()
-                                    end,
-                                    order = 27,
-                                    width = "full",
-                                },
                             }
                         }
                     }
@@ -4288,6 +4343,22 @@ found = true end
                                 name = "",
                                 width = "full",
                                 order = option.info.order - 0.01
+                            }
+                        end
+
+                        local section = option.section -- RegisterSetting's: a header and its text before it
+                        if section and section ~= ( specCfg[ i - 1 ] or {} ).section then
+                            options.args.core.plugins.settings[ sName .. "Section" .. i ] = {
+                                type = "header",
+                                name = section.name,
+                                order = option.info.order - 0.04
+                            }
+                            options.args.core.plugins.settings[ sName .. "SectionText" .. i ] = {
+                                type = "description",
+                                name = section.desc,
+                                fontSize = "medium",
+                                width = "full",
+                                order = option.info.order - 0.03
                             }
                         end
 
@@ -4537,7 +4608,6 @@ found = true end
         end
 
         if subcat == 'lists' then return self:SetActionOption( info, val ) end
-        -- if subcat == 'newActionGroup' or ( subcat == 'actionGroup' and subtype == 'entry' ) then self:SetActionOption( info, val ); return end
 
         local data = rawget( self.DB.profile.packs, category )
         if not data then return end
@@ -5011,17 +5081,21 @@ found = true end
                                     end,
                                     set = function ()
                                         local p = rawget( Hekili.DB.profile.packs, pack )
-                                        if Hekili.DB.profile.specs[ p.spec ].package == pack then
+                                        local sp = Hekili.DB.profile.specs[ p.spec ]
+                                        -- a pick (and "(none)") is the player's, a pick activating its spec
+                                        -- (Hekili:ActivatePack); back to the default hands the pack to the selectors
+                                        -- again (Engine/Schema/Selectors.lua)
+                                        if sp.package == pack then
                                             if p.builtIn then
-                                                Hekili.DB.profile.specs[ p.spec ].package = "(none)"
+                                                sp.package, sp.packManual, sp.packAuto = "(none)", true, nil
                                             else
                                                 local def = ns.DefaultPackage( p.spec )
                                                 if def and rawget( Hekili.DB.profile.packs, def ) then
-                                                    Hekili.DB.profile.specs[ p.spec ].package = def
+                                                    sp.package, sp.packManual, sp.packAuto = def, nil, nil
                                                 end
                                             end
                                         else
-                                            Hekili.DB.profile.specs[ p.spec ].package = pack
+                                            Hekili:ActivatePack( p.spec, pack )
                                         end
                                     end,
                                 },
@@ -5149,11 +5223,11 @@ found = true end
                                             -- after the delete: deleting the default must not point back at it
                                             local def = ns.DefaultPackage( specId )
                                             spec.package = def and rawget( Hekili.DB.profile.packs, def ) and def or "(none)"
+                                            spec.packManual, spec.packAuto = nil, nil
                                         end
                                         Hekili.Options.args.packs.plugins.packages[ pack ] = nil
                                         for _, nodes in pairs( packNodes ) do nodes[ pack ] = nil end
 
-                                        -- Hekili:EmbedPackOptions()
                                         ACD:SelectGroup( "Hekili", "packs" )
                                     end,
                                     hidden = function() return data.builtIn and Hekili.Version:sub(1, 3) ~= "Dev" end
@@ -5405,8 +5479,6 @@ break end
                                     order = 1.1,
                                     width = 0.15,
                                     image = "Interface\\AddOns\\Hekili\\Textures\\GreenPlus",
-                                    -- image = GetAtlasFile( "communities-icon-addgroupplus" ),
-                                    -- imageCoords = GetAtlasCoords( "communities-icon-addgroupplus" ),
                                     imageHeight = 20,
                                     imageWidth = 20,
                                     func = function ()
@@ -5421,8 +5493,6 @@ break end
                                     order = 1.2,
                                     width = 0.15,
                                     image = RedX,
-                                    -- image = GetAtlasFile( "common-icon-redx" ),
-                                    -- imageCoords = GetAtlasCoords( "common-icon-redx" ),
                                     imageHeight = 20,
                                     imageWidth = 20,
                                     confirm = function() return L["Delete this action list?"] end,
@@ -5594,8 +5664,6 @@ break end
                                     type = "execute",
                                     name = "",
                                     image = "Interface\\AddOns\\Hekili\\Textures\\WhiteUp",
-                                    -- image = GetAtlasFile( "hud-MainMenuBar-arrowup-up" ),
-                                    -- imageCoords = GetAtlasCoords( "hud-MainMenuBar-arrowup-up" ),
                                     imageHeight = 20,
                                     imageWidth = 20,
                                     width = 0.15,
@@ -5622,8 +5690,6 @@ break end
                                     type = "execute",
                                     name = "",
                                     image = "Interface\\AddOns\\Hekili\\Textures\\WhiteDown",
-                                    -- image = GetAtlasFile( "hud-MainMenuBar-arrowdown-up" ),
-                                    -- imageCoords = GetAtlasCoords( "hud-MainMenuBar-arrowdown-up" ),
                                     imageHeight = 20,
                                     imageWidth = 20,
                                     width = 0.15,
@@ -5651,8 +5717,6 @@ break end
                                     type = "execute",
                                     name = "",
                                     image = "Interface\\AddOns\\Hekili\\Textures\\GreenPlus",
-                                    -- image = GetAtlasFile( "communities-icon-addgroupplus" ),
-                                    -- imageCoords = GetAtlasCoords( "communities-icon-addgroupplus" ),
                                     imageHeight = 20,
                                     imageWidth = 20,
                                     width = 0.15,
@@ -5673,8 +5737,6 @@ break end
                                     type = "execute",
                                     name = "",
                                     image = RedX,
-                                    -- image = GetAtlasFile( "common-icon-redx" ),
-                                    -- imageCoords = GetAtlasCoords( "common-icon-redx" ),
                                     imageHeight = 20,
                                     imageWidth = 20,
                                     width = 0.15,
@@ -5827,7 +5889,6 @@ packControl.actionID = format( "%04d", id ) end
                                     type = "select",
                                     name = L["Potion"],
                                     order = 3.2,
-                                    -- width = "full",
                                     values = Registry.PotionList(),
                                     hidden = function ()
                                         local e = GetListEntry( pack )
@@ -6054,7 +6115,6 @@ n = tonumber( n ) + 1
                                     end,
                                     hidden = function ()
                                         local e = GetListEntry( pack )
-                                        -- if not e.criteria or e.criteria:trim() == "" then return true end
                                         return e.action ~= "variable" or e.op == "reset" or e.op == "ceil" or e.op == "floor"
                                     end,
                                 },
@@ -6460,14 +6520,6 @@ n = tonumber( n ) + 1
                         }
                     },
                 }
-
-                --[[ wipe( opts.args.lists.plugins.lists )
-
-                local n = 10
-                for list in pairs( data.lists ) do
-                    opts.args.lists.plugins.lists[ list ] = EmbedActionListOptions( n, pack, list )
-                    n = n + 1
-                end ]]
 
                 ( under or packs.plugins.packages )[ pack ] = opts
                 count = count + 1
@@ -7599,6 +7651,58 @@ do
                 }
             },
 
+            -- (cdm-panel) The Cooldown Manager panel: the cards come from Hekili:EmbedCdmOptions
+            cdm = {
+                type = "group",
+                name = L["Cooldown Manager"],
+                order = 82,
+                args = {
+                    intro = {
+                        type = "description",
+                        name = L["Hekili reads the Cooldown Manager to see when your buffs and debuffs are up. Turn a switch off and Hekili ignores that aura's items there. |cffffd100Gold|r: on a bar. |cff808080Grey|r: not on a bar; its switch applies when you add it."],
+                        fontSize = "medium",
+                        order = 1,
+                        width = "full",
+                    },
+                    state = { -- not available, or turned off (Hekili:EmbedCdmOptions)
+                        type = "description",
+                        name = "",
+                        fontSize = "medium",
+                        order = 2,
+                        width = "full",
+                        hidden = function( info ) return info.option.name == "" end,
+                    },
+                    combat = {
+                        type = "description",
+                        name = L["Changes apply after combat."],
+                        fontSize = "medium",
+                        order = 3,
+                        width = "full",
+                        hidden = function() return not InCombatLockdown() end,
+                    },
+                    reset = {
+                        type = "execute",
+                        name = L["Reset"],
+                        order = 4,
+                        width = 0.6,
+                        func = function()
+                            local spec = Status.specID and Hekili.DB.profile.specs[ Status.specID ]
+                            if type( spec ) == "table" then spec.cdm = nil end
+                            Hekili:CdmSwitchChanged()
+                        end,
+                    },
+                    items = { -- one grid, no heading (the game's Cooldown Settings groups them in one place)
+                        type = "group",
+                        inline = true,
+                        name = "",
+                        order = 10,
+                        args = {},
+                        -- `hidden` is inherited: it also runs for each card (info.option = the card, no args)
+                        hidden = function( info ) local a = info.option.args return a ~= nil and next( a ) == nil end,
+                    },
+                },
+            },
+
             snapshots = {
                 type = "group",
                 name = L["Snapshots (Troubleshooting)"],
@@ -7763,16 +7867,6 @@ do
     function Hekili:GetOptions()
         self:EmbedToggleOptions( Options )
 
-        --[[ self:EmbedDisplayOptions( Options )
-
-        self:EmbedPackOptions( Options )
-
-        self:EmbedAbilityOptions( Options )
-
-        self:EmbedItemOptions( Options )
-
-        self:EmbedSpecOptions( Options ) ]]
-
         self:EmbedSkeletonOptions( Options )
 
         self:EmbedErrorOptions( Options )
@@ -7803,7 +7897,6 @@ function Hekili:TotalRefresh( noOptions )
 
     self:RunOneTimeFixes()
 
-    -- self:LoadScripts()
     if Hekili.OptionsReady then
         if Hekili.Config then
             self:RefreshOptions()
@@ -7943,24 +8036,6 @@ function Hekili:GetOption( info, input )
 
     ns.Error( "GetOption() - should never see." )
 
-end
-
-local getUniqueName = function( category, name )
-    local numChecked, suffix, original = 0, 1, name
-
-    while numChecked < #category do
-        for i, instance in ipairs( category ) do
-            if name == instance.Name then
-                name = original .. ' (' .. suffix .. ')'
-                suffix = suffix + 1
-                numChecked = 0
-            else
-                numChecked = numChecked + 1
-            end
-        end
-    end
-
-    return name
 end
 
 
@@ -8151,12 +8226,8 @@ do
         { "target%.1%.time_to_die"                          , "time_to_die"                             },
         { "time_to_pct_(%d+)%.remains"                      , "time_to_pct_%1"                          },
         { "trinket%.(%d)%.([%w%._]+)"                       , "trinket.t%1.%2"                          },
-        --[[ { "trinket%.(t?%d)%.stat%.([%w_]+)%.([%w%._]+)", -- Christ.
-                                                              "trinket.%1.has_stat.%2&trinket.%1.%3"    }, ]]
         { "trinket%.([%w_]+)%.cooldown"                     , "trinket.%1.cooldown.duration"            },
-        --[[ { "trinket%.([%w_]+)%.proc%.([%w_]+)%.duration"     , "trinket.%1.proc_duration"                }, ]]
         { "trinket%.([%w_]+)%.buff%.a?n?y?%.?duration"      , "trinket.%1.buff_duration"                },
-        -- { "trinket%.([%w_]+)%.proc%.([%w_]+)%.[%w_]+"       , "trinket.%1.has_use_buff"                 },
         { "trinket%.([%w_]+)%.has_buff%.([%w_]+)"           , "trinket.%1.has_use_buff"                 },
         { "trinket%.([%w_]+)%.has_use_buff%.([%w_]+)"       , "trinket.%1.has_use_buff"                 },
         { "min:([%w_]+)"                                    , "%1"                                      },

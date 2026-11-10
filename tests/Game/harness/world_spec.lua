@@ -44,6 +44,25 @@ describe("the world's resources", function()
         assert.are.same({ { 10, 1.05, 1 }, { 11.05, 1.05, 1 } }, casts)
     end)
 
+    it("holds a press up to the spell queue window before its cooldown's end and lands it at the end", function()
+        setup()
+        W.t = 10
+        assert.is_true(W.press(us, "k", { spell = 5, gcd = 0, cooldown = 6 }))
+        W.t = 15.94
+        assert.are.same({ false, "cooldown" }, { W.press(us, "k", { spell = 5, gcd = 0, cooldown = 6 }) })
+        W.t = 15.98
+        assert.is_true(W.press(us, "k", { spell = 5, gcd = 0, cooldown = 6 }))
+        W.run(16.5)
+        local casts = {}
+        for _, ev in ipairs(W.truth) do
+            if ev.kind == "cast" then
+                casts[#casts + 1] = ev.t
+            end
+        end
+        assert.are.same({ 10, 16 }, casts)
+        assert.are.equal(22, us.cdUntil.k)
+    end)
+
     it("starts a queued strike's cooldown at the swing that takes it, and the client answers it then", function()
         setup()
         W.emit({ kind = "pull" })
@@ -106,6 +125,31 @@ describe("the world's resources", function()
             W.run(30)
             assert.are.equal(10 + 2 * 10, us.power) -- every tick lands, the one at its expiry too
             assert.is_nil(us.auras[77])
+        end
+    )
+
+    it(
+        "auraOnAvoid (default true): false skips a press's aura when its hit was avoided, not when it had none",
+        function()
+            local function aura(onAvoid, dodge, hit)
+                setup()
+                W.auraOnAvoid = onAvoid
+                mob.avoid.dodge = dodge
+                W.press(us, "x", {
+                    spell = 1,
+                    gcd = 0,
+                    aura = { id = 77, duration = 10 },
+                    effect = hit and function(w, e)
+                        w.hit(e, e.target, 10, 1)
+                    end or nil,
+                })
+                return us.auras[77] ~= nil
+            end
+            assert.is_true(world.new(3).auraOnAvoid)
+            assert.is_true(aura(true, 1, true)) -- today's: applied though dodged
+            assert.is_false(aura(false, 1, true))
+            assert.is_true(aura(false, 0, true)) -- landed
+            assert.is_true(aura(false, 1, false)) -- no hit: nothing was avoided
         end
     )
 

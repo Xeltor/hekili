@@ -36,6 +36,7 @@ local KIT = {
     pummel = { { 6552, 6554 }, 10, 10, "spell" },
     recklessness = { { 1719 }, 0, 1800, "spell" },
     rend = { { 772, 6546, 6547, 6548, 11572, 11573, 11574 }, 10, 0, "spell" },
+    reckless_swings = { { 1329555 }, 0, 15, "spell" },
     retaliation = { { 20230 }, 0, 900, "spell" },
     revenge = { { 6572, 6574, 7379, 11600, 11601, 25288 }, 5, 5, "spell" },
     shield_bash = { { 72, 1671, 1672 }, 10, 12, "spell" },
@@ -57,12 +58,14 @@ local KIT = {
     whirlwind = { { 1680 }, 25, 10, "spell" },
 }
 
--- key = { definition spell, max rank } of each of the 52 live talent nodes (ForeverProbe export, client 1.60.1.70374,
--- 2026-10-15: 17 Arms, 17 Fury, 18 Protection by the nodes' columns). Every owned multi-rank node reported its rank 1
+-- key = { definition spell, max rank } of each of the 53 talent nodes (ForeverProbe export, client 1.60.1.70374,
+-- 2026-10-15: 17 Arms, 17 Fury, 18 Protection by the nodes' columns; wowsims/forever's tree at 4b0030a44b for the
+-- hotfixes since: Bloodthrill 2, Flurry 3 and Improved Tactical Mastery 3 ranks, Raging Blows now Improved Whirlwind,
+-- Reckless Swings new). Every owned multi-rank node reported its rank 1
 -- spell at its current rank, so no rank aliases; Iron Will and Defiance define themselves by a higher DB2 rank's ID.
 local TALENTS = {
     anger_management = { 12296, 1 },
-    bloodthrill = { 1289682, 5 },
+    bloodthrill = { 1289682, 2 },
     deep_wounds = { 12834, 3 },
     deflection = { 16462, 5 },
     impale = { 16493, 2 },
@@ -85,7 +88,7 @@ local TALENTS = {
     death_wish = { 12328, 1 },
     dual_wield_specialization = { 23584, 5 },
     enrage = { 12317, 5 },
-    flurry = { 12319, 5 },
+    flurry = { 12319, 3 },
     furious_precision = { 1323963, 3 },
     gore_drinker = { 1323967, 2 },
     improved_berserker_rage = { 20500, 2 },
@@ -93,7 +96,8 @@ local TALENTS = {
     improved_intercept = { 20504, 2 },
     lingering_rage = { 1323964, 5 },
     piercing_howl = { 12323, 1 },
-    raging_blows = { 1310315, 1 },
+    improved_whirlwind = { 1310315, 2 },
+    reckless_swings = { 1329555, 1 },
     unbridled_wrath = { 12322, 5 },
     anticipation = { 12297, 5 },
     one_handed_weapon_specialization = { 16538, 5 }, -- "Bastion" on Forever
@@ -155,7 +159,7 @@ describe("Forever Warrior", function()
                 )
                 assert.are.equal("function", type(a.known), key)
             end
-            assert.are.equal(41, n)
+            assert.are.equal(42, n)
             assert.are.equal(1.5, lw.run(w.abilities.slam.cast, e))
             assert.is_true(w.abilities.heroic_strike.onNextSwing and w.abilities.cleave.onNextSwing)
             -- Sweeping Strikes under the native Cooldowns toggle (APL usability audit A): off, the engine skips its line
@@ -177,10 +181,10 @@ describe("Forever Warrior", function()
         local function at(key)
             return lw.run(w.abilities[key].spend, e)
         end
-        -- Focused Rage -1 a rank; Raging Blows -3 (Cleave, Whirlwind); Improved Heroic Strike -1, Improved Execute -3/-5,
+        -- Focused Rage -1 a rank; Improved Heroic Strike -1, Improved Execute -3/-5,
         -- Improved Sunder Armor -1, Improved Thunder Clap -2 a rank; Booming Voice -5% a rank on the shouts (flat
         -- first, then the percentage); floored at 0
-        assert.are.same({ 11, 12, 8, 11, 14, 17, 3, 28, 9, 7.2 }, {
+        assert.are.same({ 11, 18, 8, 11, 14, 23, 3, 28, 9, 7.2 }, {
             at("heroic_strike"),
             at("cleave"),
             at("execute"),
@@ -241,22 +245,25 @@ describe("Forever Warrior", function()
                 key
             )
         end
-        assert.are.equal(17, lw.run(w.abilities.whirlwind.spend, ctx))
+        assert.are.equal(23, lw.run(w.abilities.whirlwind.spend, ctx))
     end)
 
-    it("applies the launch cast time, GCD, and cooldown for each Improved Slam rank", function()
-        local e = lw.env(w)
-        local slam = w.abilities.slam
-        local function fields()
-            return { lw.run(slam.cast, e), lw.run(slam.gcdTime, e), lw.run(slam.cooldown, e) }
+    it(
+        "casts Slam 0.25 s and a GCD 0.25 s shorter, on a cooldown 2.5 s shorter, a rank of Improved Slam (wowsims/forever 12862)",
+        function()
+            local e = lw.env(w)
+            local slam = w.abilities.slam
+            local function fields()
+                return { lw.run(slam.cast, e), lw.run(slam.gcdTime, e), lw.run(slam.cooldown, e) }
+            end
+            e.talent = rank(0)
+            assert.are.same({ 1.5, nil, 15 }, fields()) -- no gcdTime: the "spell" GCD kind's 1.5 s
+            e.talent = rank(1)
+            assert.are.same({ 1.25, 1.25, 12.5 }, fields())
+            e.talent = rank(2)
+            assert.are.same({ 1.0, 1.0, 10 }, fields()) -- wowsims's Arms log: 1 s casts, 10 s apart
         end
-        e.talent = rank(0)
-        assert.are.same({ 1.5, nil, 15 }, fields()) -- no gcdTime: the "spell" GCD kind's 1.5 s
-        e.talent = rank(1)
-        assert.are.same({ 1.25, 1.25, 12.5 }, fields())
-        e.talent = rank(2)
-        assert.are.same({ 1.0, 1.0, 10 }, fields())
-    end)
+    )
 
     it("leaves the swing timer alone on a Slam with Improved Slam", function()
         assert.is_nil(w.abilities.slam.handler)
@@ -830,7 +837,7 @@ describe("Forever Warrior", function()
         assert.are.equal("mainhand", models.mainhand.swing)
     end)
 
-    it("registers the 52 live talent nodes with their definition spells and max ranks, and no rank aliases", function()
+    it("registers the 53 talent nodes with their definition spells and max ranks, and no rank aliases", function()
         local n, registered = 0, 0
         for key, t in pairs(TALENTS) do
             n = n + 1
@@ -839,20 +846,20 @@ describe("Forever Warrior", function()
         for _ in pairs(w.talents) do
             registered = registered + 1
         end
-        assert.are.same({ 52, 52 }, { n, registered })
+        assert.are.same({ 53, 53 }, { n, registered })
         -- Tactical Mastery, a passive: declared, and the Schema tells the belief to watch it (Engine/Schema/Spec.lua)
         assert.are.same({ id = 1310185, passive = true }, w.passives.tactical_mastery)
     end)
 
-    it("places every registered talent in a tree, 17 Arms, 18 Fury and 17 Protection", function()
-        -- the DB2's tabs (wowdb talents WARRIOR): Improved Slam is Fury's and Improved Thunder Clap Arms's, though the
-        -- pane groups them with the other tree; a Forever-only node is its section's
+    it("places every registered talent in a tree, 17 Arms, 18 Fury and 18 Protection", function()
+        -- Forever's trees (trees/warrior.json): Improved Slam sits in Arms and Improved Thunder Clap in Protection, where
+        -- the pane groups them (the DB2's tabs had them in Fury and Arms)
         local n = { 0, 0, 0 }
         for key, t in pairs(require("Forever.helpers.load_warrior").load().talents) do
             assert.is_true(t[1] >= 1 and t[1] <= 3, key)
             n[t[1]] = n[t[1]] + 1
         end
-        assert.are.same({ 17, 18, 17 }, n)
+        assert.are.same({ 17, 18, 18 }, n)
     end)
 
     it("reads a queued strike and Revenge's window at reset, leaving the stance to the Forms source", function()
@@ -1067,7 +1074,7 @@ describe("Forever Warrior", function()
                 end
             end
         end
-        for _, name in ipairs({ "execute_phase", "mainhand_remains", "stance_rage_kept" }) do
+        for _, name in ipairs({ "execute_phase", "mainhand_remains", "offhand_remains", "stance_rage_kept" }) do
             assert.are.equal("function", type(w.exprs[name]), name)
         end
     end)
@@ -1078,6 +1085,14 @@ describe("Forever Warrior", function()
         assert.are.equal(2, lw.run(w.exprs.mainhand_remains, e))
         e.mainhand_speed = 0
         assert.are.equal(0, lw.run(w.exprs.mainhand_remains, e))
+    end)
+    -- translator-5: Fury's Bloodrage line reads min(mainhand_remains,offhand_remains) (wowsims's MeleeAuto)
+    it("times the next off-hand swing like the main hand's; with no off-hand weapon that hand never swings", function()
+        local e = lw.env(w)
+        e.now, e.query_time, e.nextOH, e.offhand_speed = 0, 5, 1, 3
+        assert.are.equal(2, lw.run(w.exprs.offhand_remains, e))
+        e.offhand_speed = 0 -- a two-hander: wowsims's NeverExpires, so min() reads the main hand
+        assert.are.equal(3600, lw.run(w.exprs.offhand_remains, e))
     end)
     it("anchors the next swing at the evaluation out of combat, so its phase does not run with the clock", function()
         local e = lw.env(w)

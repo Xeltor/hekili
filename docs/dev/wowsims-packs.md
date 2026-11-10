@@ -7,11 +7,11 @@ step-by-step procedure the lanes ran is the plan's "per-spec procedure" (P1-P10,
 `docs/superpowers/plans/2026-10-19-wowsims-packs.md`). This page is what a pack author needs to know beside them.
 What only the game can answer (the in-game checkpoints and the long-term items) is in `docs/dev/ingame-ledger.md`.
 
-Two pins (`tools/wowsims/export.lua`), equal since the re-pin (e2842f0a78): `M.PIN` names the recipes, requests and
-APLs; `M.SIM_PIN` the CLI that made the logs, except the specs in `M.OLD_SIM` (the hunters, each mapped to the commit
-its log was made at, d33930d040), which lasts until the re-pin's Task 19 re-exports them
-(`tests/Forever/wowsims_pin_spec.lua`). `export.lua export <spec>` and `rerun <spec>` use the oracle CLI of a checkout
-at the pin (`make wowsims-sim-cli WOWSIMS=<checkout>`). A recipe's `siml` (a .siml build in the checkout) is converted
+Each spec has its own pin (`tools/wowsims/export.lua` `M.SPEC_PIN`, read by `M.pin(spec)`): the wowsims/forever
+commit its recipe, request and log come from, `OLD` (e2842f0a78, the 11-02 re-pin) or `NEW` (e5a9cd2a2d, the 0.7
+re-pin; moved from 4b0030a44b on 2026-11-07, CN18) while the pin moves ("Moving the pin" below;
+`tests/Forever/wowsims_pin_spec.lua` checks every log's header against its spec's pin). `export.lua export <spec>`,
+`siml <spec>` and `rerun <spec>` refuse a checkout not at the spec's pin and use that checkout's oracle CLI (`make wowsims-sim-cli WOWSIMS=<checkout>`). A recipe's `siml` (a .siml build in the checkout) is converted
 first by `export.lua siml <spec>` (`make wowsims-siml SPEC=<spec>`) to `tests/Forever/wowsims/<spec>.build.json`, which
 the request reads as its build.
 
@@ -30,27 +30,52 @@ Request edits the new sim needed (2026-11-02), none changing what an APL entry d
   the re-pin; the checked-in requests keep them until re-exported) and Shadow's hidden
   `dotExpectedDps` entry, which the proto silently drops without changing the sim.
 
+### Moving the pin
+
+The 0.7 re-pin moves every spec from `OLD` to `NEW` one class lane at a time (central need CN1). One-time setup, by
+the coordinator, before the class lanes start (only one build per checkout, never while a lane exports from it):
+`git -C ~/src/wowsims-forever worktree add --detach ~/src/wowsims-pin-e5a9cd2a2d e5a9cd2a2dfc9e29e63fd6ec1fc7245ad4b44664`
+(never change ~/src/wowsims-forever's own HEAD), then `GOPROXY=off make wowsims-sim-cli WOWSIMS=$HOME/src/wowsims-pin-e5a9cd2a2d`
+(offline; Go, protoc and protoc-gen-go on PATH; about 2 minutes). The `OLD` oracle stays in ~/src/wowsims-upstream.
+
+A class lane flips a spec, the flip and the new log in one commit (the pin spec checks each log against its line):
+1. Change the spec's own line in `M.SPEC_PIN` from `OLD` to `NEW` (the one line of `export.lua` a class lane edits;
+   the blank lines between entries keep two lanes' flips from conflicting: leave them).
+2. Fix the recipe for `NEW` (paths, talent string, options from that commit's presets) and re-export:
+   `WOWSIMS=$HOME/src/wowsims-pin-e5a9cd2a2d .lua/bin/lua tools/wowsims/export.lua export <spec>`.
+3. `make wowsims-packs && make packs`, then the spec's replay and gates, floors by R6.
+A spec flipped while `NEW` was 4b0030a44b fails the pin spec once `NEW` names e5a9cd2a2d: re-export it from
+~/src/wowsims-pin-e5a9cd2a2d (step 2; the CN18 drift report says what moves per spec).
+A flip always uses `export`, never `rerun`: requests carry no pin, only the log header does, so `rerun` would give a new log on the old request (old APL and talents) and still pass the pin spec.
+A spec still at `OLD` keeps exporting and re-running against ~/src/wowsims-upstream (pass `WOWSIMS=$HOME/src/wowsims-upstream`: the default `WOWSIMS`, ~/src/wowsims-forever, is at neither pin, so leaving it out is refused, not wrong); `dry.lua` uses one `WOWSIMS` for every spec, so once the pins are mixed the specs on the other pin print `error`; untouched. When every line says
+`NEW`, the coordinator collapses the pin: `NEW` becomes the only commit, `OLD` and `tools/wowsims/sim-pin/e2842f0a784d/`
+go, and `M.SPEC_PIN`'s entries all name one pin (the state the pin spec then checks).
+
 ### Oracle patches
 
-`make wowsims-sim-cli` (`tools/wowsims/sim-pin/build.sh`) always builds the oracle with these, then restores the
-checkout. At the next re-pin, drop each one whose reason is gone (re-export first, then rebuild without it and compare
-the replays):
-- Item db (`leftover_db.go`): the 28 items the requests wear that upstream's live-cache db regen (3e9de3f83b) dropped
-  go back in leftover_db.bin, read from `M.PIN`'s db (871, 5267, 10136, 10246, 10247, 10251, 10253, 10255, 10271,
-  11904, 13001, 13002, 13015, 13022, 13070, 13072, 13077, 13096, 13116, 14332, 14978, 14979, 271928, 271948, 272411,
-  272414, 272415, 284716: not in the live client's cache; their procs are upstream's, so Flurry Axe 871 has no extra
-  attacks). Drop it when a re-export takes gear the new db has.
-- No cast-end pick (`no-cast-end-pick.patch`): upstream 1435e39a74 (#640) picks a hardcast's next cast at the cast's
-  end, before it lands (its "Queueing up" lines), so our pinned APLs, which lack upstream's later `not(Spell Is
-  Casting)` guards, recast on a proc or stack the landing cast just spent (a second Pyroblast on spent Heating Up).
-  Hekili's next icon is computed with the cast landed, which is the right play. The patch makes the pick, its landed
-  aura reads and its mana-after-cast off (a constant, not a switch). It changes only logs with a hardcast (the casters,
-  Arms' Slam); with it Balance and Destruction replay exactly as at `M.PIN`. Drop it once the packs are re-exported
-  from upstream's guarded APLs.
-- Darkmantle set ID (`darkmantle-set-512.patch`): upstream dba41b7ac3 (#677) re-registered the Darkmantle Armor
-  reissue under set 1676 (sim/common/forever/items_sets.go), but its db gives the six pieces (22003-22009) setId 512,
-  so a rogue wearing them got no 2/4/6-piece bonus (Rogue Armor Energize 27788 and the 14049 / 18679 procs gone).
-  Likely an upstream bug (report it); the patch registers it as 512, as at `M.PIN`. Changes only the three rogue
+`make wowsims-sim-cli` (`tools/wowsims/sim-pin/build.sh`) builds a checkout's oracle with the patch set of its pin,
+`tools/wowsims/sim-pin/<first 12 hex of the pin>/`, then restores the checkout; it refuses a checkout at no pin of
+`export.lua`'s. Drop a patch from a set only with evidence that its reason is gone (rebuild without it and compare the
+replays).
+- Item db (`leftover_db.go`; `OLD` only): the 28 items the requests wore that upstream's live-cache db regen
+  (3e9de3f83b) dropped go back in leftover_db.bin, read from d33930d040's db (871, 5267, 10136, 10246, 10247, 10251,
+  10253, 10255, 10271, 11904, 13001, 13002, 13015, 13022, 13070, 13072, 13077, 13096, 13116, 14332, 14978, 14979,
+  271928, 271948, 272411, 272414, 272415, 284716: not in the live client's cache; their procs are upstream's, so Flurry
+  Axe 871 has no extra attacks). Not in the `NEW` set: at e5a9cd2a2d (item db 70862) every item the checked-in
+  requests wear (186) and every gear-set JSON item (181) is in the db; 7 of the 28 are still absent (871, 11904, 13002,
+  13015, 13070, 13072, 13116) and nothing wears them. A re-export whose gear the `NEW` db lacks fails in wowsimcli: bring it back then.
+- No cast-end pick (`no-cast-end-pick.patch`; both sets, re-cut for `NEW`): upstream 1435e39a74 (#640) picks a
+  hardcast's next cast at the cast's end, before it lands (its "Queueing up" lines), so an APL without upstream's later
+  `not(Spell Is Casting)` guards recasts on a proc or stack the landing cast just spent (a second Pyroblast on spent
+  Heating Up). Hekili's next icon is computed with the cast landed, which is the right play. The patch makes the pick,
+  its landed aura reads and its mana-after-cast off (a constant, not a switch). It changes only logs with a hardcast
+  (the casters, Arms' Slam). Upstream still picks at the cast end at e5a9cd2a2d (sim/core/gcd.go pickAtCastEnd), so the
+  `NEW` set keeps it; only the readLanding hunk moved (sim/core/apl_values_aura.go:43): upstream added a channel-clip
+  lookahead branch (`endedChannel`) before it, which is not the pick and stays unpatched.
+- Darkmantle set ID (`darkmantle-set-512.patch`; both sets): upstream dba41b7ac3 (#677) re-registered the Darkmantle
+  Armor reissue under set 1676 (sim/common/forever/items_sets.go), but its db gives the pieces (22003-22009) setId 512,
+  so a rogue wearing them got no 2/4/6-piece bonus (Rogue Armor Energize 27788 and the 14049 / 18679 procs gone). Still
+  so at e5a9cd2a2d. Likely an upstream bug (report it); the patch registers it as 512. Changes only the three rogue
   logs. Drop it when upstream's set and db IDs agree.
 
 ## The rules (the user's; binding)
@@ -92,13 +117,20 @@ Request (export):
   name in the header), `talentTree` (the wowsims tree file), `apl` (the APL JSON path in the checkout).
 - `player`: `race`, `class`, `gear` (a gear-set JSON path), `talentsString`, `specKey`, `options` (the spec's
   `DefaultOptions` in protojson: enum values by name), `profession1`/`profession2`, `reactionTimeMs`,
-  `distanceFromTarget`. Or `build`: a preset build file whose `player` is taken whole (Feral), with `gear` (a gear-set
+  `distanceFromTarget`, `inFrontOfTarget`. Or `build`: a preset build file whose `player` is taken whole (Feral), with `gear` (a gear-set
   JSON path) replacing its equipment; a build file with no equipment (Warlock's) needs `gear`, or the export stops
   (wowsimcli crashes on a player without equipment).
 - Or `siml`: a .siml build path in the checkout (the Hunters' `builds/*_weave.siml`), an export path key like `apl`
   and `build`. `export.lua siml <spec>` converts it to the checked-in `tests/Forever/wowsims/<spec>.build.json`, whose
   `player` (talents, gear, options, rotation) is taken whole; no `player`, `build` or `apl` beside it.
 - `apl` is optional when the build carries the rotation (Enhancement's `testing.build.json`, every `siml` build).
+- `apl`, `gear`, `player.gear` and `build` may each end in `.siml` (upstream's `default.apl.siml`, `default.gear.siml`,
+  a whole build): `M.request` reads it through `siml parse -json` of the CLI of the checkout at the spec's pin
+  (`WOWSIMS_CLI`, else `$WOWSIMS/wowsimcli-sim-pin`), which gives the APL, the equipment or the build as the JSON file
+  would; a `.siml` `build` takes `defaults` like `siml`. The CLI's directory must be a checkout at `M.pin(spec)`, or the
+  export stops naming spec, pin and path (the `OLD` CLI cannot parse `NEW`'s Paladin siml: flip the spec first).
+  `M.simlParse` (the parse) and `M.simlBuild` (a `siml` build over its `defaults`) are shared with `drift.lua`, which
+  parses with `WOWSIMS_NEW_CLI` instead.
 - `tank = true` and `healingModel = { hps, cadenceSeconds, ... }` for a tank spec: the player becomes the raid's tank
   and gets the preset's incoming healing, as wowsims's UI does (apply_defaults.ts). Without them the target swings at
   no one (GAP AE: the first Protection and Guardian floors were set on fights with no incoming melee).
@@ -128,10 +160,15 @@ Translation:
   so. `tests/Forever/focus_roles_spec.lua` holds every pack's tiers.
 - `requires` (`{ [action or group snake name] = talent key }`): entries written for a talent build run only once the
   talent is taken (Retribution's Twist of Light lines; Warrior's Berserker Rage, the user's ruling below). Not added
-  when the condition already has the talent test as a top-level `&` term.
+  when the condition already has the talent test as a top-level `&` term. A key naming no APL entry is an error (CN12; an omitted entry still matches).
 - `guard` (`{ [action or group snake name] = SimC expression }`): one `&(<expression>)` term appended to each such
-  entry's condition, in every list. A deviation from wowsims, so only on the user's ruling, named in the recipe and
-  under "Deviations by ruling" below.
+  entry's condition, in every list (rule 16's select lines too); a key naming no APL entry (an action, a group, or a
+  move entry `"<list> #<n>"`) is an error (CN12: an upstream rename would drop it silently; an omitted entry still
+  matches). A deviation from wowsims, so only on the user's ruling, named in the recipe and under "Deviations by
+  ruling" below.
+- `windowVars` (`{ [variable name] = window }`): an APL variable that times "since the last shot or swing", read from
+  the kit's registered window instead (rule 10: `window.<w>.up&window.<w>.elapsed<op>x`; the hunters' "Just shot"
+  from `weave`). A name the APL's variables lack is an error (CN12).
 - `condition` (`{ [action] = SimC expression }`): replaces the APL's condition of each cast line of that action, in
   every list (`requires` and `guard` still apply; an error when no line casts it). A deviation from wowsims, so only on
   the user's ruling, named in the recipe and under "Deviations by ruling" below (Balance's Innervate, R20a). A
@@ -196,7 +233,11 @@ only), `procs` (`{ [id or "id:tag"] = true }`: neither a decision nor a cast), `
 `tools/wowsims/apl.lua`'s header is the authority; one line each here, with what each leaves out:
 
 1. One line per entry; `prepullActions` -> `actions.precombat`, in wowsims's `doAtValue` order (earliest first); groups
-   -> called lists; variables inlined. Omits a prepull entry with no constant `doAtValue` or one after the pull. Each
+   -> called lists; variables inlined. Omits a prepull entry with no constant `doAtValue` or one after the pull (a time folds from
+   constants, `math`, the kit's base cast time and its unhasted GCD, each a `# Deviation:` line, and a spell's travel
+   time: the request's `distanceFromTarget` over the kit's `velocity`, its `flightTime` if it has one, 0 with neither, as
+   wowsims's distance over missile speed; translator-2: the Warlocks' Shadow Bolt / Soul Fire opener: a hardcast with
+   no aura of its own gets no guard, so in game it shows until cast and the pre-pull line after it waits). Each
    pre-pull cast (precombat and the lists only it calls) gets a guard against recasting, a mechanical derivation from
    its ability's handler (recorded once): its own aura `!buff.<key>.up` / `!debuff.<key>.up` (none when the aura's
    duration is at most the cooldown: Bloodrage), its totem `!totem.<element>.up`, else none (Charge); a mutually
@@ -208,7 +249,9 @@ only), `procs` (`{ [id or "id:tag"] = true }`: neither a decision nor a cast), `
 3. An all-empty group is an ON/OFF switch: `settings.wowsims_<name>`, its wowsims default; the header lists it only
    when an emitted line reads it (ruling L14), and the class registers exactly those (with the recipe's `settings`).
 4. `auraIsKnown`: a talent's `enabled`, an ability's `known`, else `true`; another unit's or player's aura is false.
-5. Keys from the character's ability set (kit, shared, every race): `map`, `auras`, then the set. Ignores
+5. Keys from the character's ability set (kit, shared, every race): `map`, `auras`, then the set (an ability's key
+   reads as an aura only where the kit registers an aura under it, else rule 12's nil: Enhancement's Stormstrike
+   debuff 17364). Ignores
    `includeReactionTime`, `rank` and tags.
 6. The leveling guard: a read of an unlearned ability is wowsims's nil and drops its term, as wowsims's nil
    propagation does; `tools/check_pack_levels.lua` checks every pack for it. `min` / `max` values are the engine's
@@ -228,7 +271,9 @@ only), `procs` (`{ [id or "id:tag"] = true }`: neither a decision nor a cast), `
 12. An unresolvable read drops only its branch (a deviation when wowsims has the aura or spell and the fork does not;
     each such ID is listed).
 13. `autocastOtherCooldowns` / `castAllStatBuffCooldowns`: one line per cooldown the log shows wowsims using (an
-    off-GCD one shown as soon as ready: a documented deviation). Not modelled: explosives' after-GCD timing; an
+    off-GCD one shown as soon as ready: a documented deviation). `autocastOtherCooldowns` also takes every racial
+    cooldown the class can have (not only the sampled race's; defensive ones for a tank only), each inert for another
+    race. Not modelled: explosives' after-GCD timing; trinkets and explosives of other gear (one sampled gear set); an
     unmapped item is listed, not written.
 14. `strictSequence`: consecutive lines behind `prev.1`. Deviations: nothing else is held off between members, a later
     member re-reads the sequence's condition, an outside cast of a member opens the next.
@@ -240,6 +285,44 @@ only), `procs` (`{ [id or "id:tag"] = true }`: neither a decision nor a cast), `
     setting term. Unsupported: an "is" with no field (protojson's zero value) or an unknown option value.
 17. `multidot`: the DoT's cast while its DoT has at most `maxOverlap` left, on the current target only (`maxDots` is
     a `# Deviation:` header line per entry; no `cycle_targets`: other targets' DoTs are not readable on Forever).
+
+The second translator lane (0.7): `spellIsChanneling` is `action.<key>.channeling` for a kit ability declared
+`channeled`, false for any other (CN14: Affliction's Siphon Life line); `frontOfTarget` and `targetIsMobType` fold to
+the request's constants, `inFrontOfTarget` (absent: false, behind the target) and the encounter target's `mobType`
+(absent: unknown, so every type test is false), each a `# Deviation:` line where its entry emits, since the client gives
+no facing and the target's creature type is not read (CN16: Subtlety's Ghostly Strike, Fury's Dragonkin/Giant Spearing
+Strike weave, which folds false on the Mechanical target); `autoTimeToNext` MeleeAuto is `min(mainhand_remains,
+offhand_remains)` and AnyAuto adds `ranged_remains` where the kit registers it (translator-5: Fury's Bloodrage,
+Enhancement's AoE Chain Lightning; a hand with no weapon reads 3600 s, never; a kit without both hand
+clocks leaves the entry unsupported). The weave's `wait` rows stay omitted (CN19): a `wait X if C` holds wowsims's
+rotation for X, but the engine already times each line at its own ready moment, so a hold for the GCD (weave #2) is
+what it does anyway, and a hold for Strider Kick (weave #3) only matters against a line below it in wowsims's order
+that is ready sooner: those are the move arms of weave #4/#5 (with the Movement toggle on), which rule 19 places at
+the weave call, where its held-gate carry (lines whose entry comes after the call) does not reach; a hold would need
+that carry extended. The display difference
+the re-pin triage found (Immolation Trap shown where wowsims kicks, repin-triage-report.md case 1) is not reproduced
+by a hold: the trap's own line ranks above the weave, so its cause is untraced (the walk-in Hekili does not forecast is
+the candidate); a deferral, revisited with a traced tick.
+
+Upstream's newer values (CN4): the "on all/any targets" aura and DoT reads are the current target's, each a
+`# Deviation:` line; of the current target, "is active" is true, "time until active" 0 and "time until it dies"
+`fight_remains`; `numActiveAdds`, `remainingCastTime` and another target unit are unsupported.
+
+`spellExpectedDpet` stays unsupported (CN5, L84). wowsims computes it from the spell's own damage formula, at the
+fight's remaining time (sim/core/apl_values_spell.go `GetFloat`, upstream 4b0030a44b):
+- the expected initial and tick damage, which needs coefficients, spell power, the target's modifiers and crit;
+- the hasted cast and travel time;
+- the ticks that land before the fight ends: 0 once the cast would land after the end.
+None of these is available to Hekili. The kits model no damage (the drift report's "the kit does not model damage",
+per spec). Damage and attack speed are secret in combat on Forever (probe 2026-10-13). The fight's
+remaining time is unknown in game (`fight_remains` 3600, gap AN). So a translated DPET would be a constant guess
+dressed as wowsims's value. The entries stay omitted, and a spec that needs their effect keeps a recipe stand-in by
+owner ruling:
+- SM Ruin's DoT lines (R49): cast each DoT when it is down or within its cast time of falling. They keep the DoTs that
+  wowsims's DPET keeps up, but not its "stop refreshing in the last seconds", which needs the fight's end.
+- At upstream 4b0030a44b, Shadow's preset un-hides its Starshards line (`spellExpectedDpet(Starshards) >
+  spellExpectedDpet(Mind Flay)` with Mind Blast at least 4 s away). Its re-export gets a new `# Omitted: default #11:
+  spellExpectedDpet`. Whether it needs a stand-in is the Priest lane's question for the owner.
 
 Any node the translator does not handle is unsupported (rule 2): a new wowsims node omits its entry rather than
 mistranslating it.
@@ -270,10 +353,19 @@ Each is the user's ruling, recorded with its reason; the recipe header names the
   breaks Prowl) behind Ravage while Prowled. No 'behind the target' signal and no fallback timer: Ravage stays the
   first icon while Prowl is up and the target is in range; Prowl ends when Ravage lands or the player attacks. The
   replay and loop worlds do not know Prowl or Ravage, so they do not see the deviation (unit-tested in druid_spec).
-- Rogue Combat, Riposte (owner R70, 2026-11-06): "add it to the apl and make it focus=1". A recipe `extra` line before
-  Ambush: `riposte,use_off_gcd=1,focus=1,if=buff.riposte_usable.up&energy.lo>=action.riposte.cost`. wowsims never plays
-  it (no parry on us in its fight), so it moves no replay or loop number; the window is the kit's `riposte_usable`
-  (Rogue.lua, from the client's usability answer; a window migration is planned, L138). Not checked in game.
+- Rogue Combat, Riposte (owner R70, 2026-11-06: "add it to the apl and make it focus=1"). A recipe `extra` line before
+  Garrote (the first line left once the new pin's APL dropped its Ambush opener: re-anchored, L143):
+  `riposte,use_off_gcd=1,focus=1,if=energy.lo>=action.riposte.cost`. The 5 s parry window is the kit's registered window
+  `riposte` (Rogue.lua, evaluator = the client's usability answer: L138 migrated), which Riposte's own `usable` reads, so
+  the line carries no window term (a recipe `extra` line cannot name a kit window: the translator treats `window.X` as a
+  sequence's). wowsims never plays it (no parry on us in its fight; at 4b0030a44b the Combat SS build does not take the
+  talent), so it moves no replay or loop number. Not checked in game.
+- Priest Shadow, Starshards (owner 2026-11-07: Starshards by user preference replaces spellExpectedDpet default #11): upstream's
+  default #11 casts Starshards when its expected damage per execution time beats Mind Flay's and Mind Blast is 4 s or more from
+  ready; the translator cannot compute the first term (CN5). A recipe `extra` line before Mind Flay,
+  `starshards,if=settings.prefer_starshards&(!action.mind_blast.known|cooldown.mind_blast.remains>=4)`, with the class setting `prefer_starshards` (off by
+  default, no `sim` default, so the default pack and every number are as before). Only matters when Starshards is known (the
+  Night Elf racial). The Human replay and loops never cast it. Not checked in game.
 
 ## Pack notes
 
@@ -369,3 +461,19 @@ start outlives the fight. That order is UNMEASURED (in-game ledger CS1): the cli
 INTERRUPTED when the target dies; the belief handles either. An unmapped item's use in a replay log is still our cast
 to the client: a success of spell
 `replay.UNMAPPED_SPELL` (0, no ability's), which `Events/Rows.lua` reads as "an outcome now may be that item's".
+
+## Talent tables (spec detection)
+
+Spec detection counts the live rank of every node a kit REGISTERS (`spec:RegisterTalents`, `ns.TreePoints`), so a missing or
+mis-filed node moves a build's points between trees. The kits' tables follow Forever's tree, `ui/sim/talents/trees/<class>.json`
+at the pin (generated from the game files; checked against one Warrior `/fprobe export` of 2026-10-15 only, so a fresh export
+per class would confirm it). Copies live in `tests/Forever/fixtures/talent_trees/`.
+
+- `WOWSIMS_TREES=<dir> .lua/bin/lua tools/wowsims/talents.lua all|<class> [--write]` prints or rewrites each kit's table: tree
+  = the JSON's order, a spell id the kit has keeps its name (code reads `talent.<name>.rank`), a row named like an unmatched
+  node is that node under its new id, other new nodes are snake_case(fancyName), rows the tree lacks are dropped unless
+  `M.KEEP` (in the generator) lists them because code reads them. `--write` also refreshes the fixtures. Re-run it on a re-pin.
+- `tests/Forever/talent_trees_spec.lua`: every node registered with its tree and max rank, every `talent.<name>` the kit and its
+  packs read is registered, and for every recipe's talent string (decoded as `export.lua`'s `M.talents`) the counted points per
+  tree equal the string's own. A pack line that reads a talent its own build does not take (a wowsims line gated on a
+  talent) is not an error: the translation keeps the sim's condition.

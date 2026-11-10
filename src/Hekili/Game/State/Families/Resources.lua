@@ -1567,6 +1567,8 @@ I.On(Obs.PlayerHit, function(o, t)
     local kind = o.a
     if kind < I.HitKind.WOUND or kind > I.HitKind.MISS then
         return
+    elseif kind <= I.HitKind.BLOCKED and o.b < 0 then
+        return -- a wound's secret amount (b = -1, Sources/Player.lua): its rage is the estimate path (L128), not built
     end
     for r = 1, R.n do
         local f = R.taken[r]
@@ -1864,7 +1866,7 @@ function VS.Power(powerType, now)
 end
 
 --- (stepped-decay design §3.3) The time of a power type's last stepped decay quantum, the anchor of the sim's
---- `__decay` entry (Engine/Schema/Spec.lua): 0 while its decay is inactive or continuous, or the type untracked. Allocates nothing.
+--- `__decay` entry (Engine/Schema/Spec/Regen.lua): 0 while its decay is inactive or continuous, or the type untracked. Allocates nothing.
 function VS.DecayAnchor(powerType)
     local r = R.slotOf[powerType]
     local n = r and R.decayNext[r] or 0

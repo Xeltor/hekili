@@ -9,7 +9,7 @@
 -- `known = false` and unlisted: a priority naming any race's racial reads `action.<racial>.known` false instead of
 -- indexing nothing; its modifiers stay inert.
 -- Abilities and auras go to the shared `all` spec (over `all`'s own entry for the same key), and ns.applyRace writes
--- them over the class's after Engine/Schema/Spec.lua's merge (which takes the class first and only adds missing keys), so a race
+-- them over the class's after Engine/Schema/Spec/Activation.lua's merge (which takes the class first and only adds missing keys), so a race
 -- registration wins a key clash with the class and with `all`. Resource and cost modifiers go to `ns.raceMods`, one
 -- declaration read by two layers:
 -- VirtualState's belief (Game/State/Families/Modifiers.lua, through Tracked.lua) and Hekili's simulation (below).
@@ -39,7 +39,7 @@ local function own(kind, key)
     end
 end
 
---- Engine/Schema/Spec.lua's SpecializationChanged, after merging the specs: the race's abilities and auras win over the class's.
+--- Engine/Schema/Spec/Activation.lua's SpecializationChanged, after merging the specs: the race's abilities and auras win over the class's.
 function ns.applyRace(class)
     local spec = all()
     for kind, keys in pairs(owned) do
@@ -78,9 +78,11 @@ function Race:RegisterResourceMod(def)
     end
 end
 
---- { aura = key, pct = n | flat = n, charges = k | nil, spells = { spell IDs } | nil }: an ability whose spell ID (or
---- one of its `copy` ranks) is listed (every ability paid from the resource when `spells` is nil) costs less while the
---- aura is up; with charges, each such cast whose declared cost is above 0 takes a stack. Also a class file's
+--- { aura = key, pct = n | flat = n, charges = k | nil, spells = { spell IDs } | nil, unless = key | nil }: an ability
+--- whose spell ID (or one of its `copy` ranks) is listed (every ability paid from the resource when `spells` is nil)
+--- costs less while the aura is up; with charges, each such cast whose declared cost is above 0 takes a stack. While
+--- the player's aura `unless` is up (as the cast starts: another modifier's spend in the same cast never decides it),
+--- the modifier neither prices nor takes a stack. Also a class file's
 --- `spec:RegisterCostMod` (Engine/Schema/Spec.lua): the class file has returned for any other class, so its append is the player's.
 function ns.RegisterCostMod(def)
     mods.costMods[#mods.costMods + 1] = def
@@ -92,7 +94,7 @@ function Race:RegisterCostMod(def)
     end
 end
 
---- { resource = key, aura = key, mult = n | spirit = m | share = s | mp5 = x }: a regen entry (Engine/Schema/Spec.lua's
+--- { resource = key, aura = key, mult = n | spirit = m | share = s | mp5 = x }: a regen entry (Engine/Schema/Spec/Regen.lua's
 --- rate fields) on the class's resource `resource` while the player's aura `aura` is up; a class without that resource
 --- ignores it (Tracked.lua). The belief's only: the sim's forecast reads the belief's rate.
 function Race:RegisterRegenMod(def)
@@ -161,7 +163,7 @@ function M.Apply(cost, a)
     local buff = Hekili.State.buff
     for i = 1, #list do
         local m = list[i]
-        if buff[m.aura].up and inScope(m, a) then
+        if buff[m.aura].up and not (m.unless and buff[m.unless].up) and inScope(m, a) then
             if type(m.pct) == "number" then
                 cost = cost * (1 + m.pct)
             elseif type(m.flat) == "number" then
@@ -172,9 +174,11 @@ function M.Apply(cost, a)
     return cost > 0 and cost or 0
 end
 
+local held = {} -- M.Spend's per-modifier `unless` answers, decided before any stack goes; grows once, to the list's size
+
 --- Ability `key` was cast in the simulation with declared cost `base` (ns.spendResources, before any discount): when
 --- `base` is above 0, a stack of each charged modifier in scope whose buff is up (gone at the last), even when the
---- discount brought the paid cost to 0.
+--- discount brought the paid cost to 0; a modifier whose `unless` aura is up as the cast starts takes none.
 function M.Spend(base, key)
     local list = mods.costMods
     if #list == 0 or type(base) ~= "number" or base <= 0 then
@@ -186,8 +190,12 @@ function M.Spend(base, key)
         return
     end
     for i = 1, #list do
+        local u = list[i].unless
+        held[i] = u ~= nil and state.buff[u].up or false
+    end
+    for i = 1, #list do
         local m = list[i]
-        if m.charges and state.buff[m.aura].up and inScope(m, a) then
+        if m.charges and not held[i] and state.buff[m.aura].up and inScope(m, a) then
             state.removeStack(m.aura)
         end
     end
@@ -216,7 +224,7 @@ local function shadowCheck(a, base, cost, resource)
     end
 end
 
---- Engine/Schema/Spec.lua's RegisterAbility: the ability's `spend` answers through the modifiers; `baseSpend` keeps the declared
+--- Engine/Schema/Spec/Abilities.lua's RegisterAbility: the ability's `spend` answers through the modifiers; `baseSpend` keeps the declared
 --- cost (VirtualState's belief applies the same modifiers to it itself). The answer is memoised per ability while the
 --- state's mutation count (`state.changes`: reset and every mutator in Engine/Sim/State.lua) and query_time stand: a
 --- cost-mod aura applied, consumed or expiring in the simulated future, the offset or delay moving, a form or stance

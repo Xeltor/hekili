@@ -117,7 +117,7 @@ describe("ns.Facade", function()
             assert.is_function(entry(n), n)
             assert.is_string(Facade.Why(n), n)
         end
-        assert.are.same({ passthrough = 119, hybrid = 42, virtual = 26, display = 3 }, count)
+        assert.are.same({ passthrough = 120, hybrid = 42, virtual = 26, display = 3 }, count)
         assert.is_nil(Facade.Status("NotAGameFunction"))
     end)
 
@@ -324,20 +324,25 @@ describe("ns.Facade", function()
         assert.are.equal(fs.SPENDER_A, found)
     end)
 
-    it("C_Spell.IsSpellInRange asks by the known rank's ID; a secret answer is nothing (read as in range)", function()
+    it("C_Spell.IsSpellInRange asks by the known rank's ID; a secret answer is nil, true (read as in range)", function()
         local asked
+        local function all(...)
+            return { n = select("#", ...), ... }
+        end
         answers["C_Spell.IsSpellInRange"] = function(id, unit)
             asked = id
             return unit == "target"
         end
         ctl.known[fs.SPENDER_C_R2] = true
         ctl.Fire("SPELLS_CHANGED")
-        assert.is_true(Facade.C_Spell.IsSpellInRange(fs.SPENDER_C, "target"))
+        assert.are.same({ n = 1, true }, all(Facade.C_Spell.IsSpellInRange(fs.SPENDER_C, "target")))
         assert.are.equal(fs.SPENDER_C_R2, asked)
-        assert.is_false(Facade.C_Spell.IsSpellInRange(424242, "focus")) -- untracked: its own ID
+        assert.are.same({ n = 1, false }, all(Facade.C_Spell.IsSpellInRange(424242, "focus"))) -- untracked: its own ID
         assert.are.equal(424242, asked)
-        answers["C_Spell.IsSpellInRange"] = nil
-        assert.is_nil(Facade.C_Spell.IsSpellInRange(fs.SPENDER_C, "target"))
+        answers["C_Spell.IsSpellInRange"] = function() end -- the client's plain nil: nil alone
+        assert.are.same({ n = 1 }, all(Facade.C_Spell.IsSpellInRange(fs.SPENDER_C, "target")))
+        answers["C_Spell.IsSpellInRange"] = nil -- secret
+        assert.are.same({ n = 2, nil, true }, all(Facade.C_Spell.IsSpellInRange(fs.SPENDER_C, "target")))
     end)
 
     it("returns the same two GCD numbers for the GCD spell and a GCD-locked spell, surviving the round trip", function()
@@ -481,7 +486,7 @@ describe("ns.Facade", function()
                 local src = assert(io.open(file)):read("*a")
                 assert.is_nil(src:find(retail, 1, true), file)
             end
-            local spec = assert(io.open("src/Hekili/Engine/Schema/Spec.lua")):read("*a")
+            local spec = assert(io.open("src/Hekili/Engine/Schema/Spec/All.lua")):read("*a")
             assert.is_truthy(spec:find("global_cooldown = {\n        id = ns.GCD_SPELL,", 1, true))
             assert.are.equal(29515, I.GCD_SPELL) -- the belief's copy; the engine's is ns.GCD_SPELL (Constants.lua)
         end

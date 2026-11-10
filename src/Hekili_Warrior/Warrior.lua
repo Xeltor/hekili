@@ -779,20 +779,19 @@ end
 -- A short, bounded memory per unit. An immune result can come from a temporary buff.
 local rendImmuneTargets, rendImmuneUntil = { false, false, false, false }, { 0, 0, 0, 0 }
 local nextRendImmune = 1
-local DISARM = 676
-local disarmImmuneTarget, disarmImmuneUntil
 
 spec:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED", function()
     local _, subtype, _, sourceGUID, _, _, _, destGUID, _, _, _, actionType, _, _, spellMissType, blocked =
         CombatLogGetCurrentEventInfo()
 
-    if sourceGUID == state.GUID and subtype == "SPELL_MISSED" and spellMissType == "IMMUNE" then
-        if rend_ids[actionType] then
-            rendImmuneTargets[nextRendImmune], rendImmuneUntil[nextRendImmune] = destGUID, GetTime() + 30
-            nextRendImmune = nextRendImmune % #rendImmuneUntil + 1
-        elseif actionType == DISARM then
-            disarmImmuneTarget, disarmImmuneUntil = destGUID, GetTime() + 60
-        end
+    if
+        sourceGUID == state.GUID
+        and subtype == "SPELL_MISSED"
+        and spellMissType == "IMMUNE"
+        and rend_ids[actionType]
+    then
+        rendImmuneTargets[nextRendImmune], rendImmuneUntil[nextRendImmune] = destGUID, GetTime() + 30
+        nextRendImmune = nextRendImmune % #rendImmuneUntil + 1
     elseif
         sourceGUID == state.GUID
         and subtype:match("_MISSED$")
@@ -881,7 +880,7 @@ local function interruptReadyTime()
         and casting.v2 == 0
     then
         -- Forever hides the end time. Stop a leveling cast as soon as the interrupt is ready.
-        return 0
+        return state.spec.protection and state.cooldown.global_cooldown.remains or 0
     end
     return state.timeToInterrupt()
 end
@@ -1228,7 +1227,7 @@ spec:RegisterAbilities({
     },
 
     disarm = {
-        id = DISARM,
+        id = 676,
         expects = "debuff", -- no damage (DB2, wowsims): its ticket takes its own avoid only
         missable = true,
         cast = 0,
@@ -1242,7 +1241,7 @@ spec:RegisterAbilities({
 
         startsCombat = true,
         refundOnAvoid = true, -- wowsims disarm.go; DB2 Discount Power On Miss
-        known = knows({ DISARM }),
+        known = knows({ 676 }),
         toggle = "defensives",
         form = "defensive_stance",
 
@@ -2020,6 +2019,60 @@ spec:RegisterStateExpr("prot_leveling", function()
     return level < 60 and state.prot_adventuring
 end)
 
+-- Session-only observations. Keep a bounded set of NPC types that actually cast.
+local casterIDs, casterSlots, nextCasterSlot = {}, {}, 1
+local CASTER_SLOTS = 64
+local function rememberProtectionCaster()
+    if
+        not state.spec.protection
+        or not isPvE()
+        or Facade.UnitCanAttack("player", "target") ~= true
+        or Facade.UnitIsPlayer("target") ~= false
+    then
+        return
+    end
+    local id = state.target.npcid
+    if id > 0 and not casterIDs[id] then
+        local replaced = casterSlots[nextCasterSlot]
+        if replaced then
+            casterIDs[replaced] = nil
+        end
+        casterIDs[id], casterSlots[nextCasterSlot] = true, id
+        nextCasterSlot = nextCasterSlot % CASTER_SLOTS + 1
+    end
+end
+spec:RegisterUnitEvent("UNIT_SPELLCAST_START", "target", nil, rememberProtectionCaster)
+spec:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "target", nil, rememberProtectionCaster)
+
+spec:RegisterStateExpr("prot_bash_reserve", function()
+    if combat == 0 or not state.spec.protection or not state.toggle.interrupts then
+        return 0
+    end
+    local casting = debuff.casting
+    local knownCaster = casting.up and casting.v2 == 0 or casting.down and casterSlots[1] and casterIDs[target.npcid]
+    if
+        not knownCaster
+        or not state.prot_adventuring
+        or not equipped.shield
+        or not (buff.defensive_stance.up or buff.battle_stance.up)
+        or not action.shield_bash.known
+        or cooldown.shield_bash.remains > 1.5
+    then
+        return 0
+    end
+    return action.shield_bash.cost
+end)
+
+spec:RegisterStateExpr("prot_current_rage", function()
+    -- An icon offered now must leave the reserve even if another swing is forecast before it.
+    return min(rage.lo, rage.actual_lo or rage.lo)
+end)
+
+spec:RegisterStateExpr("prot_threat_spend", function()
+    local _, instanceType = Facade.IsInInstance()
+    return instanceType == "party" and not solo and (query_time - combat <= 3 or state.threat.lost)
+end)
+
 spec:RegisterStateExpr("prot_charge_range", function()
     return not action.rend.in_range and C_Spell.IsSpellInRange(CHARGE[1], "target") == true
 end)
@@ -2028,17 +2081,9 @@ spec:RegisterStateExpr("prot_melee_target", function()
     return target.within5 and not target.outside5 and target.creature_type ~= "elemental" and debuff.casting.down
 end)
 
+-- Saved priorities can still refer to this condition. Humanoid type cannot establish weapon eligibility.
 spec:RegisterStateExpr("prot_disarm_target", function()
-    if not state.prot_melee_target or target.creature_type ~= "humanoid" or boss or target.is_boss then
-        return false
-    end
-    if disarmImmuneTarget and disarmImmuneUntil > now and Facade.UnitGUID("target") == disarmImmuneTarget then
-        return false
-    end
-    local classification = Facade.UnitClassification("target")
-    -- The client does not supply an NPC's weapon here. Use the dangerous melee cases from the leveling guide.
-    return active_enemies > 1
-        or (not issecretvalue(classification) and (classification == "elite" or classification == "rareelite"))
+    return false
 end)
 
 -- Keep the original condition available to saved custom priorities.
@@ -2193,8 +2238,8 @@ spec:RegisterSetting("maintain_thunder_clap", false, {
 -- /hekili priority <name>.
 spec:RegisterPack(
     "Protection (wowsims.com)",
-    20261110001,
-    [[Hekili:TVvBpUTns4Fl7x8zJM41E315scIdqstlAoK2RiU463Smxj618SSOosQ13EWW)2VziLTOOeLLCCYvGROOj2sKZ8mdN34mXZhp)3MplIOOZ)LBgDZlgpE8OrJgpFM6Pu68zPKW1KhGpKq2a)5Vk4kAOIXt2VO)w(wjBJCyiFZaCLpfZjri1UpJfR(yY87RLWYuA48z)(7(8N)4F)ZVo9ifNpBflkIA2gvg2a3E9(fQv09lYF21l5c6JuX(fr0LKSy1(fV7x)0(fWJ3VOerYyxJSxE9wIqW4IRly)1K0y515eyi8LH)tjpzWZawjijYyqqIGpZrwZK7xqII4j)f4dRPpjhUFXhikYRRbs9)5p(BarwPuPYxF91pWuRYUhLIRDw6aGMaYPtiVkm6gYnrldbY(9CECeFBIe59dpedsnOMOsGvFMQiXmccEGbFGsuR2V43zYvW3MTLstzjpaFsjyRPiGtIYvBcsiJedpQ)7J5C4P)yM4jytVNkKuXAyBWx(HmbDnb)qCwcff0pXEyLAaIPyIuYcrDlBdr80(fHeq7kxX3UFrmF7ZxrjXiyaTjnrYEezpiIWA2Uc)tnkcJz0evU4SFXt8mqBz2jWJFc(Gg)PCuaHfKjP578dwK1OuGn8jGbMDWtP463Yqi89RiIhO5spqcP12rLdjjKEyTeugy04iGC)dsYdzebSPyQYaVcIHlNNbyxULKAuZsnLKLaIHDFgLCnewQqdcGl3hZdxdQ2iEe(c0mnfmiFkhMljpYfWoNPbd83XKnWQ0ivJdT6MSemCG3Yudlw67rkNtMiYgW195cAuwObJiOL50F)In0ykqX0S4yPnjiYvO8WtLiNK4oyjOvdifW6(4sKNW)JNjjKhjSyY9X0NH2QjHzGLb6Qbaz7b7cGuAXgjgkh6VKWtE(9CP8OErlzXuIijxM(atseBmmIyzmL7yhH4rWZG3UkBdjHZIQitVtHKeop2V4fJYTEaFUmWBMlqBAJoc2agnGPGtafr7TWbpsGa)qckB7x8ZewIIGQHpq3WfGT5)X4DzSdWWcA7tgQTs4IneGLBWnrtmMyGjbDieMuWxYIHqPeDuh5WubfcgCprn9OagymMEgqXa(YLbpegnD8ZylNIrRcirG9Kkta8Vx(oh1t)MqT5zG(GQh9FLXstPrdnM09GyfW2g(yUD9qQwYI6zWXqZEhUobI1aK1e05Wtfus0t9U6(SLlh6IYHzP5VbqIk2(Xcq1omM)MPMhfGFpynnvT)Vvr6)UPxxA)FzcFxfQkq)kFQRoktgE9fjmEuwyKBK5vPD)R00iopo0o93oU(ajzjDqZNaOrnsPYkh8PGU5So88OM7Fv(jvfRk9z2oVMCd6vwiRhucRmKiiAXwoTtOF3axfVJlyHs))hD1pTnsxe5Ukkxsh8lSBT2onCDmvkdKBHnjTFL5in4EiPCdm4TJGdDG0QHyPjSKjO8P)oMXhkWAsViQwrG5GH9HQaNN84nthzZ50Snq20VXmn8yjeyeRTTwd3cSKxPiMswiYsvYgqxzumeTQadjOALJKLjd0F)yemRdQdbVQ5nABYDvvcJhuqjJI3Hi5p0)(T1Iq95kTTEKJcmIjtJjpfCpfeRP3nQiEwXwkfxoh7BjXXLcjB)CiACnwS4RC43Ttk4xzcuWqlCyZVsWRm7u8ekuq4ghMnzKjxyxO7xOCdXyOIGWm4wu)VgmM7rP1nnAcC7i3DbgubM7C1cBhVEJ2u9St2bo1UP28MyQuEg)1gvkbDbBYv0cZv1YZNutDtLel91tAg(63ywyGjWrVRO)BAyMIgKUIiPhI4ywJoqtzvhCP(GTWD6lfKeoWdmFniMjvpdBoZ0WOGdxSVM8h6BCwTuX8SDVfop313OCZvcbzsmHyjNZs6NDhZ3E4XckEJh5BMoE4Kbd8wIgGQhzHWfWEkqKbP1wYHGTnE8CIq71vJXHsy9qXQf2wv1xCpVcY1xsvymx5Wn53imO6c3vIPGJSpXYKrQOljLf0XJCLu8j1B(ubdMCw9r5bCtOj0nmQ8TJnqtFl5CdYbLIBOwLLeHbXIjPD1FPe4FPl2F5bSAZcFOSFfy27kW)qIYMqfGxVFqDjDKXKnFrWUM6g85w41()TJ2D0TQCeCeEqXfs135Ge8zdkxrO(fxwFJMJf0AJ0QNn2zJ0up)C1NMRY5Tvyih1aucZf(8m3qAnlnajVhpk8vvIjinwUab4IloSkdJ(91We7LzWwUas95y)FaO2yAiKomCnCBJJ6ZBMmyx)(x5qRDvCM8tT3mPSNwymL8OBMvJz6nxADIRDspl7KY1Ti4SqOyaSv3DgADdfthJNn1jn2gX7QpNPDQ0Jf)v2ECGtGT8g5NlCYQ(TUkPMcN7S2BQ0YIAr9PIm5ppVty5UZnFfk4NL6c2GtsHS0n2b7z4g)5AXoOIgFgQOlyPd(ZVFSyRx0qDwUcxDPGTiu3fv3YTQwxvrrHJQlYE)RSd4Ql2SpyEVcUeuGmLsJMIotopPYvJ0jwDQk1(vhYmNxzkusw7e1A0iooRnLEOFdbv1rLpFzO241wQ6b1b9tDy2YWO9ReqSiDZOZHVNkLsL6dlfQ9myydxq8q7)E1Ok0v)nV9rV46xt1Rjyjou1s0VUfJOPySRTz5uZGzB1sXr3kH7i(WkL7gMp7rGVWECgppEHsjof)ckbF7x0)ZeiVhPZF)8zwudFz(4SMpRq2NRak32DDufG762wUlJMa3XDTDhwkK54)nlFG)DreD7(aOQemfvWi6X712ga)h6223PdpBQEUkJUkKxGg63ftndcotHRol0de2P1)4sN4zPw9rUfaPff22QUZJi6fEqKPP0FJbZFTThzLBI)LbLFZhIqdtrOlJrO(5iulfqD8lD0XL69lympYwB2XbiuFZR9FowqyezVQzKD7Kk(lihQc3wp)HA7npIKXJAgktgzbLddPWgiDKNNHofrPBwTMqP9em(2JuD(gxRa3Zxl4AnJdBjejLBy9gTF9gnWVnz5bLOzzBlb5mQEOlZbrJf3minwSMGutITw2aNAkjwdaFjmmJ5ODIS(nDC2jAM7MGOqZFyyk6L5gJ7yEdNPRykjoW8pawRIIrA4gnYNI2U3OLCSSN)sNhatxNaJUOo3OwN8G)ePeles7E1mFM((BOsazQBqOJgGwDkOfqPA3foCOFJBXQfh6UDoPK(Vv9K5pYZZPUb6OviUHapOqS79tlu5162FbN0t7g1JwI8vcTvtsUicuxMbutdb68McKwuDdGFsPQ1oP58YX)0nEDxJJ1AhIQh22Ld0MzhvD4rLMEKwC8LbaBzxlG9zzI0XXkPXPVuq2D17RgE)QnVP6g4uxN4Kw94MD9RJIW1EYU5IhDtUPH7zQ7EPUzcx6CRN3ON6YSNQo8P2iYLAuSwYBBVZChNLToY9GqtyF519LgZHivNWLN2dRzMBotRlnwUqQMdNEBhZu1fi6pZGpi6VSSB9vMU1m00RZx80sdvtVsFr0A5Xv1PT1KUWn(WbM91OMVZyqCigVZnKWPuiDCcDnOEURRfDxT6ARbkPPOpNr38QTAOEDAQETyKy1owV2oxVQd2tlW(kI2xc6gN4xJJ8Rfc4zmZVMmpCdszjfvs704a(8XKZjrYD(JV1XPa(fGQIm6312cJRTtknmlXAhM4C9ePo(Rrz(FotQ)CMuniJx8zs1jJ72Ar7DCw(sdDv18qM2A2AFrFN9EoLo1pcT2)RqdrP)7EE83IwdvTPQo7LZXL3VtxLJn3FKAZZhmojtTctU9t01Sy2(f9)X8FM66xp))c]]
+    20261110002,
+    [[Hekili:TZvBpUTns4Fl7x2Zgn1R9(sUKG4aKxArZH0CbR7D9BwMReTTollPJuA9Thw4F73mKYwuuIYK2A3gGROOjwYIdFMhoZWHJM4PJM(BtNeqYOt)6LdV8LJgnA4WHxoDs2dP0Ptsj(RilGpetwd)53yjzu)SWK4TZ6TjzdpCnFGFY6(4t(qucjaL2D5HrzFoE6DnkyEk1F6KF)93E7N)73(M09sC6KLHbbu5WOC)wMT3SDw2s62zf37I5jm69u22zb05K8OSTZE)3(Y2zWT3oRIqYdVaNE(fBimwyc7IYP)csAe)IcbmaUyW)INe3)fWuXiX8iqrcGpNGtDiF7msqqs8Fb(Wk6d8bBN9jsg5nnaPE)6N)nqilZYs5V5IlweMTm)oulUq7r7dYeqo9gYR9dUKCzWCFqSFmjjkiztmhN7flIaTgOjkhMQBPzKOqccEyc(eLKTC7SFpKVeUAYgknnmEb8Pmw4kkc44GcAJr8djrWT69HOKe4U)Co7byqFGY4u2kyyWf)uoJUIGFikpMIk6xcxSmRpIPicNh6JCB4Ac7HTZ8ja7YxMSz7SOKn)4skjcbdWM0yE4940dQi8mBwI)Paf(rH04Sc1z7ShsYb2sosyo(f4dc8NMGki8a5CAXi)KIyLKcmGVatGCejPu853eIq4JljSf0cThebxz4i5qI9P7EwcQdH0OaqC)ts8ICcdguentcVsHHpEsoGD(gsQKM5cjXRae50DlQ5cimpdniGz5UOe)va1gKeGFbAMMcgKpuaZ5K7tyWiNiad83rK1WtjqQahc6MmhmCGVnmBq5J(buYfIjGSgCD)rgni3xIre08c5VD2AAefKyAEuexvee(suFss54mXXregJwnGwap3NNJZj8)4Asm5Esye5Ui6lqB1y)CWYaD1aGSzNDbikHAJcd1dXfXjX)4DjC(EErOzruclUqNu9Cz01013rrw5RF7JWYoeDcx9xIUms5kDlbkxcabfWjcJKBjinlchiyUuWTN4Vu6FOO2OBCoOLjcBugffEgr49KIHlcZEqIFHziANHahfR0UwQcjOHkzXcwciV)bEXNc5egSeUMeNtIIW15fKWye1Giwhs5kMGbIhgPu4MusAsmiM3NHCdyyTD2lhwm)qWJCiSucdDoLl2Q4Sa4jqOfqa)uSuI)kmVzeC98t01jmWj7)wqdcdAm(MWrlex2JtaGeH4ggenw6Ra220bq8EwY8WiypbIyjIpiLrHOA3rYgV3T3t6v8cqIEjZN7TWpy8OxeoFmg21Jeaogz5my(pVyKdpx8n(c)mpHf350)DEyAknyG038CiOhmSb3x4GoGk0SGZL4yGCSdwfdbnbXkJEU7UWsAWdNF2D5ZNpqhLdYtl(gajzrQ3Mbu7GOK3owElp8AVv00ST)TAA)pm(IkJ)0uExvQAq)mt0LJ6KCUojLXazHBbHtEDz37mHmIkcO(O4Q9pVhNmN2V9va0OgLuvYbVlYn9KceC89yuyNV7PJhkNe)Cgd0ibP8UXflcvgUFcp7hQn(dahdgegw66DwXexZsvyh8OrZ4(NxL4AgumL0hqqyXqoSJTzxl9ftn36sM7)hdFCyBexuzxvLUmOrhhQqyN6Vkc2v3JVbgex9RKlPcpWwMG3new0brNna3Jnm(gu)exJPdbzFEZ5bubrGjsaJdPaT7C)LJhQoZP5RH0NEMNu)95xHrb3yndBbwksJg3MNXYtZ4TGUQOyaAvbgsqQC7fBi3tC9(iyklu7cE1W3iSjFSojmQFPKKeVMqkUP5XRYIWHxYe26bAeiK4vAe5bV7OGAn(6HLXZkhsL4YfyFdKsxLqYQ3hIg3Gfl(vAZ3v3uoFvfq5eQGd15Rc8QoDzjXuiV31At2ndL7V6ICpr9gIXqz4gRC6F0GrEitb30QjWvd1hfyq5jpqQf2og9gvL6rVzh4uRV1MXnMQSpJ58TQSbD50uq0m55yl2pPHCXQQwKSLEBcLbMDmrRYbFW0SWOIWkSN8sVOqE2lWsvn2pWBxzoAyddX5VRNVzX2BVdwaFSNKnl0AVCoUdyfVXkeYJ73GD3THJSINX7TJhn4M(97RNaKRzFQcDt0sfE5(qF4SHp4XYHfH5jqm7wxLpWoenLQYUSRniX65Cl2QWr92PSUfwELhRTeI940mC7a(G1fha2R(d(yffPFbsBGQKBwwwDRQK3OH6ShEh6)H6NNr9sxs40D7LwhdfCeQpGhCr1bE3ij0evSXtk7(UsKnmx2ygLTmpoaJChrsDnirfA5v6SYR2XcQtHj9Vxnc48ZiS1CutyzEyrS63gLilNJhpLgh0cjvbkwyTv4vYJiRpjYPHuYmfaYyKM3n8X9bWQg0aHNuB0qcEVoG1QnnTtAfZ(Phu60rUkry3sTH9oSourD7y10vKH3L(aMw)R5BOSTLZrfSzBLQRDqEZDSLEHJ8QWupu8gIvIF1rTdIyGwOACPRpaMewNRIvvPE9eQmwbzVnjmi3nTyz7uAvmnaYNZFfCC59R3xEt)h717mnz9yTaJML2BVPlIAwrUwW0(ruY96jGkJgCzxZ86ElNR4T4QLKe32OHlPSKqFidC8LV5SI6MonEeAp1e3Ogy4XMZBvnD29N4QQ)y)wnrAKOQO(2Wx8I3xzXq41dWwBD0riPpd2Gk9CF0WWLaVRvvZg54oWdZM8so0ESwF(dlXK77DUlnPNlwZX8smDIjdLgF3HPbNugpR9Z5AjGvKNnagc3MrI2fLPlaqfjAdeoGlYOVJDr6YtkA(8C7ldWlp1ka4Wb4ADjQPtDPIYVBxW0R7q9cmuwZfN3B316mSlr4ENPMFQO(q9GnUwsIdqgGgmg37v7o1kFPieLwHKu)QDhXROys9TFvQ2JvDVDxPP2sMU1SP71soOIKypE(OX0BvmfCHUovJABsf(yYuuRIiJvYJ9YHDH(D85X5uQ91QSZ5vp96tJE0EI79TS(4fi9TVEyn3kPqn1AcLfJES4z8MJnCxf530dJOPSL8S5XPYM2ZQhfBRpUxe2uF6dy6K7H5fgJwRBILxNJD4zPKGR(QOfslEfXt)W0jksd)YIoeA6KsDFAgizBh1Ekah1vwokjtGJ4ABhHcHmf)VjfndQlQO(lFbOkwygLfseDmLTV)7VR7AbNw8uL6XsgUQKDq)m4IPMebhPY1Kf6obR15d4JEJHhv51OBbqSOedw1CciIEPbejFN8pZG5VA7sw1EyOBq5ZEpu0stu4sxu0CBu0Oeqo(vACCLx9nympuLnDS)jA(D3BEDSuWiYED7i7QBQ5VGZqD4AD7x0yRjGiz0W2HYndvGYUE0qfiooNhbNIOuFxT2qPAdC88JuX(n6wb6RVkWvPfpu1quu6H1B1(1y0aZ2Kv7teXuABkihr2dU0gicSOVdsRjRH7hwdewwy(gsjwaatByu21hvmVAkr)wlsYH6Debi03Oy)gdAntImNxp5)6NuY6fLHEGqtmP6RyRIQPCYNhDUFt6Ogo5WvpT9oorWe6bEpObZb2kTK7ulj70jIZrIClMbQEi29gUkfYXcOuVisMFhJNy5JeWwpMBP5VE19QyRyvvjRvwst0)FanWIeBw0blDtfqfCT(Pu2X1QvE0ctKgdV1H92YP0ClnuCQtSKRcMtFtsTyzyn46eIZL(EPTgFPl78f3OulEhtcgvphGdsEhKNoDSFG3GN6jrfpOweyBtLW0gGwhDQU7HAII20Zm1BAgl6AMdVQ36EJcoYu2oyD0TGlokpOoPFAoY3bGqPnLDLAXXFYu(NSoTPPwTPB61g38AT5vmiwg0tq9PHW19SoCd2C0fQFF8NlBP0ocji0)UoT0JRVBCPXBSTZBo1xzJnezfbjQhQEg3gJ3R1QnQmFnRfx1pB7JhbInLSTPea1qxdn4JtVqk38RTj5mPAPNxRsbSQAz3bO60Yr4khtK8zKUTmXTRmN4wvSAZHwVYu97vA8hlR(HTQPfTuKazMsuPshb1XyZQUnsGotzuyPJCdTH0tOLL9oY67qVtTEskgq31JsDZr0LuG(M0hAL11Ux67H15RDTwv1lk1b7SP2cbyzTPU202L6hwXQEEYPMEYIU8PXUEY22EYY(E6ip0JK9mvTjtN6P1oIQ1wIYc26y6jQNqxfBoZIKf1tyqHVQgu)GTa1rOohFg1hxk1xBo5cxBuQUsBpqRszJAwEeSRTTern(2Mku4M63kPcO1WvtfDTZ(FWsM(N9TZF23oTOJDEF74KXTTw0gB5ht5oCw9Khm9BDuhKZG(XgC2GYWs)H(XpY(F9JquA64dk)gi1Yb7YQ30lhtCeZEY1Sf0)XrAArhjsYZwIjr8l0vHrHBN17Nl(TJu81t)Fp]]
 )
 spec:RegisterPack(
     "Fury (wowsims.com)",

@@ -5,6 +5,7 @@ local world = require("Forever.helpers.warrior_world")
 local prot = require("Forever.helpers.protection_gate")
 
 local PACK = "Protection (wowsims.com)"
+local CASTER = "Creature-0-0-0-0-346-000001"
 local KIT = {}
 for i, key in ipairs(prot.KIT) do
     KIT[i] = key
@@ -45,6 +46,7 @@ local function warrior(level, rage, options)
     local ctl = H.ctl
     assert.are.same({}, H.loadErrors)
     ctl.distance.target = options.distance or 3
+    ctl.guid.target = options.target or ctl.guid.target
     ctl.creature.target = options.creature
     ctl.classification = options.classification
     ctl.groupMembers = options.group or 0
@@ -159,6 +161,82 @@ describe("the Protection leveling priority", function()
         end
     end)
 
+    it("reserves Bash rage between casts and for later mobs of the observed type", function()
+        local H = warrior(18, 15, { target = CASTER, demo = true })
+        assert.are.equal("shield_block", read(H, 0.2))
+        assert.are.equal(0, H.Hekili.State.prot_bash_reserve)
+        cast(H, true)
+        assert.are.equal("shield_bash", read(H, 0.2))
+        H.Fire("UNIT_SPELLCAST_STOP", "target", SECRET, SECRET, 77)
+        assert.is_not_equal("shield_block", read(H, 0.2))
+        assert.are.equal(10, H.Hekili.State.prot_bash_reserve)
+
+        H.ctl.guid.target = "Creature-0-0-0-0-346-000002"
+        H.Fire("PLAYER_TARGET_CHANGED")
+        read(H, 0.2)
+        assert.are.equal(10, H.Hekili.State.prot_bash_reserve)
+        H.ctl.guid.target = "Creature-0-0-0-0-347-000003"
+        H.Fire("PLAYER_TARGET_CHANGED")
+        read(H, 0.2)
+        assert.are.equal(0, H.Hekili.State.prot_bash_reserve)
+
+        H = warrior(18, 20, { target = CASTER, demo = true })
+        cast(H, true)
+        read(H, 0.2)
+        H.Fire("UNIT_SPELLCAST_STOP", "target", SECRET, SECRET, 77)
+        assert.are.equal("shield_block", read(H, 0.2))
+        assert.are.equal(0, H.Hekili.Engine.Output.Primary.recs[1].time)
+    end)
+
+    it("releases the reserve without an available interrupt and respects the global cooldown", function()
+        local H = warrior(18, 15, { target = CASTER, bashCooldown = true, demo = true })
+        cast(H, true)
+        read(H, 0.2)
+        H.Hekili.State.reset("Primary")
+        assert.are.equal(0, H.Hekili.State.prot_bash_reserve)
+
+        H = warrior(18, 15, { target = CASTER, demo = true })
+        local gcd = H.Hekili.Engine.Registry.GCD_SPELL
+        H.ctl.cooldown[gcd] = { isActive = true, isOnGCD = false, startTime = H.ctl.now, duration = 1.5 }
+        H.Fire("SPELL_UPDATE_COOLDOWN")
+        cast(H, true)
+        read(H, 0.2)
+        local out = H.Hekili.Engine.Output.Primary
+        local forecastBash
+        for i = 1, out.count do
+            local rec = out.recs[i]
+            if rec.actionName == "shield_bash" then
+                assert.is_true(rec.time > 0)
+                forecastBash = true
+            end
+        end
+        assert.is_true(forecastBash)
+        H.Hekili.State.reset("Primary")
+        assert.are.equal(10, H.Hekili.State.prot_bash_reserve)
+        H.ctl.cooldown[gcd] = { isActive = false, isOnGCD = false, startTime = 0, duration = 0 }
+        H.Fire("SPELL_UPDATE_COOLDOWN")
+        assert.are.equal("shield_bash", read(H, 0.2))
+        assert.are.equal(0, out.recs[1].time)
+        H.Hekili:FireToggle("interrupts", "off")
+        read(H, 0.2)
+        assert.are.equal(0, H.Hekili.State.prot_bash_reserve)
+    end)
+
+    it("lets dungeon threat spend the reserve on the opener or when aggro is lost", function()
+        local H = warrior(40, 20, { target = CASTER, group = 5, instance = "party", talents = { [23922] = 1 } })
+        H.Hekili:FireToggle("defensives", "off")
+        cast(H, true)
+        read(H, 0.2)
+        H.Fire("UNIT_SPELLCAST_STOP", "target", SECRET, SECRET, 77)
+        assert.are.equal("shield_slam", read(H, 0.2))
+        assert.is_not_equal("shield_slam", read(H, 4))
+        assert.are.equal(10, H.Hekili.State.prot_bash_reserve)
+
+        H.ctl.exists.targettarget = true
+        H.ctl.unitIs.targettarget = "party1"
+        assert.are.equal("shield_slam", read(H, 0.2))
+    end)
+
     it("uses a learned Concussion Blow as a backup on a non-boss cast", function()
         local talents = { [12809] = 1 }
         for _, options in ipairs({
@@ -186,50 +264,31 @@ describe("the Protection leveling priority", function()
         end
     end)
 
-    it("uses Disarm on dangerous melee humanoids without adding Taunt to the rotation", function()
-        local H = warrior(18, 25, { creature = "humanoid", group = 2 })
-        H.Hekili:FireToggle("mode", "aoe")
-        assert.are.equal("disarm", read(H, 0.2))
-        for _, list in pairs(H.Hekili.DB.profile.packs[PACK].lists) do
-            for _, entry in ipairs(list) do
-                assert.is_not_equal("taunt", entry.action)
-            end
-        end
-        for _, case in ipairs({
-            { level = 18, options = { creature = "humanoid", classification = "elite" }, expected = true },
-            { level = 17, options = { creature = "humanoid", classification = "elite" } },
-            { level = 18, options = { creature = "beast", classification = "elite" } },
-            { level = 18, options = { creature = "humanoid", classification = "elite", boss = true } },
-            { level = 18, options = { creature = "humanoid", classification = "elite", distance = 20 } },
-            { level = 18, options = { creature = "humanoid", classification = "elite" }, casting = true },
-            { level = 18, options = { creature = "humanoid" } },
-            { level = 18, options = { creature = "humanoid", classification = "elite" }, defensivesOff = true },
-            { level = 18, options = { creature = "humanoid", classification = "elite", form = 1 } },
-            { level = 18, options = { creature = "humanoid", classification = "elite" }, rage = 15 },
+    it("continues past a weaponless humanoid without depending on a rejected cast event", function()
+        for _, options in ipairs({
+            { creature = "humanoid", group = 2 },
+            { creature = "humanoid", classification = "elite" },
         }) do
-            H = warrior(case.level, case.rage or 25, case.options)
-            if case.casting then
-                cast(H, false)
+            local H = warrior(18, 25, options)
+            if options.group then
+                H.Hekili:FireToggle("mode", "aoe")
             end
-            if case.defensivesOff then
-                H.Hekili:FireToggle("defensives", "off")
+            assert.is_true(H.Hekili.State:IsKnown("disarm"))
+            assert.is_false(H.Hekili.State.prot_disarm_target) -- old priorities still resolve this condition
+            for _ = 1, 3 do
+                assert.are.equal("demoralizing_shout", read(H, 0.2))
+                local out = H.Hekili.Engine.Output.Primary
+                for i = 1, out.count do
+                    assert.is_not_equal("disarm", out.recs[i].actionName)
+                end
             end
-            assert.are.equal(case.expected == true, read(H, 0.2) == "disarm")
+            for _, list in pairs(H.Hekili.DB.profile.packs[PACK].lists) do
+                for _, entry in ipairs(list) do
+                    assert.is_not_equal("disarm", entry.action)
+                    assert.is_not_equal("taunt", entry.action)
+                end
+            end
         end
-    end)
-
-    it("backs off Disarm after an immune result and uses it on another eligible target", function()
-        local H = warrior(18, 25, { creature = "humanoid", classification = "elite" })
-        assert.are.equal("disarm", read(H, 0.2))
-        H.Fire("UNIT_SPELLCAST_SENT", "player", "Unit", "Cast-disarm", 676)
-        H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-disarm", 676)
-        H.Fire("UNIT_COMBAT", "target", "IMMUNE", "", 0, 1)
-        read(H)
-        assert.is_false(H.Hekili.State.prot_disarm_target)
-        H.ctl.guid.target = "Creature-2"
-        H.Fire("PLAYER_TARGET_CHANGED")
-        read(H)
-        assert.is_true(H.Hekili.State.prot_disarm_target)
     end)
 
     it("uses Sunder Armor as a fallback on a protected target with Rend already up", function()

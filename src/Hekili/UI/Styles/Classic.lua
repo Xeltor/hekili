@@ -49,6 +49,11 @@ local flashEvents = ns.UI.FlashEvents
 local Button_OnMouseDown, Button_OnMouseUp = ns.UI.Button_OnMouseDown, ns.UI.Button_OnMouseUp
 local pulseRange = TOOLTIP_UPDATE_TIME
 
+-- Keybinding text: a gamepad binding sits outside the icon (UI.lua), any other text at the keyboard anchor.
+local function setKeybinding( b, text, kb, g )
+    ns.UI.SetKeybindingText( b.Keybinding, b, text, kb.anchor or "TOPRIGHT", kb.x or 0, kb.y or 0, g )
+end
+
 local LSF = SpellFlashCore
 local catchFlash, lastFramesFlashed = nil, {}
 
@@ -70,7 +75,7 @@ local Glower = LibStub("LibCustomGlow-1.0")
 -- Its icon zones for the shared option builders (Options/StyleOptions.lua, Task 3d): the primary icon and the queue,
 -- marked legacy so the queue keeps classic's shape (queued* keybinding fields behind separateQueueStyle).
 local ZONES = { "primary", "queued", legacy = true }
-local SHARED = { "border", "range", "glow", "flash", "captions", "indicators", "targets", "delays", "keybindings" }
+local SHARED = { "border", "range", "glow", "flash", "captions", "indicators", "targets", "delays", "keybindings", "gamepad" }
 
 local Classic = {
     label = L["Classic"],
@@ -256,6 +261,7 @@ local function CreateButton( dispID, id )
     b.Keybinding:SetJustifyV( kbAnchor:match("TOP") and "TOP" or ( kbAnchor:match( "BOTTOM" ) and "BOTTOM" or "MIDDLE" ) )
     b.Keybinding:SetTextColor( unpack( queued and conf.classic.keybindings.queuedColor or conf.classic.keybindings.color ) )
     b.Keybinding:SetWordWrap( false )
+    b.Keybinding.kbAnchor = nil -- Build set the points: the next text sets them again if it differs
 
     local kbText = b.Keybinding:GetText()
     b.Keybinding:SetText( nil )
@@ -668,13 +674,9 @@ function Classic.UpdateKeybindings( d )
             if a then
                 b.Keybind, b.KeybindFrom = Hekili:GetBindingForAction( a, conf, i )
 
-                if i == 1 or conf.classic.keybindings.queued then
-                    b.Keybinding:SetText( b.Keybind )
-                else
-                    b.Keybinding:SetText( nil )
-                end
+                setKeybinding( b, ( i == 1 or conf.classic.keybindings.queued ) and b.Keybind or nil, conf.classic.keybindings, conf.classic.gamepad )
             else
-                b.Keybinding:SetText( nil )
+                setKeybinding( b, nil, conf.classic.keybindings, conf.classic.gamepad )
             end
         end
     end
@@ -789,11 +791,7 @@ function Classic.Draw( d, conf, out, status )
                         b.Caption:SetText(nil)
                     end
 
-                    if conf.classic.keybindings.enabled and ( i == 1 or conf.classic.keybindings.queued ) then
-                        b.Keybinding:SetText( keybind )
-                    else
-                        b.Keybinding:SetText(nil)
-                    end
+                    setKeybinding( b, conf.classic.keybindings.enabled and ( i == 1 or conf.classic.keybindings.queued ) and keybind or nil, conf.classic.keybindings, conf.classic.gamepad )
 
                     if conf.classic.glow.enabled and ( i == 1 or conf.classic.glow.queued ) and self.resolved[ i ].glow then
                         b.glowColor = b.glowColor or {}
@@ -1480,6 +1478,7 @@ return L["Position"] end,
         },
 
         keybindings = SO.keybindings( "classic", ZONES, 7, id, conf ),
+        gamepad = SO.gamepad( "classic", ZONES, 7.5, id, conf ),
         border = border,
         range = SO.range( "classic", ZONES, 5, id, conf ),
         glow = SO.glow( "classic", ZONES, 6, id, conf ),

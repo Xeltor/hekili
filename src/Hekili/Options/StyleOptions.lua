@@ -167,6 +167,15 @@ local function base()
             fade = false,
         },
 
+        -- The gamepad pictures (Engine/Sim/Events.lua ns.Gamepad): on the icon at their own anchor, as keybinding text
+        -- (the same defaults), `size` px. The ConsolePort options of this tab stay stored in `keybindings`.
+        gamepad = {
+            anchor = "TOPRIGHT",
+            x = 1,
+            y = -1,
+            size = 12,
+        },
+
         keybindings = {
             enabled = true,
             queued = true,
@@ -335,34 +344,6 @@ return L["Position"] end,
             order = 5.1,
             width = "full",
         },
-
-        cPort = {
-            name = "ConsolePort", -- l10n: verbatim
-            type = "group",
-            inline = true,
-            order = 4,
-            args = {
-                cPortOverride = {
-                    type = "toggle",
-                    name = L["Use ConsolePort Buttons"],
-                    order = 6,
-                    width = 1.49,
-                },
-
-                cPortZoom = {
-                    type = "range",
-                    name = L["ConsolePort Button Zoom"],
-                    desc = L["The ConsolePort button textures generally have a significant amount of blank padding around them. " ..
-                        "Zooming in removes some of this padding to help the buttons fit on the icon.  The default is |cFFFFD1000.6|r."],
-                    order = 7,
-                    min = 0,
-                    max = 1,
-                    step = 0.01,
-                    width = 1.49,
-                },
-            },
-            disabled = function() return ConsolePort == nil end,
-        },
     }
 
     if #zones > 1 then
@@ -412,6 +393,100 @@ return L["Position"] end,
         type = "group",
         name = L["Keybinds"],
         desc = L["Options for keybinding text on displayed icons."],
+        order = order,
+        args = args,
+    }
+end
+
+function SO.gamepad( styleKey, zones, order, id, conf )
+    local P = ns.UI.DisplayOptionParts
+    local s = conf[ styleKey ]
+    local args = {
+        pos = {
+            type = "group",
+            inline = true,
+            name = function( info ) P.rangeIcon( info )
+return L["Position"] end,
+            order = 1,
+            args = {
+                anchor = {
+                    type = "select",
+                    name = L['Anchor Point'],
+                    order = 2,
+                    width = 1,
+                    values = P.realAnchorPositions
+                },
+
+                x = {
+                    type = "range",
+                    name = L["X Offset"],
+                    order = 3,
+                    width = 0.99,
+                    min = -spanW( s ),
+                    max = spanW( s ),
+                    step = 1,
+                },
+
+                y = {
+                    type = "range",
+                    name = L["Y Offset"],
+                    order = 4,
+                    width = 0.99,
+                    min = -spanH( s ),
+                    max = spanH( s ),
+                    step = 1,
+                },
+
+                -- inside the group: a loose slider after an inline group drew over Y Offset (in game 2026-11-10)
+                size = {
+                    type = "range",
+                    name = L["Size"],
+                    desc = L["The size of the controller button pictures, in pixels."],
+                    order = 5,
+                    min = 8,
+                    max = 64,
+                    step = 1,
+                    width = 0.99,
+                },
+            },
+        },
+
+        cPort = {
+            name = "ConsolePort", -- l10n: verbatim
+            type = "group",
+            inline = true,
+            order = 4,
+            args = {
+                cPortOverride = {
+                    arg = "keybindings",
+                    type = "toggle",
+                    name = L["Use ConsolePort Buttons"],
+                    order = 6,
+                    width = 1.49,
+                },
+
+                cPortZoom = {
+                    arg = "keybindings",
+                    type = "range",
+                    name = L["ConsolePort Button Zoom"],
+                    desc = L["The ConsolePort button textures generally have a significant amount of blank padding around them. " ..
+                        "Zooming in removes some of this padding to help the buttons fit on the icon.  The default is |cFFFFD1000.6|r."],
+                    order = 7,
+                    min = 0,
+                    max = 1,
+                    step = 0.01,
+                    width = 1.49,
+                },
+            },
+            disabled = function() return ConsolePort == nil end,
+        },
+
+    }
+
+    return {
+        type = "group",
+        name = L["Gamepad"],
+        desc = L["Options for the controller button pictures shown for the game's gamepad action bars."],
         order = order,
         args = args,
     }

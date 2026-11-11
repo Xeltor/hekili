@@ -147,6 +147,23 @@ local function fontFlags( style )
 end
 ns.UI.FontFlags = fontFlags
 
+--- Sets keybinding text `text` on font string `fs` of icon `b`, at the keyboard anchor (`anchor`, offsets `x`, `y`);
+--- a gamepad binding's pictures at the gamepad group `g`'s own (anchor, x, y), justified from it the same way. The points
+--- change only when the kind of text, the anchor or the offsets do.
+function ns.UI.SetKeybindingText( fs, b, text, anchor, x, y, g )
+    if text ~= nil and g and ns.Gamepad.Is( text ) then
+        anchor, x, y = g.anchor or anchor, g.x or x, g.y or y
+    end
+    if fs.kbAnchor ~= anchor or fs.kbX ~= x or fs.kbY ~= y then
+        fs:ClearAllPoints()
+        fs:SetPoint( anchor, b, anchor, x, y )
+        fs:SetJustifyH( anchor:match( "RIGHT" ) and "RIGHT" or ( anchor:match( "LEFT" ) and "LEFT" or "CENTER" ) )
+        fs:SetJustifyV( anchor:match( "TOP" ) and "TOP" or ( anchor:match( "BOTTOM" ) and "BOTTOM" or "MIDDLE" ) )
+        fs.kbAnchor, fs.kbX, fs.kbY = anchor, x, y
+    end
+    fs:SetText( text )
+end
+
 function ns.StartConfiguration( external )
     Hekili.Config = true
 

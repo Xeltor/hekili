@@ -98,8 +98,8 @@ local function read(H, seconds)
     return out.count > 0 and out.recs[1].actionName or nil
 end
 
-local function cast(H, interruptible)
-    H.Fire("UNIT_SPELLCAST_START", "target", SECRET, SECRET, 77)
+local function cast(H, interruptible, channel)
+    H.Fire(channel and "UNIT_SPELLCAST_CHANNEL_START" or "UNIT_SPELLCAST_START", "target", SECRET, SECRET, 77)
     if not interruptible then
         H.Fire("UNIT_SPELLCAST_NOT_INTERRUPTIBLE", "target")
     end
@@ -143,16 +143,21 @@ describe("the Protection leveling priority", function()
         end
     end)
 
-    it("puts a ready Shield Bash first as a cast begins in solo and party PvE", function()
+    it("waits briefly before offering Shield Bash for casts and channels in solo and party PvE", function()
         for _, options in ipairs({ {}, { instance = "party", group = 5 } }) do
-            local H = warrior(12, 15, options)
-            cast(H, true)
-            local action = read(H, 0.2)
-            local out = H.Hekili.Engine.Output.Primary
-            assert.are.equal("shield_bash", action)
-            assert.are.equal(0, out.recs[1].time)
-            H.Fire("UNIT_SPELLCAST_STOP", "target", SECRET, SECRET, 77)
-            assert.is_not_equal("shield_bash", read(H, 0.2))
+            for _, channel in ipairs({ false, true }) do
+                local H = warrior(12, 15, options)
+                cast(H, true, channel)
+                assert.is_not_equal("shield_bash", read(H, 0.1))
+                assert.are.equal("shield_bash", read(H, 0.2))
+                assert.are.equal(0, H.Hekili.Engine.Output.Primary.recs[1].time)
+                if channel then
+                    H.Fire("UNIT_SPELLCAST_CHANNEL_STOP", "target", SECRET, SECRET, nil, 77)
+                else
+                    H.Fire("UNIT_SPELLCAST_STOP", "target", SECRET, SECRET, 77)
+                end
+                assert.is_not_equal("shield_bash", read(H, 0.2))
+            end
         end
         for _, options in ipairs({ { noShield = true }, { distance = 10 }, { instance = "pvp" } }) do
             local H = warrior(12, 15, options)
@@ -166,7 +171,7 @@ describe("the Protection leveling priority", function()
         assert.are.equal("shield_block", read(H, 0.2))
         assert.are.equal(0, H.Hekili.State.prot_bash_reserve)
         cast(H, true)
-        assert.are.equal("shield_bash", read(H, 0.2))
+        assert.are.equal("shield_bash", read(H, 0.3))
         H.Fire("UNIT_SPELLCAST_STOP", "target", SECRET, SECRET, 77)
         assert.is_not_equal("shield_block", read(H, 0.2))
         assert.are.equal(10, H.Hekili.State.prot_bash_reserve)
@@ -200,7 +205,7 @@ describe("the Protection leveling priority", function()
         H.ctl.cooldown[gcd] = { isActive = true, isOnGCD = false, startTime = H.ctl.now, duration = 1.5 }
         H.Fire("SPELL_UPDATE_COOLDOWN")
         cast(H, true)
-        read(H, 0.2)
+        read(H, 0.3)
         local out = H.Hekili.Engine.Output.Primary
         local forecastBash
         for i = 1, out.count do
@@ -246,6 +251,7 @@ describe("the Protection leveling priority", function()
         }) do
             local H = warrior(33, 20, options)
             cast(H, true)
+            assert.is_not_equal("concussion_blow", read(H, 0.1))
             local action = read(H, 0.2)
             assert.are.equal(options.talents ~= nil and not options.boss, action == "concussion_blow", tostring(action))
         end

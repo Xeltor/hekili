@@ -7,6 +7,7 @@
 ### Changed
 
 - Arms Warrior prioritizes Hamstring when a non-boss PvE humanoid enters Execute range and is close enough to slow.
+- Protection Warrior waits a quarter second after an eligible enemy starts casting or channeling before suggesting Shield Bash, Pummel, or Concussion Blow.
 
 ### Fixed
 

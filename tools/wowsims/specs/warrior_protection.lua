@@ -42,6 +42,7 @@
 local melee = "&target.within5&!target.outside5"
 local adventure = "prot_adventuring"
 local combat = adventure .. "&combat>0"
+local interruptWindow = combat .. melee .. "&prot_interrupt_window"
 local leveling = "prot_leveling&combat>0"
 local revengeLeveling = leveling .. "&action.revenge.known"
 local baselineDamage = "(!prot_leveling|!action.revenge.known)" -- Retain the original fillers before Revenge is trained.
@@ -157,15 +158,14 @@ return {
     extra = {
         {
             before = "death_wish",
-            line = "shield_bash,if=" .. combat .. melee .. "&debuff.casting.up&debuff.casting.v2=0",
+            line = "shield_bash,if=" .. interruptWindow .. "&debuff.casting.v2=0",
         },
-        { before = "death_wish", line = "pummel,if=" .. combat .. melee .. "&debuff.casting.up&debuff.casting.v2=0" },
+        { before = "death_wish", line = "pummel,if=" .. interruptWindow .. "&debuff.casting.v2=0" },
         {
             before = "death_wish",
             line = "concussion_blow,use_off_gcd=1,if="
-                .. combat
-                .. melee
-                .. "&toggle.interrupts&debuff.casting.up&debuff.concussion_blow.down&!boss&!target.is_boss"
+                .. interruptWindow
+                .. "&toggle.interrupts&debuff.concussion_blow.down&!boss&!target.is_boss"
                 .. "&(!action.shield_bash.known|!action.shield_bash.ready|debuff.casting.v2=1)"
                 .. "&(!action.pummel.known|!action.pummel.ready|debuff.casting.v2=1)",
         },

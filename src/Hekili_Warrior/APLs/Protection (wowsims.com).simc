@@ -52,9 +52,9 @@ actions=defensive_stance,use_off_gcd=1,if=prot_adventuring&combat=0&prot_charge_
 actions+=/battle_stance,use_off_gcd=1,if=prot_adventuring&combat=0&prot_charge_range&action.charge.known&cooldown.charge.ready&!buff.battle_stance.up&!talent.vanguard.enabled&rage.lo<=stance_rage_kept
 actions+=/charge,use_off_gcd=1,if=prot_adventuring&combat=0&prot_charge_range
 actions+=/reckless_swings
-actions+=/shield_bash,if=prot_adventuring&combat>0&target.within5&!target.outside5&debuff.casting.up&debuff.casting.v2=0
-actions+=/pummel,if=prot_adventuring&combat>0&target.within5&!target.outside5&debuff.casting.up&debuff.casting.v2=0
-actions+=/concussion_blow,use_off_gcd=1,if=prot_adventuring&combat>0&target.within5&!target.outside5&toggle.interrupts&debuff.casting.up&debuff.concussion_blow.down&!boss&!target.is_boss&(!action.shield_bash.known|!action.shield_bash.ready|debuff.casting.v2=1)&(!action.pummel.known|!action.pummel.ready|debuff.casting.v2=1)
+actions+=/shield_bash,if=prot_adventuring&combat>0&target.within5&!target.outside5&prot_interrupt_window&debuff.casting.v2=0
+actions+=/pummel,if=prot_adventuring&combat>0&target.within5&!target.outside5&prot_interrupt_window&debuff.casting.v2=0
+actions+=/concussion_blow,use_off_gcd=1,if=prot_adventuring&combat>0&target.within5&!target.outside5&prot_interrupt_window&toggle.interrupts&debuff.concussion_blow.down&!boss&!target.is_boss&(!action.shield_bash.known|!action.shield_bash.ready|debuff.casting.v2=1)&(!action.pummel.known|!action.pummel.ready|debuff.casting.v2=1)
 actions+=/last_stand,use_off_gcd=1,display_below=40,if=!buff.last_stand.up&(!action.shield_wall.known|!buff.shield_wall.up)
 actions+=/shield_wall,display_below=35,if=!buff.shield_wall.up&(!action.last_stand.known|!buff.last_stand.up)
 actions+=/stoneform,display_below=50,if=(!action.last_stand.known|!buff.last_stand.up)&(!action.shield_wall.known|!buff.shield_wall.up)

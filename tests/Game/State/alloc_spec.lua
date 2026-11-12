@@ -475,4 +475,61 @@ describe("zero allocation", function()
             assert.is_true(I.Log.fight.swingsTick + I.Log.fight.swingsAvoid > 100, "the swings were told")
         end
     )
+
+    it(
+        "allocates nothing over 100 tab cycles and 100 plate ADDED/REMOVED pairs under Map (tab-targeting T2m)",
+        function()
+            local api, ctl = fake.new()
+            local saved = {}
+            for k, v in pairs({
+                CreateFrame = api.CreateFrame,
+                issecretvalue = api.issecretvalue,
+                GetTime = api.GetTime,
+                debugprofilestop = function() -- VS.Drain times itself
+                    return 0
+                end,
+            }) do
+                saved[k] = rawget(_G, k) or false
+                _G[k] = v
+            end
+            ctl.now = 1
+            local ns = load.module()
+            local VS, I = ns.VirtualState, ns.VirtualStateInternal
+            I.Build(fs.def(fs.new(9)), 1)
+            VS.Start(api)
+            for k = 1, 40 do
+                ctl.Fire("NAME_PLATE_UNIT_ADDED", "nameplate" .. k)
+            end
+            ctl.combat = true
+            ctl.Fire("PLAYER_REGEN_DISABLED")
+            ctl.guid.target = fake.SECRET
+            local TOK = {} -- the plate tokens, built once
+            for k = 1, 40 do
+                TOK[k] = "nameplate" .. k
+            end
+            local function step(i)
+                ctl.now = ctl.now + 0.1
+                -- now and then a plain hostile GUID: a flip to the GUID key space, and back at the next step (review m3)
+                ctl.guid.target = i % 10 == 3 and "Creature-1" or fake.SECRET
+                ctl.unitIs.target = TOK[i % 20 + 1] -- 20 mobs in turn: slots taken, kept and evicted
+                ctl.Fire("PLAYER_TARGET_CHANGED")
+                -- every 5th step the edge is the new target's own plate, before the fold: an orphan (review m3)
+                local edge = i % 5 == 0 and TOK[i % 20 + 1] or TOK[(i + 7) % 40 + 1]
+                ctl.Fire("NAME_PLATE_UNIT_REMOVED", edge)
+                ctl.Fire("NAME_PLATE_UNIT_ADDED", edge)
+                if i % 10 == 7 then
+                    ctl.Fire("PLAYER_ENTERING_WORLD") -- a world entry: every plate key forgotten
+                end
+                ctl.Tick()
+                VS.Drain(ctl.now)
+            end
+            local ok, bytes = pcall(alloc.bytes, step, 100)
+            for k, v in pairs(saved) do
+                _G[k] = v or nil
+            end
+            assert.is_true(ok, tostring(bytes))
+            assert.are.equal(0, bytes)
+            assert.is_true(I.curSlot > 0, "plate keys in use")
+        end
+    )
 end)

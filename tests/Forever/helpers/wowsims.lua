@@ -658,12 +658,14 @@ end
 --- and never idle longer than `limit` seconds [6: four GCDs] in a row with a known on-GCD ability the world would
 --- accept. Idle: in combat, our GCD free, no cast in progress, no on-GCD press this tick (an off-GCD press is idle). Returns the worst idle and the line.
 --- `stat` "median": each fight a fresh boot (its own first fight), and the bar is the median of the per-fight worsts.
+--- `C.liveRequires[key](world, player)` can qualify a usable action for the idle metric without changing client reads.
 function M.live(label, C, limit, fights, stat)
     limit = limit or 6
     local median = stat == "median"
     local L = loop.new(C)
     local c = C.character()
     local known = {}
+    local liveRequires = C.liveRequires or {}
     for _, id in ipairs(c.known) do
         known[id] = true
     end
@@ -688,7 +690,13 @@ function M.live(label, C, limit, fights, stat)
                 if idle then
                     for _, row in ipairs(L.answers) do
                         local a = known[row[1]] and abilities[row[1]]
-                        if a and a.gcd ~= "off" and row[2](run.W, us, us.power) then
+                        local requireContext = a and liveRequires[a.key]
+                        if
+                            a
+                            and a.gcd ~= "off"
+                            and row[2](run.W, us, us.power)
+                            and (not requireContext or requireContext(run.W, us))
+                        then
                             usable = true
                             break
                         end

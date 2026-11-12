@@ -523,6 +523,52 @@ describe("Forever Warrior", function()
         end)
     end)
 
+    it("registers the aura copies, stack caps and Gore Drinker's buff the audit found missing", function()
+        local function has(a, id)
+            for _, c in ipairs(a.copy) do
+                if c == id then
+                    return true
+                end
+            end
+        end
+        assert.is_true(has(w.auras.deep_wound, 412609))
+        assert.are.equal(12, w.auras.deep_wound.duration)
+        assert.are.equal(3, w.auras.flurry.max_stack)
+        assert.are.equal(30, w.auras.retaliation.max_stack)
+        assert.are.same(
+            { 1323969, 8, 3 },
+            { w.auras.gore_drinker.id, w.auras.gore_drinker.duration, w.auras.gore_drinker.max_stack }
+        )
+    end)
+
+    it("gives Revenge's window the Defensive State id 5302 and drops the unused Revenge Stun aura", function()
+        assert.are.equal(5302, w.auras.revenge_usable.id)
+        assert.are.equal(5, w.auras.revenge_usable.duration)
+        assert.is_nil(w.auras.revenge_stun)
+    end)
+
+    it("applies Retaliation at 30 charges", function()
+        local e = lw.env(w)
+        lw.run(w.abilities.retaliation.now, e)
+        assert.are.equal(30, e.stacks.retaliation)
+    end)
+
+    it("applies Gore Drinker at 3 stacks from its five abilities, only with the talent", function()
+        for _, k in ipairs({ "berserker_rage", "bloodrage", "death_wish", "reckless_swings", "bloodthirst" }) do
+            local e = lw.env(w)
+            lw.run(w.abilities[k].handler, e)
+            assert.is_nil(e.stacks.gore_drinker, k)
+            e.talent = setmetatable({}, {
+                __index = function()
+                    return { rank = 1, enabled = true }
+                end,
+            })
+            e.applied, e.stacks = {}, {}
+            lw.run(w.abilities[k].handler, e)
+            assert.are.equal(3, e.stacks.gore_drinker, k)
+        end
+    end)
+
     it("gates Thunder Clap, Execute and Spearing Strike on the stances Forever's tooltips name", function()
         local a = w.abilities
         assert.are.same({ nil, "berserker_stance" }, { a.thunder_clap.form, a.thunder_clap.nobuff })
@@ -870,6 +916,32 @@ describe("Forever Warrior", function()
         lw.run(w.hooks.reset_precast, e)
         assert.are.same({ "heroic_strike", "revenge_usable" }, e.applied)
         assert.are.same({}, e.removed)
+    end)
+
+    -- Weaponmaster (1290261, wowsims talents_arms.go:276-383): one aura a branch, up while the talent is known and
+    -- either hand holds the branch's weapon kind. Id-less (the three share the talent's spell id).
+    it("shows the Weaponmaster branch auras by the held weapon kind", function()
+        for _, k in ipairs({ "weaponmaster_axe_polearm", "weaponmaster_mace_staff", "weaponmaster_sword" }) do
+            assert.is_not_nil(w.auras[k], k)
+            assert.is_nil(w.auras[k].id, k)
+        end
+        local function applied(rank, main, off)
+            local e = lw.env(w)
+            e.talent = setmetatable({ weaponmaster = { rank = rank, enabled = rank > 0 } }, getmetatable(e.talent))
+            e.main_hand, e.off_hand = main, off
+            lw.run(w.hooks.reset_precast, e)
+            table.sort(e.applied)
+            return e.applied
+        end
+        assert.are.same({}, applied(0, { sword = true }, {}))
+        assert.are.same({ "weaponmaster_sword" }, applied(5, { sword = true }, {}))
+        assert.are.same({ "weaponmaster_axe_polearm" }, applied(1, { polearm = true }, {}))
+        assert.are.same({ "weaponmaster_mace_staff" }, applied(5, { staff = true }, {}))
+        assert.are.same(
+            { "weaponmaster_axe_polearm", "weaponmaster_mace_staff" },
+            applied(5, { axe = true }, { mace = true })
+        )
+        assert.are.same({}, applied(5, { dagger = true }, { fist = true }))
     end)
 
     it("keeps Tactical Mastery's rage on a stance swap", function()

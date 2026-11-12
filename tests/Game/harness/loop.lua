@@ -421,7 +421,7 @@ function M.run(L, seed, o, drivers)
         for _, list in pairs(ctl.auras) do
             list.HELPFUL, list.HARMFUL = {}, {}
         end
-        ctl.auraError.target = nil
+        ctl.auraError.target, ctl.auraError.player = nil, nil
         -- UnitLevel is plain in combat on Forever (the facade's passthrough row); fake_api answers an unset unit secret
         -- `targetLevel` the content's answer for the target (-1: a boss, as Hekili's `boss` reads it)
         ctl.level.target, ctl.level.nameplate1 = wo.targetLevel or wo.level, wo.targetLevel or wo.level
@@ -441,6 +441,7 @@ function M.run(L, seed, o, drivers)
         end
         if o.replay then
             k.powerMax = true -- the log's pools (replay.lua's maxOf), not the character sheet's
+            k.notTargeted = o.replay.notTargeted -- the replay's knob (replay.lua M.new)
         end
         if d.plain then
             k.plain, k.usableDelay = true, 0

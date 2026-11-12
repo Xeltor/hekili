@@ -56,7 +56,8 @@ local format, find = string.format, string.find
 
 local Mark, SuperMark, ClearMarks = ns.Mark, ns.SuperMark, ns.ClearMarks
 
--- Forever (gap 13, border batch 2 E7): the facade's LibRangeCheck shape, answered by the belief's target bracket.
+-- Forever (gap 13, border batch 2 E7; range plan R2): the facade's LibRangeCheck row, the one range source: the
+-- target's answer is the belief's bracket, which LibRangeCheck feeds.
 local RC = Facade.LibRangeCheck
 
 local class = Hekili.Class
@@ -144,6 +145,9 @@ state.weapon = { -- the main hand; a pack function's name for it, in the belief'
 }
 state.main_hand = state.weapon
 state.off_hand = {
+    size = 0
+}
+state.ranged = { -- the ranged slot (18): its weapon kind only (mt_weapon_type)
     size = 0
 }
 
@@ -3055,6 +3059,7 @@ do
         is_in_party = 1,
         is_in_raid = 1,
         is_player = 1,
+        is_targeting_player = 1,
         is_dummy = 1,
         is_undead = 1,
         level = 1,
@@ -3094,9 +3099,9 @@ do
 
     mt_target = {
         __index = function( t, k )
-            -- Forever (gap 13): RC is the facade's LibRangeCheck shape (the belief's bracket from the tracked
-            -- abilities' own ranges; the library resolves nothing here): GetRange answers nil while unknown, and a
-            -- lower bound alone past every range answered. Unknown never blocks: within and outside are both true,
+            -- Forever (gap 13; range plan R2): RC is the facade's LibRangeCheck row (the belief's bracket, fed by
+            -- LibRangeCheck's about 5 yd brackets): GetRange answers nil while unknown, and a lower bound alone past
+            -- the library's last check. Unknown never blocks: within and outside are both true,
             -- distance and minR/maxR keep upstream's defaults.
             if k == "distance" then t[k] = ( t.minR + t.maxR ) / 2
             elseif k == "in_range" then return t.distance <= 8
@@ -3164,6 +3169,9 @@ do
                 local isPlayer = UnitIsPlayer( "target" )
                 if not isPlayer then isPlayer = PvpDummies[ t.npcid ] end
                 t[k] = isPlayer or false -- Enables proper treatment of Absolute Corruption and similar modified-in-PvP effects.
+            elseif k == "is_targeting_player" then
+                -- the target's target is us (the facade: nil when secret or unknown, read as false: assume behind)
+                t[k] = UnitIsUnit( "targettarget", "player" ) == true
 
             elseif k == "is_dummy" then t[k] = ( TargetDummies[ t.npcid ] ~= nil )
             elseif k == "is_undead" then t[k] = t.creature_type == "undead"
@@ -3574,7 +3582,8 @@ local mt_gcd = {
                 return state.buff.adrenaline_rush.up and max( 0.75, state.haste ) or 1
             end
 
-            return max( 1.5 * state.haste, state.buff.voidform.up and 0.67 or 0.75 )
+            -- a GCD modifier in scope (aura audit C12) before the floor, as wowsims applies it
+            return max( 1.5 * state.haste * ns.costMods.GcdMult( ability ), state.buff.voidform.up and 0.67 or 0.75 )
 
         elseif k == "remains" then
             return state.cooldown.global_cooldown.remains
@@ -3587,7 +3596,8 @@ local mt_gcd = {
                 return state.buff.adrenaline_rush.up and max( 0.75, state.haste ) or 1
             end
 
-            return max( 1.5 * state.haste, state.buff.voidform.up and 0.67 or 0.75 )
+            local ability = state.this_action and class.abilities[ state.this_action ]
+            return max( 1.5 * state.haste * ns.costMods.GcdMult( ability ), state.buff.voidform.up and 0.67 or 0.75 )
 
         elseif k == "lastStart" then
             return 0
@@ -5537,9 +5547,13 @@ local mt_weapon_type = {
             return size == 2
         elseif k == "one_handed" or k == "1h" or k == "one_hand" then
             return size == 1
+        elseif k == "fist_weapon" then
+            k = "fist"
         end
 
-        return false
+        -- the worn weapon's kind (dagger, sword, axe, mace, fist, staff, polearm, bow, gun, crossbow, thrown, wand),
+        -- set by the gear scan (Events.lua); nil when the slot holds no weapon
+        return k == rawget( t, "kind" )
     end,
 }
 
@@ -5562,6 +5576,7 @@ setmetatable( state.dot, mt_dot )
 setmetatable( state.equipped, mt_equipped )
 setmetatable( state.main_hand, mt_weapon_type )
 setmetatable( state.off_hand, mt_weapon_type )
+setmetatable( state.ranged, mt_weapon_type )
 setmetatable( state.pet, mt_pets )
 setmetatable( state.pet.fake_pet, mt_default_pet )
 setmetatable( state.prev, mt_prev )

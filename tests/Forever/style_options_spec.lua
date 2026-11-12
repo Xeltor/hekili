@@ -4,6 +4,7 @@
 -- toggle flipped, and classic's defaults. Record with STYLE_OPTIONS=record (rewrites the fixture).
 local headless = require("Game.harness.headless")
 local ww = require("Forever.helpers.warrior_world")
+local fake = require("Game.State.helpers.fake_api")
 
 local PATH = "tests/Forever/fixtures/classic_options.lua"
 
@@ -184,7 +185,7 @@ end)
 
 -- A registered style whose config holds the shared groups for zones { "now", "next" } and whose options are the
 -- shared builders, reached the way an external style reaches them: through Hekili.StyleOptions.
-local GROUPS = { "keybindings", "captions", "indicators", "range", "glow", "flash", "border", "targets", "delays" }
+local GROUPS = { "keybindings", "captions", "indicators", "range", "glow", "border", "targets", "delays" }
 local ZONES = { "now", "next" }
 
 local function external(H, groups)
@@ -299,7 +300,7 @@ describe("the engine's and the shared resolve's range, flash and keybinding sett
         assert.are.equal(conf.classic.range, group(conf, "range")) -- still classic
         conf.style = "ext"
         assert.are.equal(conf.ext.range, group(conf, "range"))
-        assert.are.equal(conf.classic.flash, group(conf, "flash")) -- ext offers no flash
+        assert.are.equal(conf.classic.glow, group(conf, "glow")) -- ext offers no glow
         conf.ext.range.type = "xclude"
         H.Hekili.State.reset("Primary")
         assert.is_true(H.Hekili.State.rangefilter)
@@ -309,9 +310,9 @@ describe("the engine's and the shared resolve's range, flash and keybinding sett
         assert.are.same({}, H.errors)
     end)
 
-    it("ask LibRangeCheck only while the range check is melee", function()
+    it("ask the facade's LibRangeCheck row only while the range check is melee", function()
         local H = boot()
-        local LRC = H.env.LibStub("LibRangeCheck-3.0")
+        local LRC = H.ns.Facade.LibRangeCheck
         local calls, getRange = 0, LRC.GetRange
         LRC.GetRange = function(...)
             calls = calls + 1
@@ -331,6 +332,26 @@ describe("the engine's and the shared resolve's range, flash and keybinding sett
         H.ns.UI.Resolve(d, conf, out, H.ctl.now)
         assert.are.equal(1, calls)
         assert.are.same({}, H.errors)
+    end)
+
+    -- range review C1: a secret target GUID (the Map restriction) under the melee range check; v38 keyed its cache by it
+    it("resolves the melee range check without raising while the target's GUID is secret", function()
+        local H = boot()
+        H.ctl.guid.target = fake.SECRET
+        local d = rawget(H.env, "HekiliDisplayPrimary")
+        assert.is_true(external(H, { "range" }))
+        local conf = H.Hekili.DB.profile.displays.Primary
+        conf.style, conf.ext.range.type = "ext", "melee"
+        assert.has_no.errors(function()
+            H.ns.UI.Resolve(d, conf, H.Hekili.Engine.Output.Primary, H.ctl.now)
+        end)
+        assert.are.same({}, H.errors)
+        -- the vendored library itself (the harness answers through a double; H.realGetRange is the library's own)
+        local LRC = H.env.LibStub("LibRangeCheck-3.0")
+        assert.are.equal(40, select(2, H.env.LibStub:GetLibrary("LibRangeCheck-3.0")))
+        assert.has_no.errors(function()
+            H.realGetRange(LRC, "target")
+        end)
     end)
 end)
 
@@ -409,7 +430,7 @@ describe("the timeline's option tabs", function()
                 "keybindings.fontSize",
                 "glow.highlight",
                 "targets.enabled",
-                "flash.enabled",
+                "glow.enabled",
                 "border.enabled",
             },
             tab_next = {

@@ -35,9 +35,9 @@ local function warrior(level, rage, options)
     ctl.inRaid = options.raid == true
     ctl.unitHealth.player = options.health or 1000
     ctl.itemCount[5512] = options.healthstone and 1 or 0
-    ctl.items[5512] = { "Minor Healthstone", nil, 538745 }
+    ctl.items[5512] = { "Minor Healthstone", icon = 538745 }
     for id, icon in pairs(options.potions or {}) do
-        ctl.itemCount[id], ctl.items[id] = 1, { "Healing Potion", nil, icon }
+        ctl.itemCount[id], ctl.items[id] = 1, { "Healing Potion", icon = icon }
     end
     if level == 1 or options.shout then
         ctl.auras.player.HELPFUL[1] = { spellId = 6673, expirationTime = ctl.now + 100, applications = 0 }

@@ -24,7 +24,6 @@
 # Omitted: default #12: other OtherActionOffensivePotion
 # Omitted: default #14: other OtherActionResourcePotion
 # Omitted: default #20: hidden
-# Omitted: default #27: dropped the unresolved aura 27648 (its branch only)
 # Omitted: default #34: never
 # Omitted: default #35: never
 # Omitted: default #36: hidden
@@ -41,16 +40,16 @@
 # Omitted: default: empty group cd_offensive_trinkets
 # Omitted: default: empty group cd_shield_wall_dual_wield
 
-actions.precombat=defensive_stance,use_off_gcd=1,if=prot_contextual&combat=0&prot_charge_range&equipped.shield&talent.vanguard.enabled&action.charge.known&cooldown.charge.ready&!buff.defensive_stance.up&!buff.battle_stance.up&rage.lo<=stance_rage_kept
-actions.precombat+=/battle_stance,use_off_gcd=1,if=prot_contextual&combat=0&prot_charge_range&action.charge.known&cooldown.charge.ready&!buff.battle_stance.up&!talent.vanguard.enabled&rage.lo<=stance_rage_kept
+actions.precombat=defensive_stance,use_off_gcd=1,if=prot_contextual&combat=0&prot_charge_range&equipped.shield&talent.vanguard.enabled&prot_charge_ready&!buff.defensive_stance.up&(!action.battle_stance.known|!buff.battle_stance.up)&rage.lo<=stance_rage_kept
+actions.precombat+=/battle_stance,use_off_gcd=1,if=prot_contextual&combat=0&prot_charge_range&prot_charge_ready&!buff.battle_stance.up&!talent.vanguard.enabled&rage.lo<=stance_rage_kept
 actions.precombat+=/charge,use_off_gcd=1,if=prot_contextual&combat=0&prot_charge_range
 actions.precombat+=/bloodrage,use_off_gcd=1,if=(!prot_contextual|combat=0&prot_bloodrage_safe)
 actions.precombat+=/battle_shout,if=!buff.battle_shout.up&((!prot_contextual|combat=0)&(prot_bash_reserve=0|prot_current_rage>=action.battle_shout.cost+prot_bash_reserve))
 actions.precombat+=/battle_stance,use_off_gcd=1,if=!buff.battle_stance.up&(!action.defensive_stance.known|!buff.defensive_stance.up)&!prot_contextual
 actions.precombat+=/retaliation,if=!prot_contextual
 actions.precombat+=/defensive_stance,use_off_gcd=1,if=!buff.defensive_stance.up&(!prot_contextual|equipped.shield)
-actions=defensive_stance,use_off_gcd=1,if=prot_contextual&combat=0&prot_charge_range&equipped.shield&talent.vanguard.enabled&action.charge.known&cooldown.charge.ready&!buff.defensive_stance.up&!buff.battle_stance.up&rage.lo<=stance_rage_kept
-actions+=/battle_stance,use_off_gcd=1,if=prot_contextual&combat=0&prot_charge_range&action.charge.known&cooldown.charge.ready&!buff.battle_stance.up&!talent.vanguard.enabled&rage.lo<=stance_rage_kept
+actions=defensive_stance,use_off_gcd=1,if=prot_contextual&combat=0&prot_charge_range&equipped.shield&talent.vanguard.enabled&prot_charge_ready&!buff.defensive_stance.up&(!action.battle_stance.known|!buff.battle_stance.up)&rage.lo<=stance_rage_kept
+actions+=/battle_stance,use_off_gcd=1,if=prot_contextual&combat=0&prot_charge_range&prot_charge_ready&!buff.battle_stance.up&!talent.vanguard.enabled&rage.lo<=stance_rage_kept
 actions+=/charge,use_off_gcd=1,if=prot_contextual&combat=0&prot_charge_range
 actions+=/shield_bash,if=prot_pve_target&combat>0&target.within5&!target.outside5&debuff.casting.up&debuff.casting.v2=0&prot_interrupt_window
 actions+=/pummel,if=prot_pve_target&combat>0&target.within5&!target.outside5&debuff.casting.up&debuff.casting.v2=0
@@ -68,7 +67,7 @@ actions+=/death_wish,if=(!prot_contextual|!prot_threat_spend)&(prot_bash_reserve
 actions+=/call_action_list,name=cd_racials
 actions+=/shield_block,use_off_gcd=1,if=(rage.lo>=40|(!buff.revenge_usable.up&(!action.revenge.known|cooldown.revenge.remains<=1.5)))&(!prot_contextual&!prot_offtanking&(prot_bash_reserve=0|prot_current_rage>=action.shield_block.cost+prot_bash_reserve))
 actions+=/thunder_clap,if=prot_contextual&combat>0&(prot_threat_spend|prot_pack_threat_spend)&prot_nearby_enemies>1&(prot_bash_reserve=0|((prot_threat_spend|prot_pack_threat_spend)&debuff.casting.down)|prot_current_rage>=action.thunder_clap.cost+prot_bash_reserve)
-actions+=/shield_slam,if=prot_contextual&combat>0&target.within5&!target.outside5&(!buff.revenge_usable.up|cooldown.revenge.remains>0|((prot_threat_spend&debuff.casting.down&prot_current_rage>=action.shield_slam.cost+action.revenge.cost)|prot_current_rage>=action.shield_slam.cost+action.revenge.cost+prot_bash_reserve))&(prot_bash_reserve=0|(prot_threat_spend&debuff.casting.down)|prot_current_rage>=action.shield_slam.cost+prot_bash_reserve)
+actions+=/shield_slam,if=prot_contextual&combat>0&target.within5&!target.outside5&!(action.revenge.known&buff.revenge_usable.up&cooldown.revenge.remains<=0&!((prot_threat_spend&debuff.casting.down&prot_current_rage>=action.shield_slam.cost+action.revenge.cost)|prot_current_rage>=action.shield_slam.cost+action.revenge.cost+prot_bash_reserve))&(prot_bash_reserve=0|(prot_threat_spend&debuff.casting.down)|prot_current_rage>=action.shield_slam.cost+prot_bash_reserve)
 actions+=/revenge,focus=1,if=prot_contextual&combat>0&target.within5&!target.outside5&(prot_bash_reserve=0|(prot_threat_spend&debuff.casting.down)|prot_current_rage>=action.revenge.cost+prot_bash_reserve)
 actions+=/sunder_armor,if=prot_contextual&combat>0&prot_threat_spend&target.within5&!target.outside5&(prot_bash_reserve=0|(prot_threat_spend&debuff.casting.down)|prot_current_rage>=action.sunder_armor.cost+prot_bash_reserve)
 actions+=/victory_rush,focus=1,if=prot_contextual&combat>0&target.within5&!target.outside5
@@ -89,7 +88,7 @@ actions+=/bloodthirst,if=(prot_bash_reserve=0|(prot_threat_spend&debuff.casting.
 actions+=/mortal_strike,if=(prot_bash_reserve=0|(prot_threat_spend&debuff.casting.down)|prot_current_rage>=action.mortal_strike.cost+prot_bash_reserve)
 actions+=/thunder_clap,if=active_enemies>1&(!prot_contextual&(prot_bash_reserve=0|prot_current_rage>=action.thunder_clap.cost+prot_bash_reserve))
 actions+=/demoralizing_shout,if=(settings.maintain_demoralizing_shout|prot_contextual)&(debuff.demoralizing_shout.remains<=6&(!prot_contextual&(prot_bash_reserve=0|prot_current_rage>=action.demoralizing_shout.cost+prot_bash_reserve)))
-actions+=/thunder_clap,if=debuff.thunder_clap.remains<=6&(!prot_contextual&(prot_bash_reserve=0|prot_current_rage>=action.thunder_clap.cost+prot_bash_reserve))
+actions+=/thunder_clap,if=(!debuff.thunderfury.up&debuff.thunder_clap.remains<=6)&(!prot_contextual&(prot_bash_reserve=0|prot_current_rage>=action.thunder_clap.cost+prot_bash_reserve))
 actions+=/battle_shout,if=buff.battle_shout.remains<=10&((!prot_contextual|combat=0)&(prot_bash_reserve=0|prot_current_rage>=action.battle_shout.cost+prot_bash_reserve))
 actions+=/rend,if=(!debuff.rend.up&(!(offhand_speed=0)|(offhand_speed=0&(!action.shield_slam.known|cooldown.shield_slam.remains>=1.5))))&(!prot_contextual&(prot_bash_reserve=0|prot_current_rage>=action.rend.cost+prot_bash_reserve))
 actions+=/sunder_armor,if=(debuff.sunder_armor.stack<5|((!action.shield_slam.known|cooldown.shield_slam.remains>=1.5)&debuff.sunder_armor.remains<=10))&(!prot_contextual&(prot_bash_reserve=0|prot_current_rage>=action.sunder_armor.cost+prot_bash_reserve))

@@ -228,12 +228,13 @@ describe("now handlers", function()
         maul = "as heroic_strike",
         raptor_strike = "as heroic_strike",
         revenge = "revenge_usable has no spell id: untracked",
-        starfire = "removeStack is no `now` verb; the charges end with the 15 s aura",
-        fire_blast = "removeStack is no `now` verb; the belief reads Fingers of Frost charges from the aura walk",
+        starfire = "no `now` yet (removeStack is a `now` verb since aura audit C4: the Druid lane's)",
+        fire_blast = "no `now` yet (removeStack is a `now` verb since aura audit C4: the Mage lane's)",
         claw = "combo points are read plainly in combat (poll 1)",
         shred = "as claw",
         premeditation = "as claw",
         healthstone = "health is no tracked resource",
+        healing_potion = "health is no tracked resource",
     }
     it("declares a `now` beside every handler with an aura or resource effect", function()
         local VERB = {
@@ -773,6 +774,132 @@ describe("now handlers", function()
         assert.are.equal(0, I.ab.castStartT[I.ab.bySpell[1464]])
     end)
 
+    -- aura audit C11: a channel's `now_finish` (the belief's twin of the sim's `finish`) runs once the channel ran to
+    -- its believed end; a channel broken earlier runs nothing.
+    it("runs a channel's now_finish at a stop at its end, never at an earlier stop (aura audit C11)", function()
+        h.Class.auras.inspire_test = { key = "inspire_test", id = 4611, duration = 5 }
+        register("flay_test", { id = 4601, channeled = true })
+        h.Class.abilities.flay_test.funcs.now_finish = function()
+            applyBuff("inspire_test")
+        end
+        start()
+        local function channel(t0, t1, stopAt)
+            ctl.now = t0
+            ctl.channel = { t0 * 1000, t1 * 1000 }
+            ctl.Fire("UNIT_SPELLCAST_CHANNEL_START", "player", "Cast-9", 4601)
+            ctl.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-9", 4601)
+            ctl.Tick(t0 + 0.01)
+            VS.Drain(t0 + 0.02)
+            ctl.now = stopAt
+            ctl.channel = nil
+            ctl.Fire("UNIT_SPELLCAST_CHANNEL_STOP", "player", "Cast-9", 4601)
+            ctl.Tick(stopAt + 0.01)
+            VS.Drain(stopAt + 0.02)
+        end
+        channel(10, 13, 13) -- ran to its end
+        local rec = VS.Aura("player", 4611, 13.1)
+        assert.is_truthy(rec)
+        assert.are.equal(18, rec.est)
+        channel(20, 23, 21.5) -- broken: nothing
+        assert.is_nil(VS.Aura("player", 4611, 21.6))
+        channel(30, 33, 34) -- a stop a second past the end: another channel's, nothing
+        assert.is_nil(VS.Aura("player", 4611, 34.1))
+    end)
+
+    -- aura audit C12: a pack's GCD modifier ({ aura, pct, spells }, Engine/Schema/Races.lua's list) cuts a spell-kind
+    -- GCD in its scope while the aura is believed up, on top of the learned length (floor 1.0); a GCD it cut teaches
+    -- no length.
+    it("cuts a spell-kind GCD in scope while the modifier's aura is up, and learns no length from it (C12)", function()
+        h.Class.auras.grace_test = { key = "grace_test", id = 4701, duration = 3 }
+        register("grace_cast", {
+            id = 4702,
+            gcd = "off",
+            now = function()
+                applyBuff("grace_test")
+            end,
+        })
+        register("other_test", { id = 4703 })
+        ns.raceMods = {
+            maxMods = {},
+            costMods = {},
+            gcdMods = { { aura = "grace_test", pct = -0.1, spells = { fs.SPENDER_C } } },
+        }
+        ns.ResourceIsPoints = function() -- Tracked.lua's race path (Engine/Sim/Constants.lua's)
+            return false
+        end
+        start()
+        cast(4702, 10)
+        cast(fs.SPENDER_C, 10.5)
+        I.Sources.Direct(VS.Obs.Cooldown, 10.5, 0, 1, 1) -- its GCD's edges, 1.35 s apart
+        I.Sources.Direct(VS.Obs.Cooldown, 11.85, 0, 0, 1)
+        VS.Drain(11.9)
+        assert.are.same({ 0, 0 }, I.gcdLearned) -- a cut GCD teaches nothing
+        cast(4703, 12) -- out of scope
+        assert.are.equal(13.5, VS.Gcd(12.1).est)
+        I.gcdLearned[1] = 1.4
+        cast(4702, 20)
+        cast(fs.SPENDER_C, 20.5)
+        assert.is_true(math.abs(VS.Gcd(20.6).est - (20.5 + 1.26)) < 0.002)
+        I.gcdLearned[1] = 1.05
+        cast(4702, 30)
+        cast(fs.SPENDER_C, 30.5)
+        assert.are.equal(31.5, VS.Gcd(30.6).est) -- 1.05 x 0.9 floors at 1.0
+        cast(fs.SPENDER_C, 40) -- the aura ran out at 33
+        assert.is_true(math.abs(VS.Gcd(40.1).est - 41.05) < 0.002)
+    end)
+
+    -- review M2: whether a modifier cut the GCD is fixed at its opening; an aura re-applied inside it (its window no
+    -- longer covering the GCD's start) does not make the cut length a learned one at the fall.
+    it("latches a GCD modifier's cut at the GCD's opening, not at its fall (C12, review M2)", function()
+        h.Class.auras.grace_test = { key = "grace_test", id = 4701, duration = 3 }
+        register("grace_cast", {
+            id = 4702,
+            gcd = "off",
+            now = function()
+                applyBuff("grace_test")
+            end,
+        })
+        ns.raceMods = {
+            maxMods = {},
+            costMods = {},
+            gcdMods = { { aura = "grace_test", pct = -0.1, spells = { fs.SPENDER_C } } },
+        }
+        ns.ResourceIsPoints = function()
+            return false
+        end
+        start()
+        cast(4702, 10)
+        cast(fs.SPENDER_C, 10.5)
+        I.Sources.Direct(VS.Obs.Cooldown, 10.5, 0, 1, 1)
+        cast(4702, 11) -- re-applied inside the cut GCD: its window now starts after the GCD's
+        I.Sources.Direct(VS.Obs.Cooldown, 11.85, 0, 0, 1)
+        VS.Drain(11.9)
+        assert.are.same({ 0, 0 }, I.gcdLearned)
+    end)
+
+    -- A modifier's aura gained after a GCD opened does not cut it, though the cast folds after the gain (a proc a
+    -- spell batch after the cast, its walk heard before the cast's staged success).
+    it("judges a GCD modifier at the GCD's opening, not at the fold of its cast (C12)", function()
+        h.Class.auras.grace_test = { key = "grace_test", id = 4701, duration = 3 }
+        ns.raceMods = {
+            maxMods = {},
+            costMods = {},
+            gcdMods = { { aura = "grace_test", pct = -0.1, spells = { fs.SPENDER_C } } },
+        }
+        ns.ResourceIsPoints = function()
+            return false
+        end
+        start()
+        ctl.now = 10.5
+        ctl.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-1", fs.SPENDER_C) -- staged until the frame's flush
+        ctl.now = 10.51
+        ctl.auras.player.HELPFUL[1] = { spellId = 4701, expirationTime = 13.51, duration = 3, applications = 1 }
+        ctl.Fire("UNIT_AURA", "player")
+        ctl.Tick(10.51)
+        VS.Drain(10.52)
+        assert.is_true(VS.Gcd(10.6).est >= 12 - 0.002, tostring(VS.Gcd(10.6).est)) -- 1.5 s, not 1.35
+    end)
+
     it(
         "spends a charge from the count caught up to the cast: recharges finished since the last sample count",
         function()
@@ -799,6 +926,40 @@ describe("now handlers", function()
         cast(7387, 6)
         local _, stacks = VS.Aura("player", 7386, 6.1)
         assert.are.equal(5, stacks)
+    end)
+
+    it("spends stacks with removeStack (aura audit C4): expiry kept, down at 0, a down aura untouched", function()
+        h.Class.auras.sunder_test = { key = "sunder_test", id = 7386, duration = 30, max_stack = 5 }
+        register("stack_test", {
+            id = 7387,
+            now = function()
+                addStack("sunder_test", 30, 2)
+            end,
+        })
+        register("spend_test", {
+            id = 7388,
+            now = function()
+                removeStack("sunder_test")
+            end,
+        })
+        register("spend_all", {
+            id = 7389,
+            now = function()
+                removeStack("sunder_test", 5)
+            end,
+        })
+        start()
+        cast(7388, 4) -- down: nothing to spend, nothing applied
+        assert.is_nil(VS.Aura("player", 7386, 4.1))
+        cast(7387, 5)
+        cast(7388, 8)
+        local rec, stacks = VS.Aura("player", 7386, 8.1)
+        assert.are.same({ 35, 1, "modelled" }, { rec.est, stacks, rec.basis }) -- Hekili's removeStack( aura, stacks )
+        cast(7388, 9) -- the last stack: down
+        assert.is_nil(VS.Aura("player", 7386, 9.1))
+        cast(7387, 10)
+        cast(7389, 11) -- more than it holds: down
+        assert.is_nil(VS.Aura("player", 7386, 11.1))
     end)
 
     describe("a stacking aura's cast beside a plain read of it", function()
@@ -1024,6 +1185,29 @@ describe("now handlers", function()
             assert.are.equal(0, VS.Power(fs.RAGE, 6.1).est)
         end)
 
+        -- aura audit C10: the ability's `onLand` runs once its cast is settled as landed (a hit or a crit paid to
+        -- it), never on an avoid, and never at a close with no row (live, avoids pay nothing either: L317).
+        it("runs onLand at a landed hit or crit, never at an avoid or an unpaid close (aura audit C10)", function()
+            local lands = {}
+            h.Class.abilities.spender_c.funcs.onLand = function()
+                lands[#lands + 1] = now -- luacheck: ignore 113 (the `now` context's time)
+            end
+            begin()
+            h.Class.abilities.spender_c.funcs.onLand = nil
+            castOutcome(fs.SPENDER_C, 5, "WOUND", 0, 100) -- a hit
+            ctl.now = 10
+            ctl.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-2", fs.SPENDER_C)
+            ctl.Fire("UNIT_COMBAT", "target", "WOUND", "CRITICAL", 100, 1) -- a crit lands too
+            ctl.Tick(10.01)
+            VS.Drain(10.02)
+            castOutcome(fs.SPENDER_C, 15, "DODGE") -- avoided: nothing
+            castOutcome(fs.SPENDER_C, 20) -- no row: not presumed (an avoid's row would be as unseen live)
+            ctl.now = 25
+            ctl.Tick(25)
+            VS.Drain(25.01)
+            assert.are.same({ 5, 10 }, lands)
+        end)
+
         it("a crit a pending swing explains runs no onCrit; one in the newer cast's frame is its (GAP T)", function()
             local crits = 0
             h.Class.abilities.spender_c.funcs.onCrit = function()
@@ -1072,6 +1256,26 @@ describe("now handlers", function()
             VS.Drain(5.12)
             assert.is_nil(VS.Aura("target", fs.SPENDER_C, 5.2)) -- the cast's own write, undone
             assert.are.equal(125, VS.Aura("target", fs.SPENDER_A, 5.2).est) -- the crit's write stays
+        end)
+
+        it("Map (secret GUIDs): an avoid after a tab leaves the new target's auras alone (lane A)", function()
+            ctl.guid.target = fake.SECRET
+            begin()
+            ctl.now = 5
+            ctl.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-1", fs.SPENDER_C) -- on mob A
+            ctl.Tick(5.01)
+            VS.Drain(5.02)
+            ctl.now = 5.05
+            ctl.Fire("PLAYER_TARGET_CHANGED") -- tab to mob B (slot 0 again: its GUID is secret)
+            VS.Drain(5.06)
+            assert.are.equal(0, I.curSlot) -- the Map premise: no memory slot for a secret GUID
+            local j = I.auras.bySpell[fs.SPENDER_C]
+            I.AuraModel(2, j, 5.06, 20, 1, 5.06, VS.Obs.CastSuccess, true) -- B carries the debuff (an earlier cast)
+            I.Sources.Direct(VS.Obs.Avoided, 5.1, I.ab.bySpell[fs.SPENDER_C], 5, I.HitKind.DODGE) -- the cast on A
+            VS.Drain(5.12)
+            local rec = VS.Aura("target", fs.SPENDER_C, 5.2)
+            assert.is_not_nil(rec) -- A's pre-cast auras are not B's
+            assert.are.equal(20, rec.est)
         end)
 
         it("a dodge in the cast's frame: no debuff, 80% of the cost back, a REMOVED row", function()
@@ -1259,7 +1463,7 @@ describe("now handlers", function()
                 ctl.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-1", fs.SPENDER_C)
                 ctl.Tick(5.01)
                 VS.Drain(5.01)
-                I.curSlot = I.curSlot + 1 -- as a swap's TargetSwap applier sets it (Families/Auras.lua)
+                I.curSwapN = I.curSwapN + 1 -- as a swap's TargetSwap fold moves it (Families/Auras.lua; lane A)
                 ctl.now = 5.02
                 ctl.Fire("UNIT_COMBAT", "target", "DODGE", "", 0, 1)
                 ctl.Tick(5.03)

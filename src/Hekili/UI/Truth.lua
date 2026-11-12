@@ -307,10 +307,9 @@ function Truth.ClearHealthCue( d )
     cue.button = nil
 end
 
-function Truth.DrawHealthCue( d, conf, out )
+function Truth.DrawHealthCue( d, out )
     local button, cues = d.Buttons[ 1 ], out.healthCues
-    if not button or not cues or cues.n == 0 or out.version == d.blankVersion or Hekili.Pause
-        or ( conf.classic.flash.enabled and conf.classic.flash.suppress ) then
+    if not button or not cues or cues.n == 0 or out.version == d.blankVersion or Hekili.Pause then
         Truth.ClearHealthCue( d )
         return
     end

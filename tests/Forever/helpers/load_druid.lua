@@ -14,7 +14,7 @@ M.SPELL_NAMES = {}
 --- load theirs through it). `vs` (optional) is the VirtualState whose KnownRank the file's knownRank reads through
 --- `state.knownRank` (a real one, for the strict-context specs); by default a fake answering from `game.known`. Returns `w`: `w.abilities`,
 --- `w.auras` (merged by key), `w.talents`, `w.resources[powerType]` ({ models, meta }), `w.costMods` (the
---- RegisterCostMod declarations), `w.hooks[name]`, `w.events[event]`, `w.funcs[name]`, `w.exprs[name]`,
+--- RegisterCostMod declarations), `w.gcdMods` (RegisterGcdMod's), `w.hooks[name]`, `w.events[event]`, `w.funcs[name]`, `w.exprs[name]`,
 --- `w.settings[key]` ({ default, option, specs: nil for every spec }), `w.totems` (the RegisterTotems table), `w.pets`
 --- (the RegisterPets table), `w.packs` (in order: { name, version, string }), `w.options`, `w.class` and
 --- `w.def` (NewClass's token and definition),
@@ -38,6 +38,7 @@ function M.load(vs, file, class)
         formSpell = {},
         base = { 0, 0 }, -- VS.SwingBase: each hand's unhasted speed (0: no plain read yet)
         now = 0, -- GetTime()
+        row = {}, -- the combat-log row CombatLogGetCurrentEventInfo answers
     }
     local w = { game = game, abilities = {}, auras = {}, resources = {}, hooks = {}, funcs = {}, exprs = {} }
     w.state = { buff = {}, swings = {} }
@@ -86,6 +87,9 @@ function M.load(vs, file, class)
         GetTime = function()
             return game.now
         end,
+        CombatLogGetCurrentEventInfo = function()
+            return unpack(game.row, 1, 24)
+        end,
         Enum = { PowerType = { Mana = 0, Rage = 1, Energy = 3, ComboPoints = 4 } },
     }
     local saved = {}
@@ -129,6 +133,10 @@ function M.load(vs, file, class)
     for i, call in ipairs(reg.RegisterCostMod or {}) do
         w.costMods[i] = call[1]
     end
+    w.gcdMods = {}
+    for i, call in ipairs(reg.RegisterGcdMod or {}) do
+        w.gcdMods[i] = call[1]
+    end
     w.events = {}
     for _, call in ipairs(reg.RegisterEvent or {}) do
         w.events[call[1]] = call[2]
@@ -159,6 +167,11 @@ function M.load(vs, file, class)
     w.packs = reg.RegisterPack or {}
     w.retired = reg.RetirePacks and reg.RetirePacks[1][1]
     w.options = reg.RegisterOptions and reg.RegisterOptions[1][1]
+    w.gear, w.setBonuses = reg.RegisterGear or {}, reg.RegisterSetBonus or {} -- the calls' arguments, in order
+    w.reactions = {} -- RegisterReaction's records by name
+    for _, call in ipairs(reg.RegisterReaction or {}) do
+        w.reactions[call[1]] = call[2]
+    end
     w.windows = {} -- RegisterWindow's records by name
     for _, call in ipairs(reg.RegisterWindow or {}) do
         w.windows[call[1]] = call[2]
@@ -217,6 +230,7 @@ function M.env(w)
     e.set_bonus, e.equipped = default(0), default(false) -- no gear headless (State.lua's)
     e.level = 60 -- Hekili's state.level (UnitLevel), the belief's `level` (Families/Now.lua)
     e.pairs, e.ipairs = pairs, ipairs -- Hekili's state has them (State.lua)
+    e.min = math.min -- state.min (State.lua)
     -- no duration: the aura's own duration function (the belief's `now` does the same)
     local function auraDuration(key, duration)
         local a = w.auras[key]

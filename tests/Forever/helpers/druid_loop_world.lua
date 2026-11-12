@@ -129,11 +129,17 @@ local function debuff(key, alsoHit) -- the debuff when its hit (for `key`'s amou
         end
     end
 end
+local catAt = {} -- the Cat entry rule by Furor rank above 0, built once a rank
 local function shift(key, mult)
     return {
-        extra = function(p)
+        extra = function(p, _, _, P)
             local R = rules()
             local onEnter = key == "bear_form" and R.enterBear or (key == "cat_form" and R.enterCat or nil)
+            local furor = P.talents and P.talents[17056] or 0 -- the pack's Furor; the Bear entry reads none
+            if key == "cat_form" and furor > 0 then
+                catAt[furor] = catAt[furor] or dw.entryRules("cat_form", furor)
+                onEnter = catAt[furor]
+            end
             p.shift = { form = FORM[key], dmgMult = mult, onEnter = onEnter }
         end,
     }
@@ -288,7 +294,12 @@ local PACKS = {
         form = "cat_form",
         weapon = { 55, 75, 1.0 },
         world = { regen = { [ENERGY] = dw.ENERGY_REGEN }, fsr = manaFsr(22), power = 100, stats = { [5] = 124 } },
+        -- Furor 3/5 (wowsims's Feral build, the log header's 17056=3); wowsims's Feral scenario, which the pack's Shred
+        -- and Claw lines read (L602): Shredding Attacks 3/3 (the log header's 16966=3), and a DPS behind its target, so
+        -- the client says our target targets someone else
+        talents = { [17056] = 3, [16966] = 3 },
         uptime = { "rip", "rake" },
+        notTargeted = true,
     },
     Guardian = {
         kit = {
@@ -467,6 +478,7 @@ local function content(name)
         max = P.power.max,
         res = P.res,
         formSpeed = { [FORM.bear_form] = dw.SPEED[dw.BEAR], [FORM.cat_form] = dw.SPEED[dw.CAT] },
+        regenPause = rules().pause, -- energy stops in Bear Form (the class file's bear_pause; both lists put Bear first)
         mobHealth = 15000,
         canParry = false, -- druids never parry (wowsims's CanParry: no parry haste of ours)
     }, { __index = P.world })
@@ -477,6 +489,7 @@ local function content(name)
         plainPower = { [POINTS] = "always" },
         powerTokens = TOKENS,
         powerMax = pt == MANA or P.res[MANA] ~= nil,
+        notTargeted = P.notTargeted, -- the pack's scenario (observer.lua: targettarget answers not us)
     }
 
     -- True rage per landed white wound in Bear (the class file's model, druid_world's rules); no other power is
@@ -561,7 +574,7 @@ local function content(name)
             p.points = { POINTS, m.points }
         end
         if m.extra then
-            m.extra(p, pt, P.res)
+            m.extra(p, pt, P.res, P)
         end
         p.requires = function(W, e)
             local ok, why = formOk(a, e)

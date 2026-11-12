@@ -379,6 +379,13 @@ describe("the row feed #slow", function()
             character = function()
                 local c = ww.character()
                 c.speed = { 3.8 }
+                -- The Arms replay casts ordinary Charge and its build lacks Vanguard's overrides.
+                for i = #c.known, 1, -1 do
+                    local id = c.known[i]
+                    if id >= 1240287 and id <= 1240289 then
+                        table.remove(c.known, i)
+                    end
+                end
                 return c
             end,
         }, { __index = ww })

@@ -572,19 +572,70 @@ end, "secret in combat [W PR14]; Moving()")
 
 kept("UnitInRange", "virtual", inRangeUnknown, "secret always [W PR7]; no signal")
 
--- LibRangeCheck's `GetRange(unit)` shape (Engine/Sim/State.lua's RC), answered by the belief's target bracket (gap 13:
--- the tracked abilities' own range checks, Families/Enemies.lua): the lower bound and the upper, nil past every range
--- answered; nothing while unknown or for another unit (nil never blocks: upstream's defaults).
-kept("LibRangeCheck.GetRange", "virtual", function(_, unit)
+-- One range source (range plan R2, owner 2026-11-11): LibRangeCheck-3.0, the only fetch of it in the addon
+-- (tools/check_api_reads.sh), from the belief's client (I.api: _G in game, the fake headless) once Start has run.
+-- Plain on Forever in the open world for the target and plate tokens, about 5 yd brackets (owner, 2026-11-11).
+-- Asked under the Map restriction too (a unit whose GUID is secret; the library keys its cache by the unit token
+-- then): probe G2 passed (owner, 2026-11-11, open world with addonMapRestrictionsForced=1: in combat 30 plain, 1 nil
+-- at the target's death; out of combat 14 plain, 13 nil; 0 secret, 0 errors). A real dungeon (G3) is unprobed: the
+-- belief's bracket ages to unknown after 1.5 s with no plain answer (Sources/Target.lua poll 14). false: not asked.
+local LRC_UNDER_MAP = true
+local realUnitGUID = resolve("UnitGUID")
+local lrc -- the library; false: absent
+local function rangeLib(unit)
+    if lrc == nil then
+        if not I.api then
+            return nil
+        end
+        local LS = I.api.LibStub
+        lrc = LS and LS("LibRangeCheck-3.0", true) or false
+    end
+    if not lrc then
+        return nil
+    end
+    local age -- nil: the library's 0.1 s cache
+    if unit == "target" then
+        -- maxCacheAge 0: the belief's poll stamps the answer with its own time, so never take the library's old one
+        age = 0
+    elseif not LRC_UNDER_MAP then
+        local g = realUnitGUID and realUnitGUID(unit) -- secret: tested next
+        if issecretvalue(g) or g == nil then
+            return nil -- the Map restriction: its checks may answer secret inside the library, which raises there
+        end
+    end
+    -- a raise inside the library (a secret answer it tests) is unknown, for any unit (review M4). shortcut: each raise
+    -- allocates its error string (the known G2 cost; none raised in probe G2), revisit if probe G3 shows steady raises
+    local ok, lo, hi = pcall(lrc.GetRange, lrc, unit, nil, nil, age)
+    if not ok or issecretvalue(lo) or issecretvalue(hi) then
+        return nil
+    end
+    return lo, hi
+end
+kept(
+    "RangeLib",
+    "hybrid",
+    rangeLib,
+    "LibRangeCheck-3.0's GetRange(unit): lower and upper yards (nil upper: past its last check); nothing when "
+        .. "absent, secret or raising; asked for a unit with a secret GUID too (Map: probe G2 passed)"
+)
+
+-- LibRangeCheck's `GetRange(unit)` shape, every range read of the core (Engine/Sim/State.lua, Targets.lua, Events.lua,
+-- UI/Resolve.lua): the target's from the belief's bracket (poll 14, fed by RangeLib; Families/Enemies.lua): the lower
+-- bound and the upper, nil past the library's last check; nothing while unknown (nil never blocks: upstream's
+-- defaults). Any other unit: RangeLib's answer.
+kept("LibRangeCheck.GetRange", "hybrid", function(_, unit)
+    if unit ~= "target" then
+        return rangeLib(unit)
+    end
     local r = VS.TargetRange()
-    if unit ~= "target" or r.basis == "unknown" then
+    if r.basis == "unknown" then
         return nil
     end
     if r.hi < HUGE then
         return r.lo, r.hi
     end
     return r.lo
-end, "LibRangeCheck resolves nothing on Forever (gap 13); TargetRange() (border batch 2, E7)")
+end, "the target: TargetRange() (border batch 2, E7), fed by RangeLib (range plan R2); any other unit: RangeLib")
 
 ----------------------------------------------------------------------------------------------------------------------
 -- Totems [W PR12]
@@ -1234,6 +1285,8 @@ local PASSTHROUGH = {
     { "GetFramerate", "plain [W sweep 2026-10-16]" },
     { "GetInstanceInfo", "plain [W sweep 2026-10-16]" },
     { "GetInventoryItemID", "plain [W PR13]" },
+    { "GetMacroItem", "unprobed; plain by the secrecy rule [W action bar glow]" },
+    { "GetMacroSpell", "unprobed; plain by the secrecy rule [W action bar glow]" },
     { "GetNetStats", "plain [W sweep 2026-10-16]" },
     { "GetNumClasses", "plain [W sweep 2026-10-16]" },
     { "GetNumGroupMembers", "plain [W sweep 2026-10-16]" },

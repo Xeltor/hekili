@@ -338,13 +338,28 @@ describe("the Warrior wowsims.com packs #slow #wowsims", function()
     -- Release fix (batch review B S5): 21.8 -> 10.2 (L40) / 14.6 (L60), the worst idle this check measures (seed 1) at the new pin; the older
     -- 21.8 was the re-timed fight under CN8 D2 and no longer happens, so the limit follows the measurement (a larger idle fails)
     local PROT_LIVE = { [10] = 6, [40] = 10.2, [60] = 14.6 }
+    -- Count upkeep when its aura needs refreshing. This mob only swings, and Shield Wall is a low-health cue.
+    local liveRequires = {
+        rend = function(_, e)
+            return e.target and not e.target.auras[772]
+        end,
+        battle_shout = function(W, e)
+            local shout = e.auras[6673]
+            return not shout or shout.expires <= W.t + 10
+        end,
+        shatter_curse = function()
+            return false
+        end,
+        shield_wall = function(_, e)
+            return e.health <= 0.35 * e.healthMax
+        end,
+    }
     for _, level in ipairs({ 10, 40, 60 }) do
         it("Protection (wowsims.com) stays live at level " .. level, function()
-            ws.live(
-                "Protection (wowsims.com)",
-                content("warrior_protection", ww.Protection, "Protection (wowsims.com)", level, { kit = PROT_KIT }),
-                PROT_LIVE[level]
-            )
+            local C =
+                content("warrior_protection", ww.Protection, "Protection (wowsims.com)", level, { kit = PROT_KIT })
+            C.liveRequires = liveRequires
+            ws.live("Protection (wowsims.com)", C, PROT_LIVE[level])
         end)
     end
 end)

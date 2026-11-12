@@ -102,6 +102,9 @@ describe("shared content", function()
         debuffs, bags, controls = {}, {}, {}
         ns = {
             Facade = {
+                PlayerHealthFraction = function()
+                    return 1
+                end,
                 C_Item = {
                     GetItemCount = function(id)
                         return bags[id] or 0
@@ -186,11 +189,25 @@ describe("shared content", function()
             "main_hand_enchant",
             "off_hand_enchant",
             "power_infusion",
+            "revelation_1248808",
+            "revelation_1323377",
+            "revelation_1323400",
+            "revelation_1323410",
+            "revelation_1323419",
             "reversible_magic",
             "shadowform",
+            "thunderfury",
             "voidbinding",
             "voidform",
         }, keys("auras"))
+        assert.are.same(
+            { 27648, 12, "target" },
+            { all.auras.thunderfury.id, all.auras.thunderfury.duration, all.auras.thunderfury.shared }
+        )
+        for _, id in ipairs({ 1248808, 1323377, 1323400, 1323410, 1323419 }) do -- Revelation, per class group
+            local a = all.auras["revelation_" .. id]
+            assert.are.same({ id, 15, 1 }, { a.id, a.duration, a.max_stack })
+        end
         assert.are.same({ 10060, 15 }, { all.auras.power_infusion.id, all.auras.power_infusion.duration })
         assert.are.same(
             { 0, 1 },
@@ -246,12 +263,18 @@ describe("shared content", function()
         end
     end)
 
-    it("registers the potion action and auras core reads, and the Healthstone from Forever's items only", function()
+    it("registers the potion action and auras core reads, and Forever's healing consumables", function()
         load({ "Consumables" })
-        assert.are.same(
-            { "demonic_rune", "healthstone", "major_mana_potion", "mana_gem", "potion", "thistle_tea" },
-            keys("abilities")
-        )
+        local expected = {
+            "demonic_rune",
+            "healing_potion",
+            "healthstone",
+            "major_mana_potion",
+            "mana_gem",
+            "potion",
+            "thistle_tea",
+        }
+        assert.are.same(expected, keys("abilities"))
         assert.are.same({ "fake_potion", "potion" }, keys("auras"))
         assert.are.equal(all.abilities.potion, all.abilities.potion_default)
         assert.are.same({ "fake_potion" }, all.auras.potion.alias)
@@ -263,7 +286,7 @@ describe("shared content", function()
             { 120, "off", "defensives" },
             { all.abilities.healthstone.cooldown, all.abilities.healthstone.gcd, all.abilities.healthstone.toggle }
         )
-        assert.is_nil(all.abilities.healthstone.now or all.abilities.potion.now) -- item actions: no cast the belief sees
+        assert.is_nil(all.abilities.healthstone.now or all.abilities.healing_potion.now or all.abilities.potion.now)
         for _, path in ipairs({ "src/Hekili/Engine/Sim/Core.lua", "src/Hekili/Options/DevTools.lua" }) do
             assert.is_false(names(read(path), "tempered_potion"), path) -- the `potion` verb's old fallback
         end

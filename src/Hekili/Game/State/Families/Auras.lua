@@ -1,7 +1,8 @@
 -- Game/State/Families/Auras.lua
 -- The auras family (spec §6.3): per unit and tracked aura, the believed expiry, stacks, applied time and an invented
 -- stable instance ID; plain walk reads (observed), our casts' handler writes (modelled, Families/Now.lua), expiry by time;
--- per-target memory by GUID slot (TARGET_CAP); the index order for AuraAt; AuraGen; Count.WithAura; a player aura's
+-- per-target memory by slot (TARGET_CAP; Sources/Target.lua keys a slot by GUID, under Map by plate index); the
+-- pending-swap serial I.curSwapN; the index order for AuraAt; AuraGen; Count.WithAura; a player aura's
 -- stacks spent by hits on the player (its `consumedBy`, tank design §3).
 -- Ported from Taco Dog Forever, src/TacoDogForever/Model/Belief/Auras.lua and Belief/Targets.lua (Applier TargetSwap
 -- :147); the aura conf of src/TacoDogForever/Model/Belief.lua:709.
@@ -38,8 +39,15 @@ local U = {
     gen = {},
     mem = {},
     icd = {}, -- by aura: its RegisterAura `icd` (seconds), 0 none
+    haste = {}, -- by aura: its RegisterAura `swingHaste` (the swing speed's multiplier while up), 0 none
+    hasteOn = {}, -- by aura: its `swingHaste` gain was applied and its fall not yet (pairs every gain with one fall)
     firstWalk = {}, -- by unit: the time of its first clean walk (Sources/Auras.lua), 0 none yet
     openFold = {}, -- by unit and aura: the I.folds of its last Cooldown Manager open (I.CastAura), 0 none
+    -- by unit and aura: its last fall (I.AuraAsOf): when, and the fallen application's applied time, expiry and stacks
+    fellAt = {},
+    fellFrom = {},
+    fellExp = {},
+    fellStacks = {},
 }
 I.auras = U
 -- The believed delta since the drain last delivered it (see `set` below); I.auraDelta for Game/API/Facade.lua.
@@ -50,9 +58,13 @@ I.nextInst = 0
 -- Per-target memory (spec §6.3): TARGET_CAP slots, each a copy of the target's arrays; slot 0 is "no target".
 local memExp, memApplied, memStacks, memInst = {}, {}, {}, {}
 I.curSlot = 0
+-- The serial of the swap folded last (Sources/Target.lua's I.targetSwapN, copied, never incremented: a swap the log
+-- dropped before its fold must not leave the target waiting for ever). Unequal: a swap waits to fold.
+I.curSwapN = 0
 
--- The player auras with a `consumedBy` (a set of I.HitKind names): their indices, and each one's kinds by I.HitKind.
-local CONS, consKinds = { n = 0 }, {}
+-- The player auras with a `consumedBy` (a set of I.HitKind names): their indices, and each one's kinds by I.HitKind;
+-- each one's `consumeIcd` (seconds, 0 none) and its last spend's time.
+local CONS, consKinds, consIcd, consLast = { n = 0 }, {}, {}, {}
 
 I.OnBuild(function(def, now)
     for k in pairs(U.bySpell) do
@@ -71,6 +83,9 @@ I.OnBuild(function(def, now)
         U.id[j], U.obj[j] = ids[1], auras[j]
         local icd = rawget(auras[j], "icd")
         U.icd[j] = type(icd) == "number" and icd > 0 and icd or 0
+        local haste = rawget(auras[j], "swingHaste")
+        U.haste[j] = type(haste) == "number" and haste > 0 and haste or 0
+        U.hasteOn[j] = false
         if auras[j].key ~= nil then
             U.byKey[auras[j].key] = j
         end
@@ -81,12 +96,13 @@ I.OnBuild(function(def, now)
     for u = 1, U.n do
         U.token[u], U.index[units[u]] = units[u], u
         local e, ap, st, ins, hm, sq, rc = {}, {}, {}, {}, {}, {}, {}
-        local ord = {}
+        local ord, fa, ff, fe, fs = {}, {}, {}, {}, {}
         for j = 1, U.nAura do
             e[j], ap[j], st[j], ins[j], hm[j], sq[j] = 0, 0, 0, 0, u ~= 1, 0
             rc[j] = I.NewBelief("aura " .. units[u] .. " " .. tostring(auras[j].key or U.id[j]))
-            ord[j] = 0
+            ord[j], fa[j], ff[j], fe[j], fs[j] = 0, 0, 0, 0, 0
         end
+        U.fellAt[u], U.fellFrom[u], U.fellExp[u], U.fellStacks[u] = fa, ff, fe, fs
         U.exp0[u], U.applied[u], U.stacks[u], U.inst[u], U.harm[u], U.seq[u], U.rec[u] = e, ap, st, ins, hm, sq, rc
         U.ord[u], U.ordN[u], U.gen[u] = ord, 0, 0
         U.firstWalk[u] = 0
@@ -109,7 +125,7 @@ I.OnBuild(function(def, now)
         end
         memExp[s], memApplied[s], memStacks[s], memInst[s] = e, ap, st, ins
     end
-    I.curSlot = 0
+    I.curSlot = 0 -- the build cleared the log (Sources/Target.lua's hook resets I.curSwapN and logs its own swap)
     CONS.n = 0
     for j = 1, U.nAura do
         local by = rawget(auras[j], "consumedBy")
@@ -124,6 +140,8 @@ I.OnBuild(function(def, now)
                 end
             end
             consKinds[CONS.n] = kinds
+            local icd = rawget(auras[j], "consumeIcd")
+            consIcd[CONS.n], consLast[CONS.n] = type(icd) == "number" and icd > 0 and icd or 0, -HUGE
         end
     end
     I.TRACKED.aura = U.id
@@ -180,6 +198,8 @@ local function set(u, j, expires, applied, stacks, t, origin, event, harmful)
     if expires <= 0 then
         if was > 0 then
             push(D.rem, D.nRem, u, inst0)
+            U.fellAt[u][j], U.fellFrom[u][j] = was < t and was or t, U.applied[u][j] -- a fall by time: when it ran out
+            U.fellExp[u][j], U.fellStacks[u][j] = was, wasStacks
         end
         U.inst[u][j] = 0
         expires, applied, stacks = 0, 0, 0
@@ -187,6 +207,14 @@ local function set(u, j, expires, applied, stacks, t, origin, event, harmful)
         push(D.upd, D.nUpd, u, inst0)
     end
     e[j], U.applied[u][j], U.stacks[u][j] = expires, applied, stacks
+    local f = u == 1 and U.haste[j] or 0
+    if f > 0 and (expires > 0) ~= U.hasteOn[j] then -- a `swingHaste` aura's gain or fall (aura audit C5)
+        U.hasteOn[j] = expires > 0 -- an expired record recast before the sweep stays one application
+        local at = (expires <= 0 and was < t) and was or t -- a fall by time: when it ran out
+        if I.inCombat and at >= I.combatT then -- out of combat the client's plain speed reads say it
+            I.SwingHaste(expires > 0 and f or 1 / f, at) -- nonzero: f > 0
+        end
+    end
     if harmful ~= nil then
         U.harm[u][j] = harmful
     end
@@ -265,12 +293,32 @@ function I.CastAura(unit, spellID, t)
     return VS.Aura(unit, spellID, t)
 end
 
+--- I.CastAura as of a past t (a reaction folded after its outcome: Families/Now.lua): an application later than t
+--- reads down, and the last one fallen after t reads up as it was. Expiry (nil: down), stacks, applied. Allocates
+--- nothing.
+--- shortcut: one fall deep, and a refresh after t (a later applied time) reads down; upgrade with a per-aura history
+--- if a reaction shows either.
+function I.AuraAsOf(unit, spellID, t)
+    local rec, stacks, applied = I.CastAura(unit, spellID, t)
+    if rec and applied <= t then
+        return rec.est, stacks, applied
+    end
+    local u, j = U.index[unit], U.bySpell[spellID]
+    if u and j and U.fellFrom[u][j] <= t and U.fellAt[u][j] > t then
+        return U.fellExp[u][j], U.fellStacks[u][j], U.fellFrom[u][j]
+    end
+    return nil
+end
+
 --- Our own cast changed aura j on unit u (spec §5.3): a `modelled` expiry with its stacks and applied time. A plain
 --- read that saw the aura up in the cast's frame or later already includes the cast (its stack, say): the read wins
---- and the modelled change is dropped (counted), so the cast is not applied twice.
-function I.AuraModel(u, j, applied, expires, stacks, t, event, harmful)
+--- and the modelled change is dropped (counted), so the cast is not applied twice. `closes` (a charge spend taking the
+--- last stack, Families/Modifiers.lua): an up-read before the cast, even in its frame, cannot include a close, so only
+--- a read at the cast's time or later wins (one at its time: a proc the cast itself raised) (L576).
+function I.AuraModel(u, j, applied, expires, stacks, t, event, harmful, closes)
     local seen = U.rec[u][j].last.observed
-    if seen.event == Obs.Read and seen.v > 0 and seen.t >= t - I.SAME_FRAME then
+    local from = closes and t or t - I.SAME_FRAME
+    if seen.event == Obs.Read and seen.v > 0 and seen.t >= from then
         I.auraReadsWon = I.auraReadsWon + 1
         return
     end
@@ -278,14 +326,16 @@ function I.AuraModel(u, j, applied, expires, stacks, t, event, harmful)
 end
 
 -- A hit of a listed kind spends one stack of each `consumedBy` player aura believed up (a modelled sample at the hit),
--- and takes it down at 0. The floor (decision 114): a generic input by aura, default 0; while floor[j] is 1 the last
+-- and takes it down at 0; an aura with `consumeIcd` spends at most one a window from its last spend (wowsims's ICD
+-- timer: a recast keeps it running). The floor (decision 114): a generic input by aura, default 0; while floor[j] is 1 the last
 -- stack is kept (its writer says the aura is seen up: the hit count is not what closes it). Allocates nothing.
 local floor = I.auraFloor or {}
 I.auraFloor = floor
 I.On(Obs.PlayerHit, function(o, t)
     for k = 1, CONS.n do
         local j = CONS[k]
-        if consKinds[k][o.a] and U.exp0[1][j] > t then -- unit 1 is always "player" (Tracked.lua's def.units)
+        if consKinds[k][o.a] and U.exp0[1][j] > t and t - consLast[k] >= consIcd[k] then -- unit 1: "player"
+            consLast[k] = t
             local n = U.stacks[1][j] - 1
             if n > 0 then
                 set(1, j, U.exp0[1][j], U.applied[1][j], n, t, "modelled", Obs.PlayerHit)
@@ -330,15 +380,15 @@ end
 -- TargetSwap: a is the new target's memory slot (0: none). TargetGone: forget slot a.
 I.On(Obs.TargetSwap, function(o)
     save(I.curSlot)
-    I.curSlot = o.a
+    I.curSlot, I.curSwapN = o.a, I.targetSwapN
     load(o.a)
 end)
 
 I.On(Obs.TargetGone, function(o)
     local s = o.a
     if s > 0 then
-        for j = 1, U.nAura do
-            memExp[s][j] = 0
+        for j = 1, U.nAura do -- all four (review m2): a reused slot's load must bring no old mob's stacks
+            memExp[s][j], memApplied[s][j], memStacks[s][j], memInst[s][j] = 0, 0, 0, 0
         end
         if s == I.curSlot then
             load(0)

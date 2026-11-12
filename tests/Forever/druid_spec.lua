@@ -67,6 +67,7 @@ local KIT = {
     entangling_roots = { { 339, 1062, 5195, 5196, 9852, 9853 }, { 50, 65, 80, 95, 110, 125 }, "mana", 0, "spell" },
     innervate = { { 29166 }, 62, "mana", 360, "spell" },
     barkskin = { { 22812 }, 0, nil, 60, "spell" },
+    natures_swiftness = { { 17116 }, 0, nil, 180, "off" },
     natures_grasp = { { 16689, 16810, 16811, 16812, 16813, 17329 }, { 50, 65, 80, 95, 110, 125 }, "mana", 60, "spell" },
     mark_of_the_wild = {
         { 1126, 5232, 6756, 5234, 8907, 9884, 9885 },
@@ -110,6 +111,7 @@ local NOW = {
     "prowl",
     "dash",
     "shifting_power",
+    "natures_swiftness",
     "berserk",
     "cat_form",
     "bear_form",
@@ -126,6 +128,7 @@ local NOW = {
     "feral_charge",
     "faerie_fire",
     "wrath",
+    "starfire",
     "moonfire",
     "insect_swarm",
     "entangling_roots",
@@ -231,7 +234,7 @@ describe("Forever Druid", function()
                     assert.are.equal(want[2], priced(w, ld.run(a.spend, e), a.spendType) or 0, key)
                 end
             end
-            assert.are.equal(44, n)
+            assert.are.equal(45, n)
             local stale = { tigers_fury = true }
             for _, id in ipairs({
                 5217,
@@ -260,7 +263,7 @@ describe("Forever Druid", function()
             -- Wrath's cast at its top rank (the cost loop above learned every rank)
             assert.are.same(
                 { 2, 3.5, 2 },
-                { ld.run(w.abilities.wrath.cast, e), w.abilities.starfire.cast, w.abilities.regrowth.cast }
+                { ld.run(w.abilities.wrath.cast, e), ld.run(w.abilities.starfire.cast, e), w.abilities.regrowth.cast }
             )
         end
     )
@@ -548,6 +551,20 @@ describe("Forever Druid", function()
             end
         )
 
+        it("lengthens Faerie Fire by 5 s under the Haruspex's Garb 3-piece (aura 24479 or 3 pieces worn)", function()
+            local function ff(sb)
+                local e2 = ld.env(w)
+                e2.set_bonus = setmetatable(sb, {
+                    __index = function()
+                        return 0
+                    end,
+                })
+                return ld.run(w.auras.faerie_fire.duration, e2)
+            end
+            assert.are.same({ 40, 45 }, { ff({}), ff({ haruspex_3pc = 1 }) })
+            assert.are.equal(24479, w.auras.haruspex_3pc.id)
+        end)
+
         it("gains Shifting Power's 40 energy and Enrage's 10 rage, and Bite spends the energy left", function()
             local e = ld.env(w)
             ld.run(w.abilities.shifting_power.now, e)
@@ -581,7 +598,7 @@ describe("Forever Druid", function()
             assert.are.equal(17768, w.auras.wolfshead_helm.id)
         end)
 
-        it("adds Wrath's Eclipse charges only with the talent, and Starfire's handler spends one", function()
+        it("adds Wrath's Eclipse charges only with the talent, and Starfire's now and handler spend one", function()
             local e = ld.env(w)
             ld.run(w.abilities.wrath.now, e)
             assert.are.same({}, e.added)
@@ -589,12 +606,82 @@ describe("Forever Druid", function()
             ld.run(w.abilities.wrath.now, e)
             ld.run(w.abilities.wrath.handler, e)
             assert.are.same({ { "eclipse", 2 }, { "eclipse", 2 } }, e.added)
-            ld.run(w.abilities.starfire.handler, e)
-            assert.are.same({}, e.removed)
-            e.buff = auras({ eclipse = { up = true, stack = 2 } })
-            ld.run(w.abilities.starfire.handler, e)
-            assert.are.same({ "eclipse" }, e.removed)
+            -- wowsims talents_balance.go applyEclipse: every Starfire cast spends a charge; the belief at the cast (`now`)
+            for _, f in ipairs({ "now", "handler" }) do
+                e.removed = {}
+                e.buff = auras({})
+                ld.run(w.abilities.starfire[f], e)
+                assert.are.same({}, e.removed, f)
+                e.buff = auras({ eclipse = { up = true, stack = 2 } })
+                ld.run(w.abilities.starfire[f], e)
+                assert.are.same({ "eclipse" }, e.removed, f)
+            end
         end)
+
+        -- the pin's 16886: effect 0 10% casting speed (every spell GCD), effect 1 -10% GCD on its class mask (14 pack spells)
+        it("registers Nature's Grace's two GCD modifiers, the cast speed's and the mask's cut", function()
+            assert.are.same({
+                { aura = "natures_grace", pct = 1 / 1.1 - 1 },
+                {
+                    aura = "natures_grace",
+                    pct = -0.1,
+                    spells = { 339, 467, 770, 774, 1126, 2912, 5176, 5185, 5570, 8921, 8936, 16689, 16914, 21849 },
+                },
+            }, w.gcdMods)
+        end)
+
+        it("registers the Eclipse and Nature's Grace talent ids as aura copies", function()
+            local function has(a, id)
+                for _, c in ipairs(a.copy) do
+                    if c == id then
+                        return true
+                    end
+                end
+            end
+            assert.is_true(has(w.auras.eclipse, 408248) and has(w.auras.eclipse, 441260))
+            assert.is_true(has(w.auras.natures_grace, 16880))
+        end)
+
+        it("Starfire's cast follows Improved Starfire, the Eclipse charge and Nature's Grace", function()
+            local e = ld.env(w)
+            local function ranks(t)
+                return setmetatable(t, getmetatable(rank(0)))
+            end
+            local function cast(talents, buffs)
+                e.talent = talents
+                e.buff = auras(buffs)
+                return ld.run(w.abilities.starfire.cast, e)
+            end
+            local up = { up = true, stack = 2 }
+            assert.is_near(3.5, cast(rank(0), {}), 1e-9)
+            assert.is_near(3.0, cast(ranks({ improved_starfire = { rank = 5 } }), {}), 1e-9)
+            local both = ranks({ improved_starfire = { rank = 5 }, eclipse = { rank = 3 } })
+            assert.is_near(2.5, cast(both, { eclipse = up }), 1e-9)
+            assert.is_near(3.33, cast(ranks({ eclipse = { rank = 1 } }), { eclipse = up }), 1e-9)
+            assert.is_near(3.17, cast(ranks({ eclipse = { rank = 2 } }), { eclipse = up }), 1e-9)
+            assert.is_near(3.5 / 1.1, cast(rank(0), { natures_grace = { up = true } }), 1e-9)
+        end)
+
+        it(
+            "Wrath is instant under Nature's Swiftness, which its now and handler spend; Nature's Grace speeds it",
+            function()
+                local e = ld.env(w)
+                e.talent = rank(0)
+                e.buff = auras({ natures_swiftness = { up = true } })
+                assert.are.equal(0, ld.run(w.abilities.wrath.cast, e))
+                for _, f in ipairs({ "now", "handler" }) do
+                    e.removed = {}
+                    ld.run(w.abilities.wrath[f], e)
+                    assert.are.same({ "natures_swiftness" }, e.removed, f)
+                end
+                e.buff = auras({})
+                local base = ld.run(w.abilities.wrath.cast, e)
+                e.buff = auras({ natures_grace = { up = true } })
+                assert.is_near(base / 1.1, ld.run(w.abilities.wrath.cast, e), 1e-9)
+                ld.run(w.abilities.natures_swiftness.handler, e)
+                assert.are.same({ "natures_swiftness" }, e.applied)
+            end
+        )
 
         it('leaves any form but Moonkin on Innervate, as Classic\'s swap_form("") and wowsims/forever', function()
             for _, f in ipairs({ "now", "handler" }) do
@@ -652,22 +739,35 @@ describe("Forever Druid", function()
         end)
     end)
 
-    it("shifts: Bear Form spends all rage and removes the other forms and Maul; Cat Form writes no energy", function()
-        local e = ld.env(w)
-        e.rage.current = 40
-        ld.run(w.abilities.bear_form.now, e)
-        assert.are.same({ { 40, "rage" } }, e.spent)
-        assert.are.same({ "cat_form", "bear_form", "moonkin_form", "travel_form", "aquatic_form", "maul" }, e.removed)
-        assert.are.same({ "bear_form" }, e.applied)
-        e = ld.env(w)
-        ld.run(w.abilities.cat_form.now, e)
-        e.swap_form("cat_form")
-        assert.are.same({ {}, {}, { "cat_form", "cat_form" } }, { e.spent, e.gained, e.applied })
-        e = ld.env(w)
-        e.rage.current = 30
-        e.swap_form("bear_form")
-        assert.are.same({ { 30, "rage" } }, e.spent)
-    end)
+    -- Furor (wowsims forms.go restoreCatEnergy): into Cat Form the energy becomes 20% a rank of the energy believed then
+    -- (the energy left in Cat plus 10 a second outside Bear Form, capped: the pool's own regen, paused in Bear)
+    it(
+        "shifts: Bear Form spends all rage and removes the other forms and Maul; Cat Form keeps Furor's share",
+        function()
+            local e = ld.env(w)
+            e.rage.current = 40
+            ld.run(w.abilities.bear_form.now, e)
+            assert.are.same({ { 40, "rage" } }, e.spent)
+            assert.are.same(
+                { "cat_form", "bear_form", "moonkin_form", "travel_form", "aquatic_form", "maul" },
+                e.removed
+            )
+            assert.are.same({ "bear_form" }, e.applied)
+            for _, x in ipairs({ { 0, 50 }, { 3, 20 }, { 5, 0 } }) do
+                e = ld.env(w)
+                e.talent = setmetatable({ furor = { rank = x[1] } }, getmetatable(rank(0)))
+                e.energy.current = 50
+                ld.run(w.abilities.cat_form.now, e)
+                e.swap_form("cat_form")
+                assert.are.same({ { x[2], "energy" }, { x[2], "energy" } }, e.spent, "Furor " .. x[1])
+                assert.are.same({ {}, { "cat_form", "cat_form" } }, { e.gained, e.applied })
+            end
+            e = ld.env(w)
+            e.rage.current = 30
+            e.swap_form("bear_form")
+            assert.are.same({ { 30, "rage" } }, e.spent)
+        end
+    )
 
     it("reads Maul's queue at reset, leaving the form to the Forms source", function()
         local e = ld.env(w)
@@ -713,13 +813,17 @@ describe("Forever Druid", function()
     )
 
     it(
-        "declares energy with no regen model, combo points with no maximum, mana's five-second rule, Classic's order",
+        "declares energy paused in Bear Form, combo points with no maximum, mana's five-second rule, Classic's order",
         function()
             assert.are.same({ 3, 4, 1, 0 }, w.order)
             for _, pt in ipairs({ 4 }) do
                 assert.are.same({ nil, nil }, { w.resources[pt].models, w.resources[pt].meta }, pt)
             end
-            assert.are.same({ nil, { refundOnAvoid = 0.8 } }, { w.resources[3].models, w.resources[3].meta })
+            -- no energy in Bear Form (wowsims forms.go pauseCatEnergy)
+            assert.are.same(
+                { { bear_pause = { aura = "bear_form", mult = 0 } }, { regen = 10, refundOnAvoid = 0.8 } },
+                { w.resources[3].models, w.resources[3].meta }
+            )
             -- wowsims/forever's logs: 2.2 mana a 0.1 s tick outside the rule, none inside it (Feral, Balance)
             assert.are.same({ spirit = 22, mp5 = 0 }, w.resources[0].meta.fsr)
             assert.is_nil(w.resources[1].meta.max)
@@ -796,15 +900,7 @@ describe("Forever Druid", function()
         assert.is_nil(src:find("buff%.clearcasting")) -- the modifier, not each `spend`, prices it
     end)
 
-    describe("the missable bleeds and the not-behind window", function()
-        local function reset(t, debuffs)
-            local e = ld.env(w)
-            e.now, e.query_time = t, t
-            e.debuff = auras(debuffs or {})
-            ld.run(w.hooks.reset_precast, e)
-            return e
-        end
-
+    describe("the missable bleeds", function()
         it("declares its bleeds missable, which core drops on a miss (Engine/Schema/Spec/Abilities.lua)", function()
             assert.are.same({ true, true, "pounce_bleed" }, {
                 w.abilities.rake.missable,
@@ -814,14 +910,10 @@ describe("Forever Druid", function()
             assert.is_nil(w.events.COMBAT_LOG_EVENT_UNFILTERED) -- no copy of its own
         end)
 
-        it("opens not_behind for the rest of 5 s after a listed error, never for another", function()
-            w.spec.notBehindErrors[51] = true -- the type checkpoint Q11 records
-            w.game.now = 20
-            w.events.UI_ERROR_MESSAGE("UI_ERROR_MESSAGE", 50, "Another error.")
-            assert.is_nil(reset(21).durations.not_behind)
-            w.events.UI_ERROR_MESSAGE("UI_ERROR_MESSAGE", 51, "You must be behind your target.")
-            assert.are.equal(3, reset(22).durations.not_behind)
-            assert.is_nil(reset(25.5).durations.not_behind)
+        it("has no not-behind window: no error handler, no not_behind aura (L599)", function()
+            assert.is_nil(w.events.UI_ERROR_MESSAGE)
+            assert.is_nil(w.auras.not_behind)
+            assert.is_nil(rawget(w.spec, "notBehindErrors"))
         end)
     end)
 
@@ -838,16 +930,8 @@ describe("Forever Druid", function()
         end
     end)
 
-    it("refuses Shred in the not-behind window unless the behind setting says otherwise (Claw then)", function()
-        local e = ld.env(w)
-        local ok = function()
-            return ld.run(w.abilities.shred.usable, e)
-        end
-        assert.is_true(ok())
-        e.buff = auras({ not_behind = { up = true } })
-        assert.is_false(ok())
-        e.settings.behind = true
-        assert.is_true(ok())
+    it("never refuses Shred by position: the priority's lines choose Claw or Shred (L603)", function()
+        assert.is_nil(w.abilities.shred.usable)
     end)
 
     it("registers the packs of APLs/packs.lua exactly as tools/make_pack.lua druid prints them", function()
@@ -1061,16 +1145,20 @@ describe("Forever Druid in VirtualState's now context", function()
 
     it("runs a Feral and a bear sequence: costs, energy, forms, debuffs and bear rage, with no `now` error", function()
         I.Sources.Direct(VS.Obs.CombatStart, 1.5) -- in combat: no rage decay
+        I.SetTalentRank(I.talents.bySpell[17056], 5) -- Furor 5/5: the Cat entry keeps the 100
         cast(768, 2) -- Cat Form: 684 mana (55% of the base mana at 60) of the fake's 100: none left
         assert.is_not_nil(VS.Aura("player", 768, 2.1))
         near(0, power(0, 2.1))
-        cast(5221, 3) -- Shred: 60 of 100 energy
+        local function close(want, got)
+            assert.is_true(math.abs(got - want) < 1e-6, ("want %.4f, got %.4f"):format(want, got))
+        end
+        cast(5221, 3) -- Shred: 60 of 100 energy, then the declared 10 a second
         cast(1322605, 4) -- Shifting Power: +40
-        assert.are.equal(80, power(3, 4.1))
-        cast(1822, 5) -- Rake: 40, and its 9 s debuff
+        close(91, power(3, 4.1))
+        cast(1822, 5) -- Rake: 40 of the capped 100, and its 9 s debuff
         assert.are.equal(14, VS.Aura("target", 1822, 5.1).est)
-        cast(22568, 6) -- Ferocious Bite: 35, then the 5 left
-        assert.are.equal(0, power(3, 6.1))
+        cast(22568, 6) -- Ferocious Bite: 35 of 70, then the 35 left
+        close(1, power(3, 6.1))
         cast(5487, 7) -- Bear Form
         assert.are.same({ true, false }, { VS.Aura("player", 5487, 7.1) ~= nil, VS.Aura("player", 768, 7.1) ~= nil })
         I.Sources.Direct(VS.Obs.Swing, 8, 1, 2.5, 4) -- PLAYER_SWING, then Rows.lua's landed wound
@@ -1089,6 +1177,15 @@ describe("Forever Druid in VirtualState's now context", function()
         VS.Drain(16)
         assert.are.equal(power(1, 15.1), power(1, 16))
         assert.are.same({ 0, 9 }, { I.nowErrors, I.nowRuns })
+    end)
+
+    -- L576 bug 1: energy is secret even out of combat and the rate read never came (a /reload in combat): the build
+    -- seeds the pack's declared 10 a second (wowsims energy.go:48-49), not 0.
+    it("regenerates energy at the declared 10 a second from a build with no plain rate read", function()
+        I.Sources.Direct(VS.Obs.CombatStart, 1.5)
+        near(10, VS.Regen(3, 1.6).est)
+        cast(5221, 2) -- Shred: 60 of 100 energy
+        near(10, power(3, 3.25) - power(3, 2.25)) -- after Shred's 60, 10 a second
     end)
 
     it("builds each ability's declared outcome as the class file registers it (Families/Expect.lua)", function()
@@ -1119,6 +1216,53 @@ describe("Forever Druid in VirtualState's now context", function()
         assert.are.equal(0, crit(4))
         I.SetTalentRank(I.talents.bySpell[16958], 2)
         assert.are.equal(5, crit(6))
+        assert.are.equal(0, I.nowErrors, tostring(I.nowError))
+    end)
+
+    -- L586, Furor (wowsims forms.go): out of Cat the pool keeps its 10 a second except in Bear Form, and a Cat entry
+    -- keeps 20% a rank of it: untalented, none. Cat at 2 (from 100), Shred at 3 (60), out of Cat at 4 to the caster
+    -- form or Bear Form, back into Cat at 7. At 5/5: 40 left, 50 at 4, then 80 (caster) or 50 (Bear); at 3/5: 60 at
+    -- the entry, 10 after Shred, 20 at 4, 50 at 7, x 0.6.
+    for _, x in ipairs({ { 0, false, 0 }, { 0, true, 0 }, { 5, false, 80 }, { 5, true, 50 }, { 3, false, 30 } }) do
+        local furor, bear, want = x[1], x[2], x[3]
+        it(
+            ("enters Cat Form with Furor %d/5 after 3 s in %s: %d energy"):format(
+                furor,
+                bear and "Bear Form" or "caster form",
+                want
+            ),
+            function()
+                I.Sources.Direct(VS.Obs.CombatStart, 1.5)
+                I.SetTalentRank(I.talents.bySpell[17056], furor)
+                cast(768, 2)
+                near(math.min(100, 100 * furor / 5 + 1), power(3, 2.1)) -- then 10 a second
+                cast(5221, 3) -- Shred: 60
+                if bear then
+                    cast(5487, 4)
+                else
+                    ctl.form = 0 -- a manual unshift
+                    ctl.Fire("UPDATE_SHAPESHIFT_FORM")
+                    ctl.Tick(4)
+                    VS.Drain(4.01)
+                end
+                cast(768, 7)
+                near(want + 0.5, power(3, 7.05))
+                assert.are.equal(0, I.nowErrors, tostring(I.nowError))
+            end
+        )
+    end
+
+    -- wowsims talents_balance.go applyNaturesGrace, its Balance log: under Nature's Grace a GCD takes the 10% cast speed
+    -- and, on the buff's class mask, the 10% cut: Moonfire 1.227 s, Innervate 1.364 s, 1.5 s without it.
+    it("cuts the GCD under Nature's Grace: 1.227 s on its mask's spells, 1.364 s on the others", function()
+        local function gcdOf(id, t)
+            cast(id, t)
+            return VS.Gcd(t + 0.05).est - t
+        end
+        near(1.5, gcdOf(8921, 2)) -- Moonfire, no buff
+        I.AuraModel(1, I.auras.bySpell[16886], 4, 30, 1, 4, VS.Obs.CastSuccess, false)
+        assert.is_true(math.abs(gcdOf(8921, 5) - 1.5 / 1.1 * 0.9) < 0.002)
+        assert.is_true(math.abs(gcdOf(29166, 8) - 1.5 / 1.1) < 0.002)
         assert.are.equal(0, I.nowErrors, tostring(I.nowError))
     end)
 
@@ -1169,10 +1313,26 @@ describe("Forever Druid in VirtualState's now context", function()
     it("makes a covered cast free while Clearcasting is believed up, which the cast then takes", function()
         cast(5221, 2) -- 40 energy left
         I.AuraModel(1, I.auras.bySpell[16870], 3, 18, 1, 3, VS.Obs.CastSuccess, false)
-        cast(5221, 4) -- free
-        assert.are.same({ 40, nil }, { power(3, 4.1), VS.Aura("player", 16870, 4.1) })
-        cast(5221, 5)
-        assert.are.equal(0, power(3, 5.1))
+        cast(5221, 4) -- free: only the 10 a second since
+        assert.is_nil(VS.Aura("player", 16870, 4.1))
+        assert.is_true(math.abs(power(3, 4.1) - 61) < 1e-6)
+        cast(5221, 5) -- 70 - 60
+        assert.is_true(math.abs(power(3, 5.1) - 11) < 1e-6)
+    end)
+
+    -- L576 bug 2: the Prowl-removal walk reads Poised up (permanent) 20 ms before Ravage; Ravage still takes the charge,
+    -- so Claw after it pays its full cost.
+    it("spends Poised at Ravage even when a plain read saw it up in the cast's frame", function()
+        local j, claw = I.auras.bySpell[1328827], I.ab.bySpell[1082]
+        ctl.Tick(1.5) -- the build's player walk first: the fake lists no Poised, the read below is the fixture
+        VS.Drain(1.5)
+        I.Sources.Direct(VS.Obs.Read, 4.98, j, -1, I.ReadOf.Aura + I.AURA_STACK)
+        I.Fold(4.99)
+        assert.is_not_nil(VS.Aura("player", 1328827, 4.99))
+        cast(6785, 5) -- Ravage, discounted
+        assert.is_nil(VS.Aura("player", 1328827, 5.1))
+        I.clock = 5.1
+        assert.are.equal(I.BaseCostOf(claw), I.CostOf(claw))
     end)
 
     it("allocates nothing over 1000 casts with `now` handlers", function()
@@ -1335,5 +1495,101 @@ describe("Forever Druid Ravage opener (R69)", function()
         assert.are.equal("faerie_fire", list[1], table.concat(list, " "))
         none(list, "ravage")
         none(list, "cancel_buff")
+    end)
+end)
+
+-- Claw vs Shred (owner L597-L603): a Shred line runs while `settings.behind` is on or the target is not attacking us
+-- (target.is_targeting_player), and with Shredding Attacks at 2+ ranks or Clearcasting up; the Claw line takes the
+-- other cases at Claw's own cost. The pack's Shred and Claw lines alone, a Cat in melee range, in combat.
+describe("Forever Druid Claw vs Shred (L602)", function()
+    local headless = require("Game.harness.headless")
+    local dlw = require("Forever.helpers.druid_loop_world")
+    local SECRET = require("Game.State.helpers.fake_api").SECRET
+    local PACK = "Feral (wowsims.com)"
+
+    local function lines(key)
+        local f = assert(io.open("src/Hekili_Druid/APLs/" .. PACK .. ".simc"))
+        local s = f:read("*a")
+        f:close()
+        local out = {}
+        for l in s:gmatch("\n(actions%+=/" .. key .. ",[^\n]+)") do
+            out[#out + 1] = l
+        end
+        return out
+    end
+
+    -- The first icon of a Cat with `o.shredding` ranks of Shredding Attacks and Ferocity 5/5 (Claw 40), `o.energy`
+    -- energy (100), the client's targettarget answer `o.tt` (nil: not us), Clearcasting up when `o.cc`, and
+    -- `settings.behind` as `o.behind`.
+    local function first(o)
+        local c = dlw.Feral.character()
+        c.talents[16966], c.talents[16934] = o.shredding, 5
+        local H = headless.new({ character = c, pack = PACK })
+        assert.are.same({}, H.loadErrors)
+        H.ctl.level.target, H.ctl.distance.target = 60, 3
+        H.ctl.unitIs.targettarget = o.tt
+        if o.cc then
+            H.ctl.auras.player.HELPFUL[1] = { spellId = 16870, expirationTime = H.ctl.now + 15, applications = 0 }
+        end
+        H.Fire("UNIT_AURA", "player")
+        H.Fire("PLAYER_TARGET_CHANGED")
+        local list = {}
+        for _, k in ipairs({ "shred", "claw" }) do
+            for _, l in ipairs(lines(k)) do
+                local parsed = H.Hekili:ParseActionList(l)
+                parsed[1].enabled = true
+                list[#list + 1] = parsed[1]
+            end
+        end
+        H.Hekili.DB.profile.packs[PACK].lists = { precombat = {}, default = list }
+        H.Hekili.DB.profile.specs[dlw.Feral.SPEC].settings.behind = o.behind or false
+        H.Hekili:LoadScripts()
+        H.Fire("PLAYER_REGEN_DISABLED")
+        local VS = H.ns.VirtualState
+        local e = o.energy or 100
+        local power, fixed = VS.Power, { est = e, lo = e, hi = e, conf = 1 }
+        VS.Power = function(pt, now)
+            return pt == 3 and fixed or power(pt, now)
+        end
+        assert.is_true(H.Hekili.Engine.Subscribe("Primary", function() end))
+        assert(headless.cycle(H, H.ctl.now + 0.2))
+        assert.are.same({}, H.errors)
+        local r = H.Hekili.Engine.Output.Primary.recs[1]
+        return r and r.actionName, r and r.wait
+    end
+
+    it("guards every Shred line, and the Claw line, by position, the talent and Clearcasting", function()
+        local shred, claw = lines("shred"), lines("claw")
+        local S = "(settings.behind|!target.is_targeting_player)&(talent.improved_shred.rank>=2|buff.clearcasting.up)"
+        local C = "(!settings.behind&target.is_targeting_player|talent.improved_shred.rank<2&!buff.clearcasting.up)"
+        assert.are.equal(2, #shred)
+        for _, l in ipairs(shred) do
+            assert.is_truthy(l:find(S, 1, true), l)
+        end
+        assert.are.equal(1, #claw)
+        assert.is_truthy(claw[1]:find(C, 1, true), claw[1])
+        assert.is_nil(claw[1]:find("action.shred.ready", 1, true))
+        assert.is_nil(claw[1]:find("action.shred.cost", 1, true))
+    end)
+
+    it("shows Claw at its own 40 energy while the target attacks us, Clearcasting or not", function()
+        local name, wait = first({ shredding = 3, tt = "player", energy = 40 })
+        assert.are.same({ "claw", 0 }, { name, wait }) -- now, not after pooling to Shred's 42
+        assert.are.equal("claw", first({ shredding = 3, tt = "player", cc = true }))
+    end)
+
+    it("shows Shred from behind with Shredding Attacks 2+, or while the behind setting is on", function()
+        assert.are.equal("shred", first({ shredding = 3 }))
+        assert.are.equal("shred", first({ shredding = 2, tt = "player", behind = true }))
+    end)
+
+    it("shows Claw even from behind with Shredding Attacks 0-1, and Shred under Clearcasting", function()
+        assert.are.equal("claw", first({ shredding = 0 }))
+        assert.are.equal("claw", first({ shredding = 1, behind = true }))
+        assert.are.equal("shred", first({ shredding = 1, cc = true }))
+    end)
+
+    it("reads a secret targettarget as behind", function()
+        assert.are.equal("shred", first({ shredding = 3, tt = SECRET }))
     end)
 end)

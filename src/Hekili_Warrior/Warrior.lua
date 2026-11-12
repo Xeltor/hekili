@@ -539,7 +539,7 @@ spec:RegisterAuras({
     },
     deep_wound = {
         id = 23255,
-        copy = { 23256 },
+        copy = { 23256, 412609 }, -- 412609: the CDM item's spell
         duration = 12,
         max_stack = 1,
     },
@@ -576,7 +576,13 @@ spec:RegisterAuras({
         id = 12966,
         copy = { 12967, 12968, 12969, 12970 },
         duration = 15,
-        max_stack = 1,
+        max_stack = 3,
+    },
+    -- Gore Drinker's heal buff (the talent's trigger): 3 charges, 8 s, from the five abilities the tooltip names.
+    gore_drinker = {
+        id = 1323969,
+        duration = 8,
+        max_stack = 3,
     },
     hamstring = {
         id = 1715,
@@ -665,15 +671,11 @@ spec:RegisterAuras({
     retaliation = {
         id = 20230,
         duration = 15,
-        max_stack = 1,
-    },
-    revenge_stun = {
-        id = 12798,
-        duration = 3,
-        max_stack = 1,
+        max_stack = 30,
     },
     -- Revenge's window from the block, dodge or parry on us in the combat log, while Revenge is usable (reset_precast).
     revenge_usable = {
+        id = 5302, -- Defensive State, wowsims G/revenge.go:19-26: the same 5 s window
         duration = 5,
         max_stack = 1,
     },
@@ -733,6 +735,16 @@ spec:RegisterAuras({
         duration = 300,
         max_stack = 1,
     },
+    -- Weaponmaster's three branches (talent 1290261; wowsims talents_arms.go:276-383 registers one aura each, tags 1/2/3 of
+    -- the one spell id, so ours are id-less): up while the talent is known and either hand holds the branch's weapon kind
+    -- (the gear scan's main_hand.sword and kin), applied at reset_precast. Display and custom priorities only; the sim-only
+    -- auras are not tracked by the belief. Axe/polearm crit and mace/staff armor ignore are damage-only effects no
+    -- priority consumes. The sword branch's extra attack (a chance roll on a landed melee hit, Whirlwind/Cleave once a
+    -- cast, none from Sweeping Strikes or a Windfury Totem swing) stays unmodelled: the roll is unseen, and an observed
+    -- extra swing already pays its rage through the swing rows. Needs in-game check: whether PLAYER_SWING fires for it.
+    weaponmaster_axe_polearm = { duration = 3600, max_stack = 1 },
+    weaponmaster_mace_staff = { duration = 3600, max_stack = 1 },
+    weaponmaster_sword = { duration = 3600, max_stack = 1 },
 })
 
 -- A stance change drops all rage above the amount kept by Tactical Mastery and its improved talent.
@@ -846,6 +858,19 @@ spec:RegisterHook("reset_precast", function()
     end
     if cl > 0 and IsCurrentSpell(CLEAVE[cl]) then
         applyBuff("cleave")
+    end
+
+    if talent.weaponmaster.rank > 0 then
+        local mh, oh = main_hand, off_hand
+        if mh.axe or mh.polearm or oh.axe or oh.polearm then
+            applyBuff("weaponmaster_axe_polearm")
+        end
+        if mh.mace or mh.staff or oh.mace or oh.staff then
+            applyBuff("weaponmaster_mace_staff")
+        end
+        if mh.sword or oh.sword then
+            applyBuff("weaponmaster_sword")
+        end
     end
 
     if now == query_time then
@@ -965,6 +990,9 @@ spec:RegisterAbilities({
         -- what the cast did to the now-state, in the belief's context (spec §12a)
         now = function()
             applyBuff("berserker_rage")
+            if talent.gore_drinker.rank > 0 then
+                applyBuff("gore_drinker", nil, 3)
+            end
             if talent.improved_berserker_rage.enabled then
                 gain(10 * talent.improved_berserker_rage.rank, "rage")
             end
@@ -972,6 +1000,9 @@ spec:RegisterAbilities({
 
         handler = function()
             applyBuff("berserker_rage")
+            if talent.gore_drinker.rank > 0 then
+                applyBuff("gore_drinker", nil, 3)
+            end
             -- DB2 20500: energize 100 (10 rage) a rank.
             if talent.improved_berserker_rage.enabled then
                 gain(10 * talent.improved_berserker_rage.rank, "rage")
@@ -1021,12 +1052,18 @@ spec:RegisterAbilities({
         now = function()
             gain(10 * (1 + 0.25 * talent.improved_bloodrage.rank), "rage")
             applyBuff("bloodrage")
+            if talent.gore_drinker.rank > 0 then
+                applyBuff("gore_drinker", nil, 3)
+            end
         end,
 
         handler = function()
             -- 12301 (in-game tooltip): +25% of the rage Bloodrage generates a rank.
             gain(10 * (1 + 0.25 * talent.improved_bloodrage.rank), "rage")
             applyBuff("bloodrage")
+            if talent.gore_drinker.rank > 0 then
+                applyBuff("gore_drinker", nil, 3)
+            end
         end,
     },
 
@@ -1046,6 +1083,18 @@ spec:RegisterAbilities({
         startsCombat = true,
         refundOnAvoid = true, -- wowsims talents_fury.go; DB2 Discount Power On Miss
         known = knows(BLOODTHIRST),
+
+        now = function()
+            if talent.gore_drinker.rank > 0 then
+                applyBuff("gore_drinker", nil, 3)
+            end
+        end,
+
+        handler = function()
+            if talent.gore_drinker.rank > 0 then
+                applyBuff("gore_drinker", nil, 3)
+            end
+        end,
     },
 
     challenging_shout = {
@@ -1180,10 +1229,16 @@ spec:RegisterAbilities({
 
         now = function()
             applyBuff("death_wish")
+            if talent.gore_drinker.rank > 0 then
+                applyBuff("gore_drinker", nil, 3)
+            end
         end,
 
         handler = function()
             applyBuff("death_wish")
+            if talent.gore_drinker.rank > 0 then
+                applyBuff("gore_drinker", nil, 3)
+            end
         end,
     },
 
@@ -1595,11 +1650,17 @@ spec:RegisterAbilities({
 
         now = function()
             applyBuff("reckless_swings", nil, 4)
+            if talent.gore_drinker.rank > 0 then
+                applyBuff("gore_drinker", nil, 3)
+            end
             gain(20, "rage")
         end,
 
         handler = function()
             applyBuff("reckless_swings", nil, 4)
+            if talent.gore_drinker.rank > 0 then
+                applyBuff("gore_drinker", nil, 3)
+            end
             gain(20, "rage")
         end,
     },
@@ -1664,11 +1725,11 @@ spec:RegisterAbilities({
         form = "battle_stance",
 
         now = function()
-            applyBuff("retaliation")
+            applyBuff("retaliation", nil, 30)
         end,
 
         handler = function()
-            applyBuff("retaliation")
+            applyBuff("retaliation", nil, 30)
         end,
     },
 
@@ -2234,6 +2295,10 @@ spec:RegisterStateExpr("prot_charge_range", function()
     return not action.rend.in_range and C_Spell.IsSpellInRange(CHARGE[1], "target") == true
 end)
 
+spec:RegisterStateExpr("prot_charge_ready", function()
+    return action.charge.known and cooldown.charge.ready
+end)
+
 spec:RegisterStateExpr("prot_melee_target", function()
     if combat == 0 or not state.prot_pve_target then
         return false
@@ -2474,8 +2539,8 @@ spec:RegisterSetting("maintain_thunder_clap", false, {
 -- /hekili priority <name>.
 spec:RegisterPack(
     "Protection (wowsims.com)",
-    20261111002,
-    [[Hekili:TZvBZTnUr4Fl(lUsZ5tw2oonjtKNjV1EPZD5YeL27BIcMesIvuKSeKwN74r)27UaKIaGeKGs02TtV7MjrIKyXZ(Sl2Db4gn7IzFF2upskD2xUC8LV8c4)gp(YzttVpMoBAmXDnzj8HqYg4p)Asuk1n1pkC38bBJ2Y83Wg5gTzi(K3her8qPDBMFq6NdNDBTcMftDNn93E33(2N)1V9M49sC20v(EEuXWOm3gMT3SBE6k6U55x78frj07Oj7M7rxqYcs3n)DF9N3nhU8U5kcjZ)CC6zNVLKK4hLCE50FojoGDEUagbFz0)Kffo8myQsiHSaqr8GphHtTpB3CINxu4Fc(WA69Sr7M)rsk5n1aPb)YN)oiKvPPXS3C(5l9txLDlQfNR9OdbzciNEn51UExsU0BHli2peff4fTnKHZ9YLbGwd0eLbt13OPKaFccEyc(iLKUA38FZNTc(20TuASF4s4tPj(RPiGd9YPTeIRpjaU0G3hefbx9VKLCpmO3tty0K1WWGV8PSe6Ac(HGSqkQO)S)YvPdrmfqymFxKB93qsUF3CxcWUSvrB3npiA7pUIscqWaSjnK5Fho9GkcpZ2v4FYrHBGpnmnxD2n)(OmGTeJeMJFc(ah)XrOccpqgJMpYpkjwbPad4xZs9Iqdoxp9YcxsrtECwqqXG)WksYsA(tSxiifrcDr3jFe0eut8PbEGq)hKWLzKe4XdOPcqwkg8XJYanGTLeliBgxsO7WFnjklg9yYbWcYDi4((QSqp0Ta4W4DZregsjj3cCiUuRWmnLda4VdiBodT0a5HtjkIP5s4DjBWVYDY93SH6bUcCgkb8egvkdWg7UgEeq2juW(EhIkXOcb3qoU3qdOuoRNeHgwHttoy(qaLG0eSYb)63iiscOlanpI7ItwKI)vwCH4eyaa(g)u)LeXIpUS8dHhnjloLjJqcBv(9)AgOjbGZHqYcNc3SKeURsks8POuGN8UpXxEe6MboJ4eak62cxX0OyUL0LWsf0m8LWOWF82igRWnKBndii7qqYH4DVechPg7iHUHU5wyfYU5F5RFaWceFe9)wHlAftJiWaJMJhUcXiC3ubPXzDzTw2rrqA4eXv(9RQeSUyEYnG7MFlnfwHhkMzKl)7Od(3jzinXNgyLnFbdNY2V8NeUw4VUFmF0Nrs2a3FjXpe1cAiDJpI59lh84pc5wm4ZwkjokCeQr(EkRkHyzzquYOemwbldwk4hYxaGbA9tVhgZNcfc5xGBH3gxfcoXWk9)TiwLy9K)ICBdjb9bb6CzyrW31qCn4jsr3TrqwNKOf(bqMjc3mXgfJ03MBjPt2h8XrSQ8maQorlw4S01BYfN5Vycg83Xncm4)EAgj408bo(uXn4lZDGG)lPNs)xz(XGzAKi0WPqKxWJC0D5Xhgr5AM3Pcymsm2rRdHi3GyfHWlUk3r70tUnBXIr6GCuwC(DaKKgiF5eWfAuq0BNiUKd(DN1040D)Tkk)pm5CLXFu6Ex1Pki)etSvhvjXCDm6IbQcZcIZDvrp4enH)GQW3puhgzbDyZMc07gfQknHxfzPbMNRHNoqmBqidN8yatg)G4Xfbh5C3ntYTvkY2nIL(dvg)WwaRb)gdM4bNKpZvCO5(lpy0BF4P6AD9WkrQyhegwnO2dbyEvyvRHwmGs(7)dd10UJsh04UQj9zaM(nScinHvJVuBVqIbsxKioxi3m(uX3hHjz9dVgvb(3HfSmOG4Rp1JY1vm)oKBe1sTRC3LfqzFjloB9dbstgoX8cQE8rIcHUVOmm(4wdmB)aL86)lRRC)ZOcIrOZe4)aL)TxS(mh(33h8sY2ve3QM7WDfFOkhCXWsjjODnHKFrZJxMeHWyRdGsjDyGrDjRXGEWJdBjlLVIWtJUHI3Idi37ClfyHjVyCzuVYHOebpxv3sccucElFDiUDn(84T0MVRUUC(ufq5ekHd55tbEQtxAuifkYDJ2KD9yrk7Ui3JuVHir0emhmJ(CdgXwN5CtJUaxnwFuG)LJyB2w47uFuXBue6HMpeIaON9ZyUlLurMlGZ4evP4P3o5YRRROovfJKUcIYkITxTebXfe7KZHVZTox6w5uyQWnLqTGJGJ4Rob(S0ZWZPBIRNtXz8utMj88aQPs38CL3a25hgiO9eX5o4KXW0PklAZVvUZ5(S1fxg2TmUDY3o5IrxpC4WQvtLx2habCpPGhyx5jzTP9sCb1pvC0loUbK4g9mguXikGbEanA2w(1fhGJt((MV5I61KbDqSA5gqMDyduHSMzJtto1XWdxQjIOTSXM8sm6oCtT0qDQB1LN6gEe9cLvZJeVwtSLnJVoFjdMvRuNoHNMnE5W8Sfrq5nTeJRvd4JJg1ctQ4kk8Cj4zz2E4Afq9mPCYi2gn8oF30OK7DsYGKg9GrRUTGvCWcgL5jDi4t1dNOmy(4UgL2MdIqnbB55bwQxdy0u04WgTj)KdDQ(GpOP9flypw(iFhgLVldvleWjAMi8k0FN6MLsDIxry0cxSQyweRtag90icaXpz(89jDa1suzc71mLkeXR05HxvO3k5NAsJhurLblfSsJ5eb2cNTrjqfH8VdktcyTYccgAmYChSXDmgWbMW1qLxMP3kEEv5h5DfiQfsIGT2rXMIPutcb7Z0ApJAco3LfGNiS4R9JDW51WIl8w56E91OAHNuxPn(CAbDzDwUwPnvvFqBQub5OK0c2cL76j1SdOBGDaneQ9VnPc8Kr5(2RFOU7TpfYvgxV2G3zht56YFHLAl0ePEV8OO)AJA1qPQcGibzVSnXfqwDx447Df2Cl(AxFAaoKnV9GRNQ4VnSbvvrdSqJz5nOq(iyvdlIplSH)w2wvdEnAZGnEo6z(0WWL1Sp2oIkBsD0w9(hlg6s95QBv8yN5oUxht1o30bHYp8gyzqctu6yDa843fG0SyJIabUsjbfRVF8GLY8ydWAXH)INbh((DlaMl9EFkPxE8kzhk0Ur6VUcM7tC2zJH(omBzZHpBVcBPAshCICfH8ZSCaKyzfj0dxur9aW8G(vQCY78quAhUP8TkorR8d4SUt4SJkCtft2y1Knwm2GJsXQT(rjlEFO32uD3WdOyPbQXYGYD2Fc3xo2mULlyPrCBtfpd7uDPdQe9v6m57be3y5OAR7n)gvYX0BF94A6rcl7oMYxqXe(Z4Sa7avLPQUhgbwzpQAZJtfDXQvpk2NRmNaSlx1hWSP3bZlmgTEzgFLlmSLNlLe8TVW7P68Eqy27NnvsA4nZBwTztl19zPGKTDu7PaCuxz5OemboIxy7iKiKz4)pnV7O7IkQ)M7aQkXpLM4t4nVxnBN5)5AkMoz7KL6bYfDvhROjDVDz6IJMabhMUvN7zHCLAbJkcVF6LeRBWgeMxBaMIM84PdHiwEPTMg1EI5rcKpYTKtd9KtxAkN67kNALasX)zdMBT20rMs1toII5vAIrPdlaF)XkcGdfRBtN6BreZEdLcgr2RBgzxDDLvI4mufUw3Lp12bmisUyCZq56XsqPOvGKbshNZdGtruQNbSjuk3Nqp9iLNCs3lq3(kbxPojswdrrPNeOr)36J7FZyZUKQDJeFgTTALUxOrx62iou0d53yzDyUtRWqL61n1isCmOhQVu9lABiv)l9c0TVfLA84oARhL4y1umt9MwsuhTJ4FIHsvsJYqpGPjox(nyPWasBH6Ho3xtpEn2u7hsAZD2eNC0JzxqgYhZJv(G1824m(644x3UEEQ23bB3EjSh5HzXRnxpFIMpdEShwXsTvkKX(HQPgI6jRJOA3JRNAjkRph7UGidMw9KW9Hv8XsNAHnLRPK)GZMYpBimmhQQ6BXCVxS05NzfbuvtE2OeBo7pUYRx3HfQzlkvjbk)wM04Ct7fv(WPTcm11Vdgde2YHSxRXWmhBZbPZvwt7OT6l3qjbRvVyMAEZm9dx9S1Dwcezr7z1pV2iUfYuXFDoFVch1dnUv)25w)xszd6LV21spnZ(9CFD1EE0gRLKRS61zxMlk0ZoLQLCiDAvDp1YxhEpFDGVNoovAQQ8oNOUvk9jOBWo(2b7q7hSEOSHR0R8Vhi9AdaEO9a2(YnUSHdTLlaU68iuTBnQZZqNHzdpOihoDy7lDrVtWKjo8zAVlZAYx0Y2mJJy9YyBlbUg6SU)ZoY0FcWQx8R5t2UZG442k0vMQu1Wg6pA4A5UrVsV(SgExawS7JRmD(zsnFMsL41Qv9WU0SOz3441unekDL2tcITQp44yURhHw14fhT3L1RiFHPdY6rAhA9zVZ1p7csqd6PbBZM1pDvxVybnDioMoqHwokGAoF)wA4UJ8GceAHP0y6BwWQwXRt9INf9SwhAgVdSkFbjySpfmuMFZfj3uF6zHs3FnQ3rw2TGB0tqlXcQbqpWUYRbqAt5MakpKcoFH5879tR71GA1sV7zJ(uUrIxy7rBu7BYmxZQVbaBUdaNXBJS9)enn7pAKS)OrYEYAKSo5KFaE2gBjmtj3pPA296)DG7PiPUT9qMrhpd(iT9ldxx(PHdXP5gXA)pqCnUXR0QnH1HeYX8Q(AmF6)YXnlVFAjzPRWIe(j6A)a)DZh8xY)PaMF7z)N]]
+    20261112001,
+    [[Hekili:TZvBVnUns4Fl5l(Sr364KSzVUlwhG9L2R9q72fR3763SmJeTTollPtukU5qG)TFZqklrsjkrzRK0dxrbAJEHdFMNz4mdPM65xm)RZN5rsPZ)0LtU8vxCXfxozYfZNLEFmD(SyI7gYk4pcjBH)9NtIsPUP(rH7xmCx0oM)w2y3OTJW38(GiIhkTBZ8ds)PW53wRGzXu35Z(T39LV8t)6xEtCHeNpBTVNhvmmkZTHz7n7xKUMUFr(9oFzuc9oAY(fE0LKSG09lE3N)59lGBVFHIqY8phNE257ijj(rjNxo9NtIdyNNlGXWfJ)xSOWrVaMQesilauep4VJWP2NTFbXZlk8Va)Xg69SX7x8rsk5n1aPH)Yp9vqiRttJzV58Zx5NUo7wulox7vhbYeqo9AYRD9UKCP3sxqSFikkWlAxidN7vRcaTgOjkdMQVqtjb(ee8We8rkjD9(f)MpBnC1SDuASF4k4Vst83qrah6LtBjexFsaCRHVpikcU7pKLCpmO3tty0KnWWGl((Se6gc(hbzHuur)z)vRthHykGWy(Ui36VLKC)(fUeGDzRJ2TFrq0UVDnLeGGbytAiZ)oC6bveENDRX)nhfUb(0W0C1z)I7JYa2smsyo(r4p44pocvq4fYy08r(rjXkifya)AwQxeAW56Pxw4kkAYJZccom4pSMKSIM)gfcbPisOl6o5JGMGAIpnWde6)KeUkJKaVEanvaYsXGVEugObSDKybzZ4scDh(BjrzXOhtoawsUdb3xxNf6HUfahgVFbIWqkj5wGdXLAhmtZ4aa(VbKTVaT0a5HtjkIz5s4DjBXl5o5(B3s9axbodLaEcJlLbyJD3aVci7ekyFVdrLyuHGBih3BPbukN1tIqdRWPjhmFiGsqAcw5Gx(fcIKa6sqZJ4U4KLP4)jl(G4eyaa(w)u)veXIpUS8dHxnjloLjJqcBD(Z)CgOjbGZHqYcNc3SKeURsks8POuG38UVNV8i0ndCgXjau0DhCftJI5wsxclvqZWfHrHF7Trm2b3qU1mGGSdbjhI39siCSASJe6w62BHvi7x8Pp)balq8r0)BnUOvmnIadmAoE4keJWDtfKgN1L1AzhfbPHtex5lwvjyDX8KBa3V4wAkScpumZix(pqh8VsYqAIpnWkB(cgoLvS8NeUr4VwmMp6ZijBHNVI4hIAbnKU1hXCXYbp(RqUfd(SJsIJchJAKVNYQsiwwgeLmkbJvWYGLc(H8fayGw)07HX89HcH8lWJWhJRcbNyyL()reRsSEYFzUTHKG(GaDUk8qW3nqCn4nsr3TXqwNKOL(bqMjc3mXghJ032BjPtlc(4iwv(caQorlx6SY1B6fVWF5um4VJBeyW)90msWG8bozG4b8L5oqW)v0b0)DMFmyMglcnmaI8cEKJVlp(WykxZ8uhj6qn4SBZwUCSoygNfpy4zcqpgM00GINSjec3)GyyQpjlE0GeWrACq0BNkUNdETZgAC6()Efk4BMEUIaojgWKMPdXbNzIB6i0fZ1PGzducMZdN7QIE4zAc)bvHxmuhgzjDuZuo6lJcvLMW7Yn(MNRrdgkMniaHt(k(PtEq86IqHCU7MPA(pCz7gXs)MkJFulG1G)HbtCHNBf3AzN3A85hnqxRRhwjsL2GWWQb1(c(MwlQBn0wXxYF)FBGL2Dx6GE)ueoPFdIastyJ4lSkesmq9IKS5c5MjdexpgtG6hEnQc8RHLNmOy3Rh4r56kM7gY7HAP2DU7YdqPOCeND(HWgbKHtmVyPhFKOqOffCHrd3zGz7hOKxBFznJfVJkigJBqc8FGs7keRpZHFDXAbjB3Hvc18eUR4dv5GlgvkjbTRjK8BAE8YKie0AtauMOddmQRyngIdEDy7wP8veEA0nuywCa5ENBPalm9LtkJXvoeLac5Q6osqGs4a57dbdQXNhFK28D11LZNQakNqjCipFkWtD6sJcPqbSB1MSRNisq3f5EI6nejIMGzCz0NBWi2wmNBA0f4Qj6Jc8VCeBH2cFN6JkEJIqp2SFqea9CDgZGPKYXC5AgNOkLk92PxEDDLWPQyK01quwrS9QfeiUHyxAo8DL15c1kNctLPPeQfCeCex6e4ZsFbEgCtD9CoC(n1Kzc3RFn11MNR8gWo)WqbTNiotbNmgMovzrB(JYDoDZpbQIBd7eg3Q4BNEX4RhnAu1ANYlYdGayqXJtQR8KS20EbTG6Nkowfh3asCJEgdRyefWap8fnBl)(IdNXjFpX3Cr9AYWoiwTCdiZoQbQqwZSXPjN6y4bh1er0w24ZgwNZWadUoM9rMasQk7uhluDvRU)aQucoqdB49AIeTz815IzWABL60j80SnnhMVyzeu1tlH(AZU(iPrTWKkEOchAcE8LThfxbuptkNmITrdVZ3nnk5ENKmixspy0QBhyhoDbJY8SoetQ6juugJFsxdEBZPrOM3T8ial1RHmAkACyJ3MFyHovFXh00(dlypv(iFJhLF(cvleWjAMi8o0FN6MLsDIxty0dUyvXSiwNam6zxeaIFy85BF6ikXOYe2RjqviIVtNh(Ud6TsARM04Hvuzm1tYwMteylC2fLafkYVguMeWALfemYyK5oyJ7ymGJmpSHcYmtVv88QYpYBwquIKebBTJIn1yPMec2(P1Eg1wrH9gNZew8n(Xo48AyXf(OCDV(sxTWtQR0gFoTGUSolxR0MQQpSnv6a5OK0c2zL7MP1SXOBGngnc2sqBsf4jJY9Tx)qDpRifYvgxV2G3zht56Y)gLAl0ePEV8KO)AJA1qPQcGibzVSTXhGS6MZXp1kSNx8lT(0aCiBE7bxhO4VnQbvvrdSqJz59Kq(iyvdlIV7D022TvdEnAZGnEo6z(0WWL1S92oIkBsD0w9(Nkg6s95Q7G8uN5oUxht1o305JYpthyzqctu6yDa803fG0SyJIabUsjbhwF)4blL5XgG1Id)fpdo897wamx6DrkPxD6kzhk0Ur6F4zQLmVml5EPVdJcxwI)6o1ToQaD2kPV1Zw214Z2h4wQy1cYLx2g)mohczCwtc9WvBupampOFNkNupp2L2HHk)OC1(M8deThSnnvLzJLz2yvAdpjfR2clLS49HEBtzFJoIQOgQgKdQdQ4eXVCIzClxjtJ42MsHg1PcwhwjSS0z43diUX6u1w3B(lWKJP3(6j10bfw27mLFqJP83XbJaQov19YiWk7xvBEDQOJwT6vXEEL5eGD8Q(aMp7oyEHXO1xZ4NOHHT)CPKGR(eV)QZ7zH5VF(mjPHpmVX1MpRu3NNcs22rvqb4OUYYrjycCeV02ririZX)zwENs3fvu)l9buvIFknXNWBKVA2NZFmAzMU3ZmDYekl2JKsmPQ6q(i6MMU4xjqWXPd15nEqUsDOrfH3pTAI19FdcZRnatrpG80HqelVYwtJAlZ8ibYh5o2PHw2Pl9St9nTtTsaP4)QbZTwx8itP65crX8DAIrPbmaF)jkcGdfR7IN67GeZEdLcgr2RBgzxDDLvI4mufUw3eq12GmisUysZq56jsq5qNcjdKooNhbNIOupHxtOuUnIE6rkpjKUxGU9vcUsnAKSgIIspjqJ(V1h3)MjMDjvBwj(mABXjDVUIU0msCOOhYVXQ4WCNwHHkLNBQpL4yqpuFP6FORIu9V0Rh3(oyQXJ9OTwyIJvtXm17PjrzZoI)VluQWzug6bmnX5YFjlfgqAhtp052E6XRVNA)WsBUXN4KJEm7dKH8P6yLpynFvoJFwo(9TRLOQ9BX2Tpg7jE2v8AW1ZNO5ZGNYHvSuBLc9)GTlv7UH9u)sz9HC3fezWERNzUhmTpA6ulSPCHM8xC(m(5dHX(qvvF)LfU2sNHMveqvn5zJsS58)4kVEXiwOMTOuLeO8NGsJZnTbv5dO2kWuxZqym6ylh0ETgdZCSnhMoxznTn3QF5dLSUw9vBQ5Z20pC1ZwRBjqKf9Uv)8nL4witve25Iau4OEORU63266pi1sOxtBxRh1m73Zn9v75rBSatUYQx8DzUOqp7uQwRyQd20EQFWo(gc7i)wDCQ0uP6DorDRu6tqRID69k2X2Sy9qzdxPVDGEG0Rna4X2GyfLBCzdNKlxaC15rOA3AuNNH2gZgEqroC6W2V4IEBIjtC470ElO1KVOL9GghX6LX2wcCn0zDZPDIP)eGvV4xZh3DNbXPTvORmvPQHD5FYW1YDJELE9zn8bcSy3hxz6q1K6mnLkXRvR6HDPzrNWXXRPAiuAzTNeeBvtYXXCxpxTQXlozVlRxr(stNU1J0o06ZgRRF2fKGg0td2Mn7rUL76ftRPt3X0jn0YzeuZxdOLUX7epbbHwyk)M(UiSQp96uJ6zrdT1Ho17il)xqcg7Qbd1)3C1Zn1eFwO09xx8DI1Jl4g9m3sSGAK1JSL9AaK2uhkGYJPs0xAoXF)0xFnOwT0yF2OpL7W4L2EMh1(DpZ1S67oWMBpW58EmR4x3P5)zxM9NDzwH7zp3LzDYN(iCKn2VyMYLFw1K51)lg3troCBBWmJoyg8rA73qUU8JihItZDPvXpLCnUbS0QDO1XeHPPf)vmF6)gZnpV3AjzPRXAc(r6g)a)9lg(d5)ebZF88)7d]]
 )
 spec:RegisterPack(
     "Fury (wowsims.com)",

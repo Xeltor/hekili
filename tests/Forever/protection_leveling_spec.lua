@@ -66,7 +66,7 @@ local function warrior(level, rage, options)
     end
     if options.potion then
         ctl.itemCount[118] = 1
-        ctl.items[118] = { "Minor Healing Potion", nil, 134829 }
+        ctl.items[118] = { "Minor Healing Potion", icon = 134829 }
     end
     if options.bashCooldown then
         local rank = ctl.known[1671] and 1671 or 72

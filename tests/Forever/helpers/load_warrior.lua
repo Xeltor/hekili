@@ -191,6 +191,7 @@ function M.env(w)
     e.weapon = { size = w.state.weapon.size }
     e.target = { minR = 10, is_boss = false }
     e.combat, e.active_enemies = 0, 1
+    e.main_hand, e.off_hand = {}, {} -- the gear scan's weapon kinds (State.lua), none held
     function e.applyBuff(key, duration, stacks)
         table.insert(e.applied, key)
         e.durations[key], e.stacks[key] = duration, stacks

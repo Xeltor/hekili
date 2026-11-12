@@ -23,7 +23,15 @@ local function shown(C, scenario)
     return keys
 end
 
-local PROT = ws.content(ww.Protection, {
+local protRaid = setmetatable({
+    character = function()
+        local c = ww.Protection.character()
+        c.instanceType = "raid"
+        return c
+    end,
+}, { __index = ww.Protection })
+
+local PROT = ws.content(protRaid, {
     pack = "Protection (wowsims.com)",
     level = 60,
     talents = ws.header("warrior_protection").talents,
@@ -39,7 +47,7 @@ describe("the maintenance-debuff settings #slow", function()
         assert.are.same({ false, true }, { game.demoralizing_roar == true, sim.demoralizing_roar == true })
     end)
 
-    it("Protection: in game no Demoralizing Shout, Thunder Clap as wowsims has it; the harness casts both", function()
+    it("applies the Demoralizing Shout setting to raid Protection and keeps Thunder Clap enabled", function()
         local game, sim = shown(PROT, "game"), shown(PROT, "sim")
         assert.are.same({ false, true }, { game.demoralizing_shout == true, game.thunder_clap == true })
         assert.are.same({ true, true }, { sim.demoralizing_shout == true, sim.thunder_clap == true })

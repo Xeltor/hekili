@@ -36,9 +36,9 @@ local A = {
     ch = {},
     chNext = {},
     gcdKind = {}, -- 0 off the GCD, 1 spell (1.5 s / haste), 2 totem (Hekili's fixed 1.0 s)
-    rMin = {}, -- the query ID's range in yards (C_Spell.GetSpellInfo's minRange/maxRange, Sources/Spellbook.lua);
-    rMax = {}, -- rMax 0: no range check (self-cast, or on-next-swing: the client answers those in range at any distance)
-    rMelee = {}, -- true: rMax 5 taken for the client's maxRange 0 on a hostile spell (Sources/Spellbook.lua)
+    -- the query ID's range in yards (C_Spell.GetSpellInfo's maxRange, Sources/Spellbook.lua; 5 for a hostile spell's
+    -- 0); 0: no range check (self-cast, or on-next-swing: the client answers those in range at any distance)
+    rMax = {},
 }
 I.ab = A
 A.bySpell = {}
@@ -126,9 +126,30 @@ local function gcdTime(a, t)
     return g
 end
 
+-- The GCD modifiers (aura audit C12; Engine/Schema/Races.lua RegisterGcdMod, def.gcdMods): by modifier k, its player
+-- aura index, its multiplier (1 + pct) and its scope (false: every ability; else a set of ability indexes), built at
+-- the build.
+local GM = { n = 0, aura = {}, mult = {}, scope = {} }
+
+-- The product of the multipliers of the GCD modifiers in ability a's scope whose aura is believed up at t (1: none).
+-- Allocates nothing.
+local function gcdMult(a, t)
+    local f = 1
+    for k = 1, GM.n do
+        local j, sc = GM.aura[k], GM.scope[k]
+        if (not sc or sc[a]) and I.auras.applied[1][j] <= t and I.auras.exp0[1][j] > t then -- unit 1: "player"
+            f = f * GM.mult[k]
+        end
+    end
+    return f
+end
+
 --- The length of a GCD that ability a (0: none known, the last opener's kind) opens at t: its declared `gcdTime`,
---- else its kind's learned length, else 1.0 for the totem kind and max(1.0, 1.5 / spell haste) for the spell kind. Allocates nothing.
-function I.GcdLen(a, t)
+--- else its kind's learned length, else 1.0 for the totem kind and max(1.0, 1.5 / spell haste) for the spell kind; a
+--- spell-kind one then x the GCD modifiers up in its scope (aura audit C12), floored at 1.0 (wowsims: the multiplier
+--- before the haste and the floor; the learned length already holds the haste). The modifiers' auras are judged at
+--- `t0` (default t), the GCD's opening: a gain after it, folded before its cast, does not cut it. Allocates nothing.
+function I.GcdLen(a, t, t0)
     local kind = I.gcdKindLast
     if a > 0 then
         local g = gcdTime(a, t)
@@ -139,14 +160,24 @@ function I.GcdLen(a, t)
     end
     if kind == 0 then
         return 0
-    elseif I.gcdLearned[kind] > 0 then
-        return I.gcdLearned[kind]
     elseif kind == 2 then
-        return 1.0
+        return I.gcdLearned[2] > 0 and I.gcdLearned[2] or 1.0
     end
-    -- spell haste (UnitSpellHaste %, plain), never melee haste: attack speed does not shorten a GCD on Forever
-    local h = VS.SpellHaste and VS.SpellHaste(t).est or 0
-    return max(1.0, 1.5 / (1 + (h > 0 and h or 0) / 100)) -- 1 + h/100 >= 1: h > 0 checked
+    local len = I.gcdLearned[1]
+    if len <= 0 then
+        -- spell haste (UnitSpellHaste %, plain), never melee haste: attack speed does not shorten a GCD on Forever
+        local h = VS.SpellHaste and VS.SpellHaste(t).est or 0
+        len = max(1.0, 1.5 / (1 + (h > 0 and h or 0) / 100)) -- 1 + h/100 >= 1: h > 0 checked
+    end
+    local f = a > 0 and GM.n > 0 and gcdMult(a, t0 or t) or 1
+    return f ~= 1 and max(1.0, len * f) or len
+end
+
+-- Whether a GCD modifier cut the current GCD, fixed where its length is (review M2): its fall teaches no length then,
+-- however the modifier's aura moved since.
+local gcdCut = false
+local function cutAt(a, t)
+    return a > 0 and A.gcdKind[a] == 1 and GM.n > 0 and gcdMult(a, t) ~= 1
 end
 
 local function maxCharges(a)
@@ -184,7 +215,7 @@ I.OnBuild(function(def, now)
         A.ready0[a], A.cdLen[a], A.castT[a], A.flag[a] = 0, 0, 0, UNKNOWN
         A.charges0[a], A.next0[a] = maxCharges(a), 0
         A.queued[a], A.castStartT[a] = false, 0
-        A.rMin[a], A.rMax[a], A.rMelee[a] = 0, 0, false
+        A.rMax[a] = 0
         local g, extra = obj.gcd, type(obj.key) == "string" and obj.key:sub(1, 6) == "track_" -- a passive: no GCD
         A.gcdKind[a] = (g == "off" or extra) and 0 or (g == "totem" and 2 or 1) -- anything else: State.lua's "spell"
         A.cd[a] = I.NewBelief("cooldown " .. tostring(obj.key))
@@ -198,9 +229,33 @@ I.OnBuild(function(def, now)
         end
     end
     I.TRACKED.ability = A.id
+    GM.n = 0
+    local mods = def.gcdMods or {} -- a hand-built def may carry none
+    for k = 1, #mods do
+        local m, j = mods[k], 0
+        for i = 1, #def.auras do
+            if def.auras[i].key == m.aura then
+                j = i
+            end
+        end
+        if j > 0 and type(m.pct) == "number" then
+            GM.n = GM.n + 1
+            local sc = false
+            if type(m.spells) == "table" then
+                sc = {}
+                for _, id in ipairs(m.spells) do
+                    local ab = A.bySpell[id]
+                    if ab then
+                        sc[ab] = true
+                    end
+                end
+            end
+            GM.aura[GM.n], GM.mult[GM.n], GM.scope[GM.n] = j, 1 + m.pct, sc
+        end
+    end
     gcd = I.NewBelief("gcd")
     I.castAb, I.castEnd, I.channel, I.gcdStart, I.gcdDur, I.queuedStrike = 0, 0, false, 0, 0, false
-    I.gcdOwner, I.gcdKindLast, I.gcdRead, lastGcdA, lastGcdT = 0, 1, false, 0, 0
+    I.gcdOwner, I.gcdKindLast, I.gcdRead, lastGcdA, lastGcdT, gcdCut = 0, 1, false, 0, 0, false
 end)
 
 -- The GCD's current sample at its fixed end.
@@ -219,17 +274,17 @@ local function opener(a, at, t)
         return -- off the GCD (an on-next-swing strike's success at its swing): never an opener
     end
     if I.gcdStart > 0 and I.gcdOwner == 0 and at >= gcdEdge and at - gcdEdge <= GCD_EDGE then
-        I.gcdOwner, I.gcdKindLast = a, A.gcdKind[a]
+        I.gcdOwner, I.gcdKindLast, gcdCut = a, A.gcdKind[a], cutAt(a, gcdEdge)
         if not I.gcdRead then
-            I.gcdDur = quantise(I.GcdLen(a, t))
+            I.gcdDur = quantise(I.GcdLen(a, t, gcdEdge))
             pinGcd(t)
         end
         lastGcdA = 0
     else
         lastGcdA, lastGcdT = a, at
-        I.gcdOwner, I.gcdKindLast, I.gcdRead = a, A.gcdKind[a], false
+        I.gcdOwner, I.gcdKindLast, I.gcdRead, gcdCut = a, A.gcdKind[a], false, cutAt(a, at)
         -- no pinned sample: the gcd belief's modelled one is Families/Now.lua's, and only an edge pins it
-        I.gcdStart, I.gcdDur, gcdEdge = quantise(at), quantise(I.GcdLen(a, t)), at
+        I.gcdStart, I.gcdDur, gcdEdge = quantise(at), quantise(I.GcdLen(a, t, at)), at
     end
 end
 
@@ -306,11 +361,11 @@ I.On(Obs.Cooldown, function(o, t)
                 owner = lastGcdA
             end
             lastGcdA = 0
-            I.gcdOwner, I.gcdRead = owner, false
+            I.gcdOwner, I.gcdRead, gcdCut = owner, false, cutAt(owner, o.t)
             if owner > 0 then
                 I.gcdKindLast = A.gcdKind[owner]
             end
-            I.gcdStart, I.gcdDur, gcdEdge = quantise(o.t), quantise(I.GcdLen(owner, t)), o.t
+            I.gcdStart, I.gcdDur, gcdEdge = quantise(o.t), quantise(I.GcdLen(owner, t, o.t)), o.t
             pinGcd(t)
         elseif I.gcdStart > 0 and abs(o.t - gcdEdge) <= GCD_EDGE then
             -- a fall at the current GCD's opening is the last one's, seen late (read only on the next press's
@@ -319,13 +374,14 @@ I.On(Obs.Cooldown, function(o, t)
             local len, owner = o.t - I.gcdStart, I.gcdOwner
             local kind = owner > 0 and A.gcdKind[owner] or 0
             local g = owner > 0 and gcdTime(owner, t)
-            -- an ownerless GCD, or one of a declared length, teaches nothing
-            if I.gcdStart > 0 and kind > 0 and not (type(g) == "number" and g > 0) then
+            -- an ownerless GCD, one of a declared length, or one a GCD modifier cut (aura audit C12; latched at its
+            -- opening, review M2) teaches nothing
+            if I.gcdStart > 0 and kind > 0 and not (type(g) == "number" and g > 0) and not gcdCut then
                 if len >= GCD_MIN[kind] and len < GCD_MAX[kind] then
                     I.gcdLearned[kind] = quantise(len)
                 end
             end
-            I.gcdStart, I.gcdDur, I.gcdOwner, I.gcdRead = 0, 0, 0, false
+            I.gcdStart, I.gcdDur, I.gcdOwner, I.gcdRead, gcdCut = 0, 0, 0, false, false
             gcd.est, gcd.lo, gcd.hi = o.t, o.t, o.t
             I.Sample(gcd, "pinned", o.t, t, Obs.Cooldown)
         end

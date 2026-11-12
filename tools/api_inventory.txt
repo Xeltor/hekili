@@ -96,6 +96,8 @@ GetInstanceInfo	passthrough
 GetInventoryItemID	passthrough
 GetItemGem	virtual
 GetItemInfo	virtual
+GetMacroItem	passthrough
+GetMacroSpell	passthrough
 GetManaRegen	hybrid
 GetMasteryEffect	hybrid
 GetMeleeHaste	hybrid
@@ -136,7 +138,8 @@ IsSpellKnown	passthrough
 IsSpellKnownOrOverridesKnown	passthrough
 IsStealthed	hybrid
 IsUsableSpell	passthrough
-LibRangeCheck.GetRange	virtual
+LibRangeCheck.GetRange	hybrid
+RangeLib	hybrid
 SecureCmdOptionParse	passthrough
 SpellIsSelfBuff	passthrough
 UnitAffectingCombat	passthrough

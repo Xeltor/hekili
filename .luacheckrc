@@ -50,7 +50,7 @@ read_globals = {
     "max", "min", "floor", "ceil", "abs", "date", "time", "bit", "debugstack", "debugprofilestop",
     "geterrorhandler", "seterrorhandler", "issecretvalue", "issecrettable", "C_Secrets",
     -- libraries and other addons
-    "LibStub", "WeakAuras", "ElvUI", "ConsolePort", "SpellFlashCore", "Masque",
+    "LibStub", "WeakAuras", "ElvUI", "ConsolePort", "Masque",
     -- FrameXML (Lua-defined UI utilities, not reads)
     "UIParent", "GameTooltip", "GameTooltip_SetTitle", "GameTooltip_AddNormalLine",
     "GetAppropriateTooltip", "UIDropDownMenu_SetDisplayMode", "UIDropDownMenu_AddSeparator",
@@ -96,11 +96,11 @@ files["src/Hekili/Options/DevTools.lua"] = {
 files["src/Hekili/UI/UI.lua"] = { globals = { "p" } } -- upstream's stray global read
 -- The names a class file's `now` function reads in VirtualState's context (src/Hekili/Game/State/Families/Now.lua).
 local nowEnv = {
-    "gain", "spend", "applyBuff", "applyDebuff", "removeBuff", "removeDebuff", "addStack", "setCooldown", "summonTotem",
-    "summonPet", "dismissPet", "reduceCooldown", "level",
+    "gain", "spend", "applyBuff", "applyDebuff", "removeBuff", "removeDebuff", "addStack", "removeStack", "setCooldown",
+    "summonTotem", "summonPet", "dismissPet", "reduceCooldown", "level",
     "talent",
     "buff", "debuff", "knownRank", "stat", "swingBase", "healthMax", "now", "combat", "rage", "energy", "mana", "focus",
-    "runic_power", "totem", "action", "settings", "haste",
+    "runic_power", "totem", "action", "settings", "haste", "instant", "cast_start", "target",
     "set_bonus", "equipped",
     "openWindow", "closeWindow", "lastSwing", "nextSwing", "usable", -- the windows (Families/Windows.lua)
 }
@@ -113,7 +113,7 @@ files["tests/Forever/"] = { std = "+busted" }
 -- further `state` names they use.
 local warriorEnv = {
     "rage", "cooldown", "combat", "active_enemies", "active_dot", "setDistance", "interrupt", "swap_stance",
-    "mainhand_remains", "nextMH", "nextOH", "mainhand_speed", "offhand_speed", "weapon", "level",
+    "mainhand_remains", "nextMH", "nextOH", "mainhand_speed", "offhand_speed", "weapon", "main_hand", "off_hand", "level",
 }
 for _, k in ipairs(stateEnv) do
     warriorEnv[#warriorEnv + 1] = k
@@ -137,7 +137,7 @@ for _, k in ipairs(stateEnv) do
 end
 files["src/Hekili_Rogue/Rogue.lua"] = { globals = rogueEnv }
 -- The Paladin's further `state` names.
-local paladinEnv = { "combat", "seal_up", "nextMH", "mainhand_speed", "query_time", "lastSwing" }
+local paladinEnv = { "mana", "combat", "addStack", "seal_up", "nextMH", "mainhand_speed", "query_time", "lastSwing" }
 for _, k in ipairs(stateEnv) do
     paladinEnv[#paladinEnv + 1] = k
 end
@@ -169,7 +169,7 @@ end
 files["src/Hekili_Priest/Priest.lua"] = { globals = priestEnv }
 -- The Warlock's further `state` names.
 local warlockEnv = {
-    "mana",
+    "mana", "instant",
     "min", "max", "level", "pet", "summonPet", "dismissPet", "soul_shards", "locked_out_shadow", "locked_out_fire",
 }
 for _, k in ipairs(stateEnv) do

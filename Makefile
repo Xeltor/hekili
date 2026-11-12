@@ -7,7 +7,7 @@ LUAC := $(LUA_ENV)/bin/luac
 LUA := $(if $(wildcard $(LUA_ENV)/bin/lua),$(LUA_ENV)/bin/lua,lua5.1)
 
 .PHONY: accuracy gate gate-ab gate-body gate-ab-body bootstrap lint fmt fmt-check typecheck test test-serial test-fast test-loop test-party test-druid test-rogue test-paladin test-shaman test-hunter test-mage test-priest test-warlock bench bench-ta spell-data-check cdv-coverage syntax api-check \
-	packs-check tools-test check check-full packs package package-check wowsims-cli wowsims-sim-cli wowsims-export wowsims-siml wowsims-learn wowsims-packs test-wowsims
+	packs-check tools-test check check-full packs package package-check wowsims-cli wowsims-sim-cli wowsims-export wowsims-siml wowsims-learn shared-auras wowsims-packs test-wowsims
 
 bootstrap:
 	scripts/bootstrap.sh
@@ -63,12 +63,13 @@ accuracy:
 
 # The A/B (providers spec §4.1): the gate once per arm on the same seeds; the provider arms record in .ab/<arm>.tsv.
 # The four viewer arms (cdm-default decision 110) differ by the Cooldown Manager layout (scenarios.viewerLayout); the
-# CDM verdict's worlds (verdict spec §5, review M4) follow, each with its verdict-off twin (-novd).
+# CDM verdict's worlds (verdict spec §5, review M4) follow, each with its verdict-off twin (-novd); the live-auras arms
+# (aura audit C1) hide our own auras in combat, as live, so only the Cooldown Manager shows them.
 AB_ARMS ?= meter viewer-none viewer-buffs viewer-fixture viewer-mixed \
 	viewer-reshuffle viewer-reshuffle-novd viewer-nonland viewer-nonland-novd \
 	secret-viewer-buffs secret-viewer-buffs-novd secret-viewer-mixed secret-viewer-mixed-novd \
 	viewer-swap viewer-swap-novd viewer-late viewer-late-novd viewer-recast viewer-recast-novd \
-	viewer-swap-dark viewer-swap-dark-novd
+	viewer-swap-dark viewer-swap-dark-novd live-auras live-auras-none
 gate-ab:
 	rm -rf .ab
 	$(MAKE) gate
@@ -131,6 +132,9 @@ wowsims-export:
 # wowsims-siml SPEC=<spec>: the recipe's .siml build as tests/Forever/wowsims/<spec>.build.json (export runs it too).
 wowsims-siml:
 	WOWSIMS=$(WOWSIMS) $(LUA) tools/wowsims/export.lua siml $(SPEC)
+
+shared-auras:
+	python3 -I tools/gen_shared_auras.py $(PIN)
 
 wowsims-learn:
 	$(LUA) tools/wowsims/export.lua learn $(CLASS)

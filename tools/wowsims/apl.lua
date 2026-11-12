@@ -29,7 +29,9 @@
 --    gives no guard and a header note.
 -- 2. Omitted, and listed in the file's second comment block: `hide: true` entries; entries whose condition folds to
 --    false; entries whose action or condition uses a node the fork lacks (`schedule`, `itemSwap`, `wait`,
---    `activeItemSwapSet`, `selectedConjured`), or whose own action is an unmapped spell, item or other ID (an unmapped
+--    `activeItemSwapSet`, `selectedConjured`), a cast aimed at another target (`target` Target with an index above 0:
+--    wowsims's second target; aura audit C7, never cast on the current one), or whose own action is an
+--    unmapped spell, item or other ID (an unmapped
 --    read drops only its branch: rule 12); a call of a group whose every entry was omitted. Also listed: rule 12's
 --    dropped reads and rule 13's unmapped cooldowns, by entry. A `wait` stays omitted (CN19, docs/dev/wowsims-packs.md):
 --    the engine times each line at its own ready moment, so a hold only matters against a later line ready sooner.
@@ -42,9 +44,13 @@
 -- 4. `auraIsKnown` (wowsims: the aura is registered on its source unit, Self by default): on Self or the target, an
 --    ID that resolves (rule 5, or a kit talent's spell) to a talent's key or aura is `talent.<key>.enabled`, to an
 --    ability's key `action.<key>.known`, to any other aura `true`; an ID nothing resolves, or another unit, is false.
---    (wowsims registers a gear, set or consumable aura only when it is equipped or configured; `true` for one of those
---    may disagree, no APL reads one today.) Solo exports: another player's aura (wowsims's External, tag -1) is never
---    registered, so it is not known (false) and every other read of it is nil (rule 6: dropped).
+--    An ID nothing resolves leaves a header note (`auraIsKnown of the unresolved aura <id> folds false`), so the fold
+--    is not silent; so does a recipe `knownAs` naming a talent the kit lacks (its aura then reads as any other).
+--    wowsims registers a gear, set or consumable aura only when it is equipped or configured; `true`
+--    for one of those may disagree when it is not worn, and the branch then rests on the aura's own read (down while
+--    not worn): a weapon enchant's proc aura an APL reads (1323392, enchant 8217's) is one. Solo exports: another
+--    player's aura (wowsims's External, tag -1) is never registered, so it is not known (false, no note) and every
+--    other read of it is nil (rule 6: dropped).
 -- 5. Keys, from the character's ability set (tests/Forever/helpers/engine.lua abilitySet: the class kit, the shared
 --    content and every race's racials, as the engine merges them): a spell ID maps through the recipe's `map`, else
 --    an ability's `id` and `copy`, auras by the recipe's aura-only `auras` map ({ [aura ID] = key }: an aura wowsims
@@ -508,6 +514,7 @@ function M.context(set, r, log, player, encounter, tank)
         talentKey = {},
         map = r.map or {},
         auraMap = r.auras or {},
+        knownAs = r.knownAs or {}, -- { [aura ID] = talent key }: `auraIsKnown` of that aura is the talent's `enabled`
         focus = r.focus or {},
         executePhase = r.executePhase,
         leveling = r.leveling or {},
@@ -678,13 +685,14 @@ local function auraKey(c, id)
     return auraOfId(c, id) or unsupported("aura " .. tostring(id))
 end
 
-local function drop(c, what) -- each ID once an entry
+local function drop(c, what, note) -- each ID once an entry; `note` replaces the default header text
     for _, d in ipairs(c.dropped) do
         if d == what then
             return
         end
     end
     c.dropped[#c.dropped + 1] = what
+    c.dropNote[what] = note
 end
 
 -- Rule 12: a read of an ID nothing resolves is wowsims's nil node (its branch dropped, not the entry); the ID is noted.
@@ -1314,8 +1322,17 @@ local function bool(c, n)
         if not UNIT[v.sourceUnit and v.sourceUnit.type or "Self"] or not id or v.auraId.tag == -1 then
             return nil, false, false
         end
+        local ka = c.knownAs[id]
+        if ka and c.talentKey[ka] then
+            return "talent." .. ka .. ".enabled", nil, false
+        elseif ka then -- a recipe typo or a talent the kit dropped: noted, so the fall-through is not silent (M7)
+            local what = "knownAs of the aura " .. tostring(id)
+            drop(c, what, what .. " names " .. ka .. ", a talent the kit lacks: read as any other aura")
+        end
         local x = c.auraMap[id] or c.map[id] or c.talentOf[id] or c.auraOf[id] or c.keyOf[id]
         if not x then
+            local what = "auraIsKnown of the unresolved aura " .. tostring(id)
+            drop(c, what, what .. " folds false") -- rule 4: noted, so the fold is not silent
             return nil, false, false
         end
         local tk = c.talentOf[id] or (c.talentKey[x] and x) -- a talent's spell, or a recipe `map` to a talent's key
@@ -1913,6 +1930,10 @@ function entry(c, e)
         return nil, "empty"
     end
     local body, key, auto, seq
+    local tg = type(a[kind]) == "table" and a[kind].target
+    if type(tg) == "table" and tg.type == "Target" and (tg.index or 0) > 0 then -- rule 2: another target's cast
+        return nil, ("%s on another target (Target index %d)"):format(kind, tg.index)
+    end
     if kind == "castSpell" or kind == "channelSpell" then
         local x = spellKey(c, a[kind].spellId)
         c.self, key = x, x
@@ -2488,6 +2509,7 @@ end
 --- ON/OFF groups in its order, then the recipe's `settings` by key).
 function M.translate(rotation, c)
     c.vars, c.toggles, c.used, c.seen, c.named, c.namedKeys, c.notes, c.dropped = {}, {}, {}, {}, {}, {}, {}, {}
+    c.dropNote = {}
     c.callers, c.deviated, c.deviations, c.moves, c.movedAll = {}, {}, {}, {}, {}
     c.held, c.windows, c.loops, c.moving = {}, {}, {}, {} -- rules 14b, 19
     c.conditioned = {} -- rule 7: the recipe's condition keys a line took
@@ -2625,7 +2647,7 @@ function M.translate(rotation, c)
             elseif type(when) == "string" then
                 omitted[#omitted + 1] = ("%s #%d: %s"):format(name, i, when)
             else
-                c.notes, c.dropped, c.deviations, c.moves, c.folds = {}, {}, {}, {}, {}
+                c.notes, c.dropped, c.dropNote, c.deviations, c.moves, c.folds = {}, {}, {}, {}, {}, {}
                 c.entryNo, c.ownSeq = i, nil
                 if at and castAt[i] then
                     deviate(c, PREPULL_CAST)
@@ -2654,7 +2676,8 @@ function M.translate(rotation, c)
                         origin[name][#out] = i
                     end
                     for _, what in ipairs(c.dropped) do
-                        c.notes[#c.notes + 1] = "dropped the unresolved " .. what .. " (its branch only)"
+                        c.notes[#c.notes + 1] = c.dropNote[what]
+                            or ("dropped the unresolved " .. what .. " (its branch only)")
                     end
                     for _, n in ipairs(c.notes) do
                         omitted[#omitted + 1] = ("%s #%d: %s"):format(name, i, n)

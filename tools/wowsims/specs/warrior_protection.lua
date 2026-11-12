@@ -71,7 +71,7 @@ local function dumpBudget(spell)
     return "prot_current_rage>=action." .. spell .. ".cost+prot_dump_reserve"
 end
 
-local slamBudget = "(!buff.revenge_usable.up|cooldown.revenge.remains>0|"
+local slamBudget = "!(action.revenge.known&buff.revenge_usable.up&cooldown.revenge.remains<=0&!"
     .. rageBudget("shield_slam", targetThreat, "revenge")
     .. ")&"
     .. rageBudget("shield_slam", targetThreat)
@@ -169,11 +169,11 @@ return {
     levelingFirst = {
         "defensive_stance,use_off_gcd=1,if="
             .. charge
-            .. "&equipped.shield&talent.vanguard.enabled&action.charge.known&cooldown.charge.ready"
-            .. "&!buff.defensive_stance.up&!buff.battle_stance.up&rage.lo<=stance_rage_kept",
+            .. "&equipped.shield&talent.vanguard.enabled&prot_charge_ready"
+            .. "&!buff.defensive_stance.up&(!action.battle_stance.known|!buff.battle_stance.up)&rage.lo<=stance_rage_kept",
         "battle_stance,use_off_gcd=1,if="
             .. charge
-            .. "&action.charge.known&cooldown.charge.ready&!buff.battle_stance.up&!talent.vanguard.enabled&rage.lo<=stance_rage_kept",
+            .. "&prot_charge_ready&!buff.battle_stance.up&!talent.vanguard.enabled&rage.lo<=stance_rage_kept",
         "charge,use_off_gcd=1,if=" .. charge,
     },
     extra = {

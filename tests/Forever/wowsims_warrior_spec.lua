@@ -100,6 +100,13 @@ local PROT = {
     },
 }
 local PROT_REPLAY = { hidden = hideQueue({ [5302] = true, [25288] = true }), procs = {}, speed = 2.35 }
+local PROT_RAID = setmetatable({
+    character = function()
+        local c = ww.Protection.character()
+        c.instanceType = "raid"
+        return c
+    end,
+}, { __index = ww.Protection })
 
 describe("the Warrior wowsims.com packs #slow #wowsims", function()
     it("Arms (wowsims.com) follows wowsims's casts", function()
@@ -298,7 +305,7 @@ describe("the Warrior wowsims.com packs #slow #wowsims", function()
     it("Protection (wowsims.com) follows wowsims's casts", function()
         ws.gate(
             "Protection (wowsims.com)",
-            content("warrior_protection", ww.Protection, "Protection (wowsims.com)", 60, PROT),
+            content("warrior_protection", PROT_RAID, "Protection (wowsims.com)", 60, PROT),
             "warrior_protection",
             -- measured 0.904 (94); 0.979 once the replay ends a cooldown at its log timestamp (ready-time ruling), held with
             -- partial blocks replayed as BLOCK_REDUCED wounds (gap AH); 0.97 -> 0.93 (0.938, 91 of 97, after gap AS's

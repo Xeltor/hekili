@@ -33,6 +33,9 @@ end
 function rec.SetCooldownFromDurationObject(self, dur)
     rawset(self, "__dur", dur)
 end
+function rec.SetSwipeColor(self, _, _, _, a)
+    rawset(self, "__swipeAlpha", a)
+end
 function rec.SetDesaturated(self, v)
     rawset(self, "__desat", v and true or false)
 end
@@ -317,6 +320,35 @@ describe("the button contract (spec §5.1)", function()
         H.Hekili.Engine.Output.status.combat = false
         assert.are.same({}, H.errors)
     end)
+end)
+
+describe("cooldown spiral opacity", function()
+    for _, style in ipairs({ "classic", "timeline" }) do
+        it("updates the " .. style .. " and Modern swipes through the display option", function()
+            local H, d = boot(style, true)
+            local addon = H.Hekili
+            addon:EmbedDisplayOptions()
+            local option = addon.Options.args.displays.plugins.Primary.Primary.args.main.args.cooldownSwipeAlpha
+            local path = { "displays", "Primary", "main", "cooldownSwipeAlpha" }
+            assert.is_true(option.isPercent)
+            assert.are.equal(0.64, addon:GetDisplayOption(path))
+
+            for _, alpha in ipairs({ option.max, option.min, 0.64 }) do
+                addon:SetDisplayOption(path, alpha)
+                H.RunTimers(H.ctl.now + 0.5)
+                assert.are.equal(alpha, addon:GetDisplayOption(path))
+                for i, button in ipairs(d.Buttons) do
+                    local cooldown = rawget(button, "Cooldown")
+                    if cooldown then
+                        assert.are.equal(alpha, rawget(cooldown, "__swipeAlpha"))
+                        assert.are.equal(alpha, rawget(d.truthState.ov[i].cd, "__swipeAlpha"))
+                    end
+                end
+            end
+            assert.are.equal(0.64, addon.DB.profile.displays.AOE.cooldownSwipeAlpha)
+            assert.are.same({}, H.errors)
+        end)
+    end
 end)
 
 describe("the Modern toggle (spec §5.1, §7)", function()

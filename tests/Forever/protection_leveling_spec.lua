@@ -50,11 +50,16 @@ local function warrior(level, rage, options)
     ctl.creature.target = options.creature
     ctl.classification = options.classification
     ctl.groupMembers = options.group or 0
+    ctl.threat.target = options.threat
     ctl.level.target = options.boss and -1 or level
     ctl.unitHealth.player = options.health or 1000
     ctl.auras.player.HELPFUL[1] = { spellId = 6673, expirationTime = ctl.now + 100, applications = 0 }
     if options.victorious then
         ctl.auras.player.HELPFUL[2] = { spellId = 402975, expirationTime = ctl.now + 20, applications = 0 }
+    end
+    if options.shieldBlock then
+        local buffs = ctl.auras.player.HELPFUL
+        buffs[#buffs + 1] = { spellId = 2565, expirationTime = ctl.now + 7, applications = 2 }
     end
     for _, rank in ipairs({ 6572, 6574, 7379, 11600, 11601, 25288 }) do
         ctl.usable[rank] = options.revenge and { true, false } or { false, false }
@@ -143,12 +148,13 @@ describe("the Protection leveling priority", function()
         end
     end)
 
-    it("waits briefly before offering Shield Bash for casts and channels in solo and party PvE", function()
-        for _, options in ipairs({ {}, { instance = "party", group = 5 } }) do
+    it("offers early channels and delays hard casts briefly while Shield Block is active", function()
+        for _, options in ipairs({ {}, { instance = "party", group = 5 }, { instance = "raid", group = 10 } }) do
             for _, channel in ipairs({ false, true }) do
-                local H = warrior(12, 15, options)
+                options.shieldBlock = true
+                local H = warrior(60, 15, options)
                 cast(H, true, channel)
-                assert.is_not_equal("shield_bash", read(H, 0.1))
+                assert.are.equal(channel, read(H, 0.1) == "shield_bash")
                 assert.are.equal("shield_bash", read(H, 0.2))
                 assert.are.equal(0, H.Hekili.Engine.Output.Primary.recs[1].time)
                 if channel then
@@ -158,6 +164,10 @@ describe("the Protection leveling priority", function()
                 end
                 assert.is_not_equal("shield_bash", read(H, 0.2))
             end
+            options.shieldBlock = false
+            local H = warrior(60, 15, options)
+            cast(H, true)
+            assert.are.equal("shield_bash", read(H, 0.1))
         end
         for _, options in ipairs({ { noShield = true }, { distance = 10 }, { instance = "pvp" } }) do
             local H = warrior(12, 15, options)
@@ -191,6 +201,16 @@ describe("the Protection leveling priority", function()
         H.Fire("UNIT_SPELLCAST_STOP", "target", SECRET, SECRET, 77)
         assert.are.equal("shield_block", read(H, 0.2))
         assert.are.equal(0, H.Hekili.Engine.Output.Primary.recs[1].time)
+    end)
+
+    it("keeps Bash and a live Revenge in the same Rage budget", function()
+        local H = warrior(40, 30, { target = CASTER, talents = { [23922] = 1 }, revenge = true, demo = true })
+        H.Hekili:FireToggle("defensives", "off")
+        cast(H, true)
+        read(H, 0.2)
+        H.Fire("UNIT_SPELLCAST_STOP", "target", SECRET, SECRET, 77)
+        assert.are.equal("revenge", read(H))
+        assert.are.equal(10, H.Hekili.State.prot_bash_reserve)
     end)
 
     it("releases the reserve without an available interrupt and respects the global cooldown", function()
@@ -228,18 +248,64 @@ describe("the Protection leveling priority", function()
     end)
 
     it("lets dungeon threat spend the reserve on the opener or when aggro is lost", function()
-        local H = warrior(40, 20, { target = CASTER, group = 5, instance = "party", talents = { [23922] = 1 } })
+        local H =
+            warrior(60, 20, { target = CASTER, group = 5, instance = "party", threat = 0, talents = { [23922] = 1 } })
         H.Hekili:FireToggle("defensives", "off")
         cast(H, true)
         read(H, 0.2)
         H.Fire("UNIT_SPELLCAST_STOP", "target", SECRET, SECRET, 77)
         assert.are.equal("shield_slam", read(H, 0.2))
+        H.ctl.threat.target = 3
         assert.is_not_equal("shield_slam", read(H, 4))
         assert.are.equal(10, H.Hekili.State.prot_bash_reserve)
 
         H.ctl.exists.targettarget = true
         H.ctl.unitIs.targettarget = "party1"
+        H.ctl.threat.target = 0
         assert.are.equal("shield_slam", read(H, 0.2))
+
+        H.ctl.threat.target = 3
+        assert.is_not_equal("shield_slam", read(H, 0.2))
+        H.ctl.guid.target = "Creature-0-0-0-0-346-000002"
+        H.ctl.threat.target = 0
+        H.ctl.exists.targettarget = false
+        H.ctl.unitIs.targettarget = nil
+        H.Fire("PLAYER_TARGET_CHANGED")
+        assert.are.equal("shield_slam", read(H, 0.2))
+    end)
+
+    it("opens on a confirmed nearby pack before refreshing Battle Shout", function()
+        local H = warrior(60, 25, { group = 5, instance = "party", threat = 3, talents = { [23922] = 1 } })
+        H.ctl.auras.player.HELPFUL[1] = nil
+        H.Fire("UNIT_AURA", "player")
+        H.ctl.exists.nameplate1 = true
+        H.ctl.exists.nameplate1target = true
+        H.ctl.guid.nameplate1 = "Creature-0-0-0-0-347-000003"
+        H.ctl.unitIs.nameplate1target = "party1"
+        H.ctl.distance.nameplate1 = 4
+        H.ctl.unitCombat.nameplate1 = false
+        H.Fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        assert.are.equal("shield_slam", read(H, 0.2))
+        H.ctl.unitCombat.nameplate1 = true
+        assert.are.equal("thunder_clap", read(H, 0.2))
+        H.Hekili:FireToggle("mode", "single")
+        assert.are.equal("shield_slam", read(H, 0.2))
+    end)
+
+    it("budgets a level-60 queued strike for an upcoming Shield Slam", function()
+        local function check(rage)
+            local H = warrior(60, rage, { classification = "normal", talents = { [23922] = 1 } })
+            H.Hekili:FireToggle("defensives", "off")
+            local slam = { isActive = true, isOnGCD = false, startTime = H.ctl.now - 5, duration = 6 }
+            H.ctl.cooldown[23922], H.ctl.cooldown[23925] = slam, slam
+            H.Fire("SPELL_UPDATE_COOLDOWN")
+            H.Fire("UNIT_SPELLCAST_SENT", "player", "Unit", "Cast-sunder", 11597)
+            H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-sunder", 11597)
+            return read(H, 0.2)
+        end
+
+        assert.is_not_equal("heroic_strike", check(20))
+        assert.are.equal("heroic_strike", check(60))
     end)
 
     it("uses a learned Concussion Blow as a backup on a non-boss cast", function()
@@ -251,8 +317,7 @@ describe("the Protection leveling priority", function()
         }) do
             local H = warrior(33, 20, options)
             cast(H, true)
-            assert.is_not_equal("concussion_blow", read(H, 0.1))
-            local action = read(H, 0.2)
+            local action = read(H, 0.1)
             assert.are.equal(options.talents ~= nil and not options.boss, action == "concussion_blow", tostring(action))
         end
     end)
@@ -275,9 +340,11 @@ describe("the Protection leveling priority", function()
             { creature = "humanoid", group = 2 },
             { creature = "humanoid", classification = "elite" },
         }) do
+            options.threat = 3
             local H = warrior(18, 25, options)
             if options.group then
                 H.Hekili:FireToggle("mode", "aoe")
+                H.ctl.unitIs.targettarget = "player"
             end
             assert.is_true(H.Hekili.State:IsKnown("disarm"))
             assert.is_false(H.Hekili.State.prot_disarm_target) -- old priorities still resolve this condition
@@ -307,7 +374,8 @@ describe("the Protection leveling priority", function()
 
     it("opens with Demoralizing Shout on melee pulls even with raid maintenance off", function()
         for _, group in ipairs({ 0, 2 }) do
-            local H = warrior(16, 25, { group = group })
+            local H = warrior(16, 25, { group = group, threat = 3 })
+            H.ctl.unitIs.targettarget = "player"
             assert.are.equal("demoralizing_shout", read(H))
             H.Hekili:FireToggle("defensives", "off")
             assert.is_not_equal("demoralizing_shout", read(H))
@@ -355,5 +423,24 @@ describe("the Protection leveling priority", function()
         for i = 1, cues.n do
             assert.is_not_equal("healing_potion", cues[i].action)
         end
+        assert.is_false(H.Hekili.State.prot_threat_spend)
+    end)
+
+    it("conserves Block while a raid boss is visibly held by another player", function()
+        local H = warrior(60, 45, { boss = true, instance = "raid", group = 10, threat = 1, talents = { [23922] = 1 } })
+        H.ctl.exists.targettarget = true
+        H.ctl.unitIs.targettarget = "raid1"
+        assert.is_not_equal("shield_block", read(H))
+        assert.is_true(H.Hekili.State.prot_offtanking)
+
+        H.ctl.threat.target = SECRET
+        read(H, 0.2)
+        assert.is_false(H.Hekili.State.prot_offtanking)
+
+        H.ctl.threat.target = 3
+        H.ctl.unitIs.targettarget = "player"
+        read(H, 0.2)
+        H.Hekili.State.reset("Primary")
+        assert.is_true(H.Hekili.State.prot_dump_reserve >= 20)
     end)
 end)

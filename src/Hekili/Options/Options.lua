@@ -158,6 +158,7 @@ local displayTemplate = {
 
     elvuiCooldown = false,
     hideOmniCC = false,
+    cooldownSwipeAlpha = 0.64, -- CooldownFrameTemplate's swipe opacity on Forever.
 
     visibility = {
         advanced = false,
@@ -1316,6 +1317,18 @@ return end
                                     sort( names )
                                     return names
                                 end,
+                            },
+
+                            cooldownSwipeAlpha = {
+                                type = "range",
+                                name = L["Cooldown Spiral Opacity"],
+                                desc = L["Adjust the opacity of this display's cooldown spiral from hidden (0%) to fully opaque (100%)."],
+                                min = 0,
+                                max = 1,
+                                step = 0.01,
+                                isPercent = true,
+                                width = "full",
+                                order = 0.7,
                             },
 
                             elvuiCooldown = {

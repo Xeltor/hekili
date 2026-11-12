@@ -172,6 +172,7 @@ function Truth.Build( d, conf, buttons )
             ov.veil:Hide()
         end
         if b.Cooldown and not ov.cd then makeSwipe( ov, b ) end
+        if ov.cd then ov.cd:SetSwipeColor( 0, 0, 0, conf.cooldownSwipeAlpha ) end
         clearOv( ov )
     end
     S.ov = set

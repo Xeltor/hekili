@@ -44,4 +44,26 @@ describe("the rage forecast of a pending swing (GAP AK)", function()
         local t = swings(false)
         assert.is_true(math.abs(t[1] - 2.6) < 1e-3, tostring(t[1]))
     end)
+
+    it("preserves a landed swing and skips one future white swing when a strike is queued", function()
+        local p, speed = st.now - 0.05, 1.6
+        st.combat = st.now - 1
+        st.swings.mh_actual, st.swings.mh_speed, st.mainhand_speed = p, speed, speed
+        st.swings.mh_pending = p
+        st.rage.actual, st.rage.actual_lo, st.rage.actual_hi = 0, 0, 0
+
+        st:RunHandler("heroic_strike", true)
+        st:ForecastSwingbasedResources()
+
+        local rageAfterSwing = {}
+        for i = 1, st.rage.fcount do
+            local forecast = st.rage.forecast[i]
+            if forecast.e == "mainhand" then
+                rageAfterSwing[#rageAfterSwing + 1] = forecast.v
+            end
+        end
+        assert.is_true(rageAfterSwing[1] > 0)
+        assert.are.equal(rageAfterSwing[1], rageAfterSwing[2])
+        assert.is_true(rageAfterSwing[3] > rageAfterSwing[2])
+    end)
 end)

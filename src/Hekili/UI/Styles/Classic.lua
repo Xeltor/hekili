@@ -277,6 +277,7 @@ local function CreateButton( dispID, id )
     b.Cooldown:SetFrameLevel( b:GetFrameLevel() + 1 )
     b.Cooldown:SetDrawBling( false )
     b.Cooldown:SetDrawEdge( false )
+    b.Cooldown:SetSwipeColor( 0, 0, 0, conf.cooldownSwipeAlpha )
 
     b.Cooldown.noCooldownCount = conf.hideOmniCC
 

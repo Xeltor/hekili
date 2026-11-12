@@ -132,6 +132,8 @@ function M.new()
         handlers = {},
         unitSpeed = {}, -- [unit] = speed for UnitAttackSpeed of a unit other than the player (default: secret)
         unitIs = {}, -- [unit] = the token UnitIsUnit(unit, x) is true for (SECRET: a secret answer)
+        unitCombat = {}, -- [unit] = UnitAffectingCombat override (default: combat)
+        threat = {}, -- [mob] = UnitThreatSituation("player", mob) (default: nil)
         names = {}, -- [unit] = UnitName (default "Player" for the player, else "Unit"; SECRET: a secret answer)
         friendly = {}, -- [unit] = true: UnitCanAttack("player", unit) false, UnitIsFriend true (default: hostile)
         level = { player = 20 }, -- [unit] = UnitLevel (nil: a secret answer)
@@ -430,7 +432,12 @@ function M.new()
     function api.GetInventoryItemID(_, slot)
         return ctl.inventory[slot]
     end
-    api.UnitPhaseReason, api.UnitThreatSituation, api.UnitTokenFromGUID, api.IsActionInRange = none, none, none, none
+    api.UnitPhaseReason, api.UnitTokenFromGUID, api.IsActionInRange = none, none, none
+    function api.UnitThreatSituation(unit, mob)
+        if unit == "player" then
+            return ctl.threat[mob or "player"]
+        end
+    end
     api.HasOverrideActionBar, api.HasVehicleActionBar, api.SpellIsSelfBuff = no, no, no
     api.IsMounted, api.IsResting, api.UnitCanAssist = no, no, no
     function api.IsInRaid()
@@ -490,7 +497,10 @@ function M.new()
         end
         return ctl.powerType[1], ctl.powerType[2]
     end
-    function api.UnitAffectingCombat()
+    function api.UnitAffectingCombat(unit)
+        if unit and ctl.unitCombat[unit] ~= nil then
+            return ctl.unitCombat[unit]
+        end
         return ctl.combat
     end
     function api.UnitIsPlayer(u)

@@ -40,22 +40,41 @@
 -- Block holds the GCD; wowsims.lua M.READY); live 6.0 / 17.2 / 17.2 (was 10.2 / 14.6 at L40 / L60; rage-starved, gap
 -- CK; L60 at its limit; the seeds 1-20 sweep behind the limits predates this export).
 local melee = "&target.within5&!target.outside5"
-local adventure = "prot_adventuring"
-local combat = adventure .. "&combat>0"
-local interruptWindow = combat .. melee .. "&prot_interrupt_window"
-local leveling = "prot_leveling&combat>0"
-local revengeLeveling = leveling .. "&action.revenge.known"
-local baselineDamage = "(!prot_leveling|!action.revenge.known)" -- Retain the original fillers before Revenge is trained.
+local clapRange = "&target.within8&!target.outside8"
+local contextual = "prot_contextual&combat>0"
+local targetThreat = "prot_threat_spend"
+local packThreat = "(prot_threat_spend|prot_pack_threat_spend)"
+local groupedThreat = contextual .. "&" .. targetThreat
+local interruptWindow = "prot_pve_target&combat>0" .. melee .. "&debuff.casting.up"
 local noMajorDefense = "(!action.last_stand.known|!buff.last_stand.up)&(!action.shield_wall.known|!buff.shield_wall.up)"
-local charge = adventure .. "&combat=0&prot_charge_range"
+local charge = "prot_contextual&combat=0&prot_charge_range"
 
-local function rageBudget(spell, threat)
-    return "(prot_bash_reserve=0|"
-        .. (threat and "prot_threat_spend|" or "")
-        .. "prot_current_rage>=action."
-        .. spell
-        .. ".cost+prot_bash_reserve)"
+local function rageBudget(spell, threat, followup)
+    local cost = "action." .. spell .. ".cost"
+    local enough = ""
+    if followup then
+        cost = cost .. "+action." .. followup .. ".cost"
+    else
+        enough = "prot_bash_reserve=0|"
+    end
+    if threat then
+        local override = "(" .. threat .. "&debuff.casting.down"
+        if followup then
+            override = override .. "&prot_current_rage>=" .. cost
+        end
+        enough = enough .. override .. ")|"
+    end
+    return "(" .. enough .. "prot_current_rage>=" .. cost .. "+prot_bash_reserve)"
 end
+
+local function dumpBudget(spell)
+    return "prot_current_rage>=action." .. spell .. ".cost+prot_dump_reserve"
+end
+
+local slamBudget = "(!buff.revenge_usable.up|cooldown.revenge.remains>0|"
+    .. rageBudget("shield_slam", targetThreat, "revenge")
+    .. ")&"
+    .. rageBudget("shield_slam", targetThreat)
 
 return {
     class = "WARRIOR",
@@ -89,12 +108,13 @@ return {
     notes = {
         "Cooldowns toggle hides: Retaliation, Death Wish, Sweeping Strikes and the racials (Blood Fury, Berserking, Eureka, Elune's Light).",
         "Classic Primary can show low-health defensives even when the client hides your health. Healing potions use the Defensives toggle.",
-        "Leveling opens with Charge and uses Defensive Stance with a shield. Vanguard lets you Charge without swapping stances.",
-        "Leveling uses Revenge after a block, dodge or parry and favors Shield Slam once you can afford it. Shield Block and damage-reducing shouts favor melee pulls.",
-        "Shield Bash stops casts in range. If it is unavailable, Concussion Blow can stop a cast on a non-boss after you learn it.",
-        "Protection remembers NPC types that cast this session and saves Rage for an approaching Shield Bash. Dungeon threat takes priority on the opener or when you lose aggro.",
-        "Use Disarm manually against enemies with a disarmable weapon.",
-        "At level 60 the simulator's damage priority takes over. Enable Maintain Demoralizing Shout to use its normal maintenance line.",
+        "Outdoor and dungeon pulls use Charge and Defensive Stance with a shield. Vanguard lets you Charge without swapping stances.",
+        "Grouped pulls favor Thunder Clap on nearby packs and Shield Slam, Revenge or Sunder Armor for immediate threat.",
+        "Shield Block is reserved for incoming melee. Heroic Strike and Cleave spend Rage left over after upcoming threat, mitigation and interrupts.",
+        "Shield Bash and Pummel cover your current target in PvE. Concussion Blow can stop a cast on a non-boss when you lack a ready interrupt.",
+        "Protection remembers NPC types that cast this session and saves Rage for Shield Bash. Grouped threat recovery can spend that reserve between casts.",
+        "Use Taunt for loose targets and tank swaps. Use Disarm against enemies with a disarmable weapon.",
+        "Raids use the simulator's sustained priority. Enable Maintain Demoralizing Shout if you are assigned to keep it up.",
     },
     -- a tank: the raid's tank (the target swings at it) and presets.ts:127-142's healing model (apply_defaults.ts:108-122)
     tank = true,
@@ -116,7 +136,7 @@ return {
     focus = { revenge = 1, heroic_strike = 2, cleave = 2 },
     -- Rule 15: the raid debuff, a setting off in game and on in the harness (the user's ruling, 2026-10-21); Thunder
     -- Clap stays always on here, as wowsims has it (the user's ruling: not a Protection option)
-    maintenance = { demoralizing_shout = { setting = "maintain_demoralizing_shout", orWhen = "prot_leveling" } },
+    maintenance = { demoralizing_shout = { setting = "maintain_demoralizing_shout", orWhen = "prot_contextual" } },
     condition = {
         last_stand = false,
         shield_wall = false,
@@ -125,25 +145,26 @@ return {
         healthstone = false,
     },
     guard = {
-        -- Keep the leveling Charge and shield rules. The simulator opens with a stance swap for Retaliation.
-        battle_stance = "!prot_leveling",
-        defensive_stance = "!prot_leveling|equipped.shield",
-        retaliation = "!prot_leveling",
-        bloodrage = "(!prot_leveling|prot_bloodrage_safe)",
-        shield_block = "!prot_leveling&" .. rageBudget("shield_block"),
-        shield_slam = baselineDamage .. "&" .. rageBudget("shield_slam", true),
-        revenge = "!prot_leveling&" .. rageBudget("revenge", true),
-        thunder_clap = baselineDamage .. "&" .. rageBudget("thunder_clap", true),
-        demoralizing_shout = "!prot_leveling&" .. rageBudget("demoralizing_shout"),
-        rend = baselineDamage .. "&(!prot_leveling|!arms_skip_rend)&" .. rageBudget("rend"),
-        sunder_armor = baselineDamage .. "&" .. rageBudget("sunder_armor", true),
-        heroic_strike = baselineDamage .. "&" .. rageBudget("heroic_strike"),
-        cleave = baselineDamage .. "&" .. rageBudget("cleave"),
-        battle_shout = rageBudget("battle_shout"),
-        death_wish = rageBudget("death_wish"),
+        -- The simulator opens with a stance swap for Retaliation. Outdoor and dungeon pulls use the lines below.
+        battle_stance = "!prot_contextual",
+        defensive_stance = "!prot_contextual|equipped.shield",
+        retaliation = "!prot_contextual",
+        bloodrage = "(!prot_contextual|combat=0&prot_bloodrage_safe)",
+        reckless_swings = "!prot_contextual",
+        shield_block = "!prot_contextual&!prot_offtanking&" .. rageBudget("shield_block"),
+        shield_slam = "!prot_contextual&" .. rageBudget("shield_slam"),
+        revenge = "!prot_contextual&" .. rageBudget("revenge"),
+        thunder_clap = "!prot_contextual&" .. rageBudget("thunder_clap"),
+        demoralizing_shout = "!prot_contextual&" .. rageBudget("demoralizing_shout"),
+        rend = "!prot_contextual&" .. rageBudget("rend"),
+        sunder_armor = "!prot_contextual&" .. rageBudget("sunder_armor"),
+        heroic_strike = "!prot_contextual&(prot_dump_reserve=0|" .. dumpBudget("heroic_strike") .. ")",
+        cleave = "!prot_contextual&(prot_dump_reserve=0|" .. dumpBudget("cleave") .. ")",
+        battle_shout = "(!prot_contextual|combat=0)&" .. rageBudget("battle_shout"),
+        death_wish = "(!prot_contextual|!prot_threat_spend)&" .. rageBudget("death_wish"),
         sweeping_strikes = rageBudget("sweeping_strikes"),
-        bloodthirst = rageBudget("bloodthirst", true),
-        mortal_strike = rageBudget("mortal_strike", true),
+        bloodthirst = rageBudget("bloodthirst", targetThreat),
+        mortal_strike = rageBudget("mortal_strike", targetThreat),
     },
     levelingFirst = {
         "defensive_stance,use_off_gcd=1,if="
@@ -157,12 +178,12 @@ return {
     },
     extra = {
         {
-            before = "death_wish",
-            line = "shield_bash,if=" .. interruptWindow .. "&debuff.casting.v2=0",
+            before = "reckless_swings",
+            line = "shield_bash,if=" .. interruptWindow .. "&debuff.casting.v2=0&prot_interrupt_window",
         },
-        { before = "death_wish", line = "pummel,if=" .. interruptWindow .. "&debuff.casting.v2=0" },
+        { before = "reckless_swings", line = "pummel,if=" .. interruptWindow .. "&debuff.casting.v2=0" },
         {
-            before = "death_wish",
+            before = "reckless_swings",
             line = "concussion_blow,use_off_gcd=1,if="
                 .. interruptWindow
                 .. "&toggle.interrupts&debuff.concussion_blow.down&!boss&!target.is_boss"
@@ -181,87 +202,103 @@ return {
         { before = "death_wish", line = "stoneform,display_below=50,if=" .. noMajorDefense },
         { before = "death_wish", line = "shatter_curse,display_below=50,if=" .. noMajorDefense },
         { before = "death_wish", line = "healthstone,use_off_gcd=1,display_below=30" },
-        { before = "death_wish", line = "healing_potion,use_off_gcd=1,display_below=40,if=" .. combat },
+        { before = "death_wish", line = "healing_potion,use_off_gcd=1,display_below=40,if=" .. contextual },
         {
             before = "death_wish",
-            line = "defensive_stance,use_off_gcd=1,if=" .. combat .. "&equipped.shield&!buff.defensive_stance.up",
+            line = "defensive_stance,use_off_gcd=1,if=" .. contextual .. "&equipped.shield&!buff.defensive_stance.up",
         },
-        { before = "death_wish", line = "bloodrage,use_off_gcd=1,if=" .. revengeLeveling .. "&prot_bloodrage_safe" },
-        { before = "sweeping_strikes", line = "victory_rush,focus=1,if=" .. leveling .. melee },
+        {
+            before = "death_wish",
+            line = "bloodrage,use_off_gcd=1,if=" .. contextual .. "&prot_current_rage<=25&prot_bloodrage_safe",
+        },
         {
             before = "sweeping_strikes",
-            line = "battle_shout,if=" .. leveling .. "&buff.battle_shout.down&" .. rageBudget("battle_shout"),
+            line = "thunder_clap,if=" .. contextual .. "&" .. packThreat .. "&prot_nearby_enemies>1&" .. rageBudget(
+                "thunder_clap",
+                packThreat
+            ),
+        },
+        { before = "sweeping_strikes", line = "shield_slam,if=" .. contextual .. melee .. "&" .. slamBudget },
+        {
+            before = "sweeping_strikes",
+            line = "revenge,focus=1,if=" .. contextual .. melee .. "&" .. rageBudget("revenge", targetThreat),
+        },
+        {
+            before = "sweeping_strikes",
+            line = "sunder_armor,if=" .. groupedThreat .. melee .. "&" .. rageBudget("sunder_armor", targetThreat),
+        },
+        { before = "sweeping_strikes", line = "victory_rush,focus=1,if=" .. contextual .. melee },
+        {
+            before = "sweeping_strikes",
+            line = "battle_shout,if="
+                .. contextual
+                .. "&!"
+                .. packThreat
+                .. "&buff.battle_shout.remains<=10&"
+                .. rageBudget("battle_shout"),
         },
         {
             before = "sweeping_strikes",
             line = "demoralizing_shout,if="
-                .. leveling
-                .. "&toggle.defensives&target.within10&!target.outside10&!execute_phase&debuff.demoralizing_shout.down"
-                .. "&(active_enemies>1|prot_melee_target)&"
+                .. contextual
+                .. "&!"
+                .. packThreat
+                .. "&toggle.defensives&target.within10&!target.outside10&!execute_phase"
+                .. "&debuff.demoralizing_shout.down&(prot_nearby_enemies>1|prot_melee_target)&"
                 .. rageBudget("demoralizing_shout"),
         },
         {
             before = "sweeping_strikes",
             line = "thunder_clap,if="
-                .. revengeLeveling
-                .. "&target.within8&!target.outside8&debuff.thunder_clap.down"
-                .. "&(active_enemies>1|(prot_melee_target&!arms_short_pull))&"
-                .. rageBudget("thunder_clap", true),
-        },
-        {
-            before = "sweeping_strikes",
-            line = "shield_slam,if="
-                .. revengeLeveling
-                .. melee
-                .. "&(!buff.revenge_usable.up|cooldown.revenge.remains>0|rage.lo>=action.shield_slam.cost+action.revenge.cost)&"
-                .. rageBudget("shield_slam", true),
-        },
-        {
-            before = "sweeping_strikes",
-            line = "revenge,focus=1,if=" .. leveling .. melee .. "&" .. rageBudget("revenge", true),
+                .. contextual
+                .. clapRange
+                .. "&debuff.thunder_clap.down&(prot_nearby_enemies>1|(prot_melee_target&!(arms_open_world&arms_short_pull)))&"
+                .. rageBudget("thunder_clap", packThreat),
         },
         {
             before = "sweeping_strikes",
             line = "shield_block,use_off_gcd=1,if="
-                .. leveling
-                .. "&toggle.defensives&prot_melee_target&buff.shield_block.down"
-                .. "&(!buff.revenge_usable.up|active_enemies>1|rage.lo>=40)&"
+                .. contextual
+                .. "&toggle.defensives&prot_melee_target&buff.shield_block.down&"
                 .. rageBudget("shield_block"),
         },
         {
             before = "sweeping_strikes",
             line = "rend,if="
-                .. revengeLeveling
+                .. contextual
                 .. melee
-                .. "&!arms_skip_rend&!execute_phase&debuff.rend.down&"
+                .. "&!"
+                .. packThreat
+                .. "&!arms_skip_rend&!execute_phase&debuff.rend.down"
+                .. "&(!action.revenge.known|!(arms_open_world&arms_short_pull))&"
                 .. rageBudget("rend"),
         },
         {
             before = "sweeping_strikes",
             line = "sunder_armor,if="
-                .. revengeLeveling
+                .. contextual
                 .. melee
-                .. "&!execute_phase&((arms_open_world&arms_short_pull&debuff.sunder_armor.stack=0&rage.lo>=25)"
-                .. "|((!arms_open_world|!arms_short_pull)&debuff.sunder_armor.stack<5))&"
-                .. rageBudget("sunder_armor", true),
+                .. "&!execute_phase&((arms_open_world&arms_short_pull&debuff.sunder_armor.stack=0&prot_current_rage>=25)"
+                .. "|(!(arms_open_world&arms_short_pull)&(debuff.sunder_armor.stack<5|debuff.sunder_armor.remains<=3)))&"
+                .. rageBudget("sunder_armor"),
         },
         {
             before = "sweeping_strikes",
             line = "cleave,use_off_gcd=1,focus=2,if="
-                .. revengeLeveling
+                .. contextual
                 .. melee
-                .. "&active_enemies>1&rage.lo>=40&"
-                .. rageBudget("cleave"),
+                .. "&prot_nearby_enemies>1&"
+                .. dumpBudget("cleave"),
         },
         {
             before = "sweeping_strikes",
             line = "heroic_strike,use_off_gcd=1,focus=2,if="
-                .. leveling
+                .. contextual
                 .. melee
-                .. "&active_enemies=1&((action.revenge.known&rage.lo>=40)|(!action.revenge.known&(!action.rend.known|arms_skip_rend)))&"
-                .. rageBudget("heroic_strike"),
+                .. "&prot_nearby_enemies<=1&!(arms_open_world&arms_short_pull&execute_phase)&"
+                .. dumpBudget("heroic_strike"),
         },
         -- The simulator has no kill window. Keep the original max-level placement before Bloodthirst.
-        { before = "bloodthirst", line = "victory_rush,focus=1,if=!prot_leveling" },
+        { before = "bloodthirst", line = "victory_rush,focus=1,if=!prot_contextual" },
     },
 }

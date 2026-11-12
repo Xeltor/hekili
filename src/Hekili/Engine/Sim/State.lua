@@ -1285,7 +1285,7 @@ do
         return b == nil or ( a.next < b.next )
     end
 
-    forecastResources = function( resource )
+    forecastResources = function( resource, replaceMainhand )
         if not resource then return end
 
         -- Initialize or wipe tables
@@ -1306,6 +1306,7 @@ do
 
         timeout = timeout + state.gcd.remains
         local r = state[ resource ]
+        local replacedMainhand = r.replaced_mainhand
 
         -- Initialize forecast tables
         remains[ resource ] = timeout
@@ -1363,6 +1364,11 @@ do
                     end
 
                     if i > 0 and v.next >= 0 then
+                        if replaceMainhand and v.swing == "mainhand" then
+                            -- A pending reconciliation slice belongs to a swing that already landed.
+                            replacedMainhand = v.resume or v.next
+                            r.replaced_mainhand = replacedMainhand
+                        end
                         table.insert( events, v )
                     end
                 end
@@ -1423,7 +1429,10 @@ do
                     local last = r.fcount > 0 and r.forecast[ r.fcount ]
                     local val, vlo, vhi
                     if last then val, vlo, vhi = last.v, last.l, last.h else val, vlo, vhi = r.actual, r.actual_lo, r.actual_hi end
-                    local gain = type( e.value ) == "number" and e.value or e.value( now ) -- once: the same gain for the three streams
+                    local gain = 0
+                    if e.swing ~= "mainhand" or e.resume or now ~= replacedMainhand then
+                        gain = type( e.value ) == "number" and e.value or e.value( now )
+                    end
                     local v = max( 0, min( r.max, val + bonus ) )
                     v = max( 0, min( r.max, v + gain ) )
                     local l = max( 0, min( r.max, vlo + bonus ) )
@@ -6430,6 +6439,15 @@ function state:RunHandler( key, noStart )
         ns.callHook( "runHandler_startCombat", key )
     end
 
+    if ability.onNextSwing then
+        local resource = self.GetResourceType( key )
+        local pool = resource and rawget( self, resource )
+        if pool and pool.swingGen then
+            -- The simulated press reserves its cost. Its strike replaces one white swing's resource gain.
+            forecastResources( resource, true )
+        end
+    end
+
     ns.callHook( "runHandler", key )
 end
 
@@ -6553,6 +6571,7 @@ do
             local res = rawget( state, k )
 
             if res then
+                res.replaced_mainhand = nil
                 -- the believed estimate, then the floor as the press gates read it and the ceiling (border batch 2); a
                 -- plain read answers one value: no band
                 res.actual, res.actual_lo, res.actual_hi = UnitPower( "player", power.type )

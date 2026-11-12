@@ -424,6 +424,7 @@ function Timeline.Build( d, conf )
         local b = T.cells[ i ]
         local size = i == 1 and nowS or ( i == 2 and nextS or iconS )
         dress( T, b, i, size, tl )
+        if i <= 2 then b.Cooldown:SetSwipeColor( 0, 0, 0, conf.cooldownSwipeAlpha ) end
         if i == 1 then place( T, b, 0, ( band - nowS ) / 2 )
         elseif i == 2 then place( T, b, nextX, ( band - nextS ) / 2 ) end
         b:SetAlpha( i < 3 and 1 or tl.laneAlpha )

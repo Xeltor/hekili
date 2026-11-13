@@ -89,6 +89,7 @@ GetCombatRating	hybrid
 GetCombatRatingBonus	hybrid
 GetCritChance	hybrid
 GetCursorInfo	passthrough
+GetFileIDFromPath	passthrough
 GetFrameCPUUsage	passthrough
 GetFramerate	passthrough
 GetHaste	hybrid
@@ -183,7 +184,7 @@ UnitLevel	passthrough
 UnitName	hybrid
 UnitOnTaxi	passthrough
 UnitPartialPower	virtual
-UnitPhaseReason	passthrough
+UnitPhaseReason	hybrid
 UnitPower	hybrid
 UnitPowerMax	hybrid
 UnitPowerType	passthrough

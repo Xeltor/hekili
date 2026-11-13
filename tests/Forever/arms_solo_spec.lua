@@ -32,7 +32,7 @@ local function warrior(level, rage, options)
     ctl.guid.target = options.target or ctl.guid.target
     ctl.creature.target = options.creature
     ctl.groupMembers = options.group or 0
-    ctl.inRaid = options.raid == true
+    ctl.isInRaid = options.raid == true
     ctl.unitHealth.player = options.health or 1000
     ctl.itemCount[5512] = options.healthstone and 1 or 0
     ctl.items[5512] = { "Minor Healthstone", icon = 538745 }

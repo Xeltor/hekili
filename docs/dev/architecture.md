@@ -202,6 +202,7 @@ What a content addon may use, and nothing else (`tests/boundary_spec.lua` enforc
 
 Plain-read names in every content function's environment: `knownRank`, `stat`, `swingBase`, `healthMax`,
 `mainhand_speed`, `offhand_speed`, `weapon.size`, `equipped.shield`.
+
 Two environments have them:
 - the sim's `state` (`Engine/Sim/State.lua`): `knownRank` (`Facade.KnownRank`), `swingBase`, `healthMax` are plain
   functions; the speeds and gear are the sim's own fields; `stat` is the
@@ -215,6 +216,30 @@ Two environments have them:
   `target.health` (`known`, and the percent bounds `lo` and `hi` of the belief's target health interval,
   `Families/TargetHealth.lua`; 0 and 100 while unknown). There is no `target.health.pct`: secret health is unknown,
   never 100 or 0, so a `now` tests a bound (`target.health.hi < 35`: proven below 35%).
+
+A debuff aura may declare a `debuffMechanic` key and `debuffImmuneNPCs = { npcIDs }` for verified NPC immunity to
+that mechanic. A protective aura may declare `debuffImmunities = { mechanicKeys }`; a readable target aura of
+any registered rank blocks the matching mechanics until its observed expiry. These are ordinary public
+`RegisterAura` metadata, copied into the tracked definition; NPCs, spells, and mechanic names belong to content.
+The core does not infer immunity from creature type or from unreadable aura fields.
+
+`Client.PlayerDebuffByDispel(type, queryTime)` returns the count, expiry, and applied/observed time of the first
+positively observed harmful player aura of that dispel type, including NPC effects absent from the tracked spell
+set. It reads a fixed-size scalar cache populated by the existing player aura walk, not the client on each query.
+Only plain type and expiry authorize a positive result; a secret or failed next player walk discards older
+evidence. An explicit zero expiry means until cancelled; a hidden expiry never receives an invented duration.
+The query time may be the simulation's forecast time and never mutates the cache. A nil result means no usable
+positive evidence, not proof that no removable effect exists. Shared dispel pseudo-auras consume this public view.
+
+Debuff auras may declare `debuffRepeatGroup`, `debuffRepeatDelay` (a finite positive default in seconds), and
+`debuffRepeatSetting` (an optional numeric pack setting, zero disables spacing). These describe minimum spacing
+between actual own cast attempts sharing a group. `Client.DebuffRepeatBlocked(auraKey, guid, now)` reads that policy;
+the ordinary debuff recommendation gate also enforces it. It never changes the observed aura's duration or predicts
+another player's crowd control. Histories are bounded and preallocated, survive combat end and target swaps, and
+forget confirmed-dead targets. A matched failed application removes only its own attempt. Unidentifiable targets
+use conservative bounded suppression. Separately, `debuffRetryDelay` declares a finite retry delay for a matched
+IMMUNE result instead of storing permanent immunity for that spawn. These delays are content policies, not API
+measurements of a diminishing-return reset.
 
 The worn weapons, as priority conditions (the sim's `state` only; the `now` context has `weapon.size` alone):
 `main_hand`, `off_hand` and `ranged` (slot 18) answer the size keys `two_handed` (`2h`, `two_hand`) and `one_handed`
@@ -313,6 +338,12 @@ log.
 scalar or function, read as a fraction at any magnitude (a percent-of-base cost a stacking aura raises past 100% of
 base), priced `floor(c x base)` the same way; the base learning from out-of-combat cost reads counts its reads too.
 
+**One-time resource caps.** `capResource(resource, maximum)` is available to both `now` effects and simulation
+handlers. It caps the lower, estimated and upper amounts independently, never grants resource and leaves the pool's
+maximum unchanged. It does not run gain/spend hooks or start the five-second rule. An actual cap starts a fresh
+resource-calibration interval so a later observation cannot treat the nonlinear loss as regeneration. The simulation
+invalidates cost memoization and rebuilds the resource forecast. Warrior stance retention uses this operation.
+
 An ability's `known` must depend only on the spellbook, talents and gear, never on buffs or time, because the engine
 caches it for one prediction (`state:IsKnown`, wiped by `Hekili:ResetSpellCaches`). `state:IsDisabled` caches its
 prefix the same way: the ability and item options, the toggle assignment, `state.filter`, boss and the target counts
@@ -375,14 +406,16 @@ entry with a `spirit` multiple (Evocation) still makes the pair no news.
 **Addons and load order.** `Hekili` (core, the only addon the client loads by itself), `Hekili_Shared`
 (`## Dependencies: Hekili`, `## LoadOnDemand: 1`; Shared auras, consumables, items, and the race packs), then one pack
 per class: `Hekili_Warrior`, `Hekili_Druid`, `Hekili_Rogue`, `Hekili_Paladin`, `Hekili_Shaman`, `Hekili_Hunter`, `Hekili_Mage`, `Hekili_Priest`, `Hekili_Warlock` (`## Dependencies: Hekili, Hekili_Shared`,
-`## LoadOnDemand: 1`). `tests/helpers/addons.lua` lists them in this order. `ns.LoadContent` runs once, in
-`OnInitialize`, before `InitializeProfile`, so the profile's defaults see the class's spec and packs. It loads
+`## LoadOnDemand: 1`). `tests/helpers/addons.lua` lists them in this order. `ns.LoadContent` completes once, before
+`InitializeProfile`, so the profile's defaults see the class's spec and packs. If class data is missing during
+`OnInitialize`, both steps wait for `OnEnable` at `PLAYER_LOGIN`. The loader loads
 `Hekili_Shared` explicitly first (every class, with or without a pack, gets the shared and race content), then reads
 the player's class token, finds `Hekili_<Class>` and loads it if its `## X-Hekili-ContentAPI` equals
 `CONTENT_API` in `Engine/Content.lua`. Nothing relies on the client loading a dependency for `LoadAddOn`; the headless
 fake refuses a pack whose dependency is not loaded yet. A failed shared load (then no pack is tried), an unreadable
 class token, a missing pack, a mismatch or a failed pack load keeps one notice, which `ns.ContentNotice` shows at
-`OnEnable`; the core then runs with no class spec. Nothing retries: a notice asks for `/reload` or an install.
+`OnEnable`; the core then runs with no class spec. At first world entry, Hekili activates the built-in priorities
+after the first successful specialization read, including a read retried on a later frame.
 
 **What bumps what.** A class release bumps `## Version` in its pack's TOC. `CONTENT_API` and every content TOC's
 `## X-Hekili-ContentAPI` change together, only when the content surface changes: the Register* API, `Hekili.Client`,

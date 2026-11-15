@@ -17,8 +17,10 @@ local Plain, Stage, Note = S.Plain, S.Stage, S.Note
 -- (shared-content spec §5); the core's (def.gcdSpell), set at the build below. Before it the facade's cooldown
 -- policy knows no GCD spell (its times are plain out of combat anyway).
 
--- By ability index: the last ready flag reported (-1 none, 0 not ready, 1 ready); the GCD's (-1, 0 idle, 1 active).
+-- By ability index: the last ready flag reported (-1 none, -2 dropped edge, 0 not ready, 1 ready);
+-- the GCD uses the same sentinels, with 0 idle and 1 active.
 local last, gcdLast = {}, -1
+local seedPending, seedAt = false, 0
 
 -- The highest known rank of each ability (rank order: its `id`, then its `copy` IDs) and, out of combat, its plain
 -- cost and whether it costs a second power type. Out of the hot path: build, SPELLS_CHANGED.
@@ -30,6 +32,9 @@ local function resolve(api)
             if Plain(api, api.C_SpellBook.IsSpellKnown(ids[k])) == true then
                 q, known = ids[k], true
             end
+        end
+        if A.qid[a] ~= q then
+            last[a], seedPending, seedAt = -1, true, 0
         end
         A.qid[a] = q
         if A.known then
@@ -64,6 +69,7 @@ I.OnBuild(function(def)
         last[a] = -1
     end
     gcdLast = -1
+    seedPending, seedAt = true, 0
     if I.api then
         resolve(I.api)
     end
@@ -124,8 +130,11 @@ local function onCooldown(api, t)
         if r ~= nil then
             local v = r and 1 or 0
             if v ~= last[a] then
-                last[a] = v
-                edge = Stage(Obs.Cooldown, t, a, v, 0) or edge
+                if Stage(Obs.Cooldown, t, a, v, 0) then
+                    last[a], edge = v, true
+                else
+                    last[a], seedPending, seedAt = -2, true, 0
+                end
             end
         end
     end
@@ -133,8 +142,11 @@ local function onCooldown(api, t)
     if active ~= nil then
         local v = active and 1 or 0
         if v ~= gcdLast then
-            gcdLast = v
-            edge = Stage(Obs.Cooldown, t, 0, v, 1) or edge
+            if Stage(Obs.Cooldown, t, 0, v, 1) then
+                gcdLast, edge = v, true
+            else
+                gcdLast, seedPending, seedAt = -2, true, 0
+            end
         end
     end
     if edge then
@@ -143,3 +155,41 @@ local function onCooldown(api, t)
 end
 S.On("SPELL_UPDATE_COOLDOWN", nil, onCooldown)
 S.On("SPELL_UPDATE_CHARGES", nil, onCooldown)
+
+-- A reload need not receive a cooldown event for spells already cooling down. Seed their flags on the first
+-- drain after Build/Start (both orders), after the other polls, directly into the log to avoid the event stage's
+-- smaller capacity. Only unresolved flags are retried, at most twice a second; the poll stops once all are read.
+S.Poll(17, function(api, t)
+    if not seedPending or not I.built or t < seedAt then
+        return
+    end
+    seedPending, seedAt = false, t + I.CD_PROBE
+    for a = 1, I.ab.n do
+        if last[a] < 0 then
+            local r = ready(api, I.ab.qid[a])
+            if r ~= nil and I.log.n < I.log.cap then
+                local v = r and 1 or 0
+                -- Initially idle needs no pin: a cast before this first drain may be newer than the API answer.
+                -- A dropped edge must still recover, even when the preceding not-ready edge is not folded yet.
+                if not r or last[a] == -2 or I.ab.flag[a] == 0 then
+                    S.Direct(Obs.Cooldown, t, a, v, 0)
+                end
+                last[a] = v
+            else
+                seedPending = true
+            end
+        end
+    end
+    if gcdLast < 0 then
+        local _, active = ready(api, I.GCD_SPELL)
+        if active ~= nil and I.log.n < I.log.cap then
+            local v = active and 1 or 0
+            if active or gcdLast == -2 then
+                S.Direct(Obs.Cooldown, t, 0, v, 1)
+            end
+            gcdLast = v
+        else
+            seedPending = true
+        end
+    end
+end)

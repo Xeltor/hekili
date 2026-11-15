@@ -191,7 +191,7 @@ end)
 -- falls to the next). Registered for every unit, as Sources/Target.lua's: a "player" registration would narrow the
 -- client's and starve Rows/Attackers. The facade made a secret slot nil (EventFacade.lua onEvent); a WOUND without a
 -- plain amount (live, L67/L152) is staged by its kind with b = -1, unknown (CN13): a `consumedBy` charge and the
--- reactions key on the kind; Families/Resources.lua runs no `taken` on it. Allocates nothing.
+-- reactions key on the kind; `taken` receives -1 so content can retain damage-independent gains. Allocates nothing.
 local HIT, BLOCKS = I.HitKind, { BLOCK = true, BLOCK_REDUCED = true }
 S.On("UNIT_COMBAT", nil, function(api, t, unit, act, flag, amount)
     if unit ~= "player" then

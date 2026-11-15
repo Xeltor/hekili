@@ -48,6 +48,10 @@ local picked, pickedBy, pickedTree, settledID, note
 
 function Hekili:SpecializationChanged()
     local currentSpec = GetSpecialization()
+    if not currentSpec then
+        self.PendingSpecializationChange = true
+        return
+    end
     if currentSpec == 5 then currentSpec = 1 end -- no specialization: the first
     -- Forever's one pseudo-spec per class: its id keys the legacy profile; its role and primary stat stay the
     -- simulation's (a spec's role is shown, not simulated: per-spec plan).
@@ -357,6 +361,7 @@ function Hekili:SpecializationChanged()
 
     self:UpdateDisplayVisibility()
     self:UpdateDamageDetectionForCLEU()
+    return true
 end
 
 -- This character's spec choice table ({ [tree] = spec key, last = tree }; Selectors.lua's PickSpec), made on first use;
@@ -466,17 +471,6 @@ end
 
 
 do
-    RegisterEvent( "PLAYER_ENTERING_WORLD", function( event, login, reload )
-        if login or reload then
-            local currentSpec = GetSpecialization()
-            local currentID = GetSpecializationInfo( currentSpec )
-
-            if currentID ~= state.spec.clientID then
-                Hekili:SpecializationChanged()
-            end
-        end
-    end )
-
     local SpellDisableEvents = {
         CHALLENGE_MODE_START = 1,
         CHALLENGE_MODE_RESET = 1,

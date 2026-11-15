@@ -7,7 +7,20 @@
 
 local race = Hekili:NewRace("Gnome")
 
-local EUREKA = { 1259812, 1259817, 1259821, 1259823 } -- the other classes' Eureka!
+-- The engine checks an ability's primary ID in the spellbook; `copy` only supplies aliases. Each class must own
+-- its actual cast ID, rather than requiring the Warrior spell in every Gnome's spellbook.
+local EUREKA_ID = { WARRIOR = 1259813, ROGUE = 1259812, MAGE = 1259817, WARLOCK = 1259821, PRIEST = 1259823 }
+local eurekaID = EUREKA_ID[Hekili.Class.file]
+local eurekaKnown
+if not eurekaID then
+    eurekaID, eurekaKnown = 1259813, false
+end
+local EUREKA = {}
+for _, id in ipairs({ 1259813, 1259812, 1259817, 1259821, 1259823 }) do
+    if id ~= eurekaID then
+        EUREKA[#EUREKA + 1] = id
+    end
+end
 
 -- Eureka!'s cost scope (its effect 0: aura 108 misc 14 -10, class masks against the class's SpellClassSet) by class
 -- file: rank-1 IDs of the class's skill-line spells the masks cover, from
@@ -76,8 +89,9 @@ local EUREKA_SPELLS = {
 }
 
 race:RegisterAbility("eureka", {
-    id = 1259813,
+    id = eurekaID,
     copy = EUREKA,
+    known = eurekaKnown,
     cast = 0,
     cooldown = 120,
     gcd = "off",
@@ -94,7 +108,7 @@ race:RegisterAbility("eureka", {
 })
 
 race:RegisterAura("eureka", {
-    id = 1259813,
+    id = eurekaID,
     copy = EUREKA,
     duration = 8, -- the pin (wowsims racials.go:371-396, eureka.go:25) over the DB2's 15 s / 3 stacks
 })

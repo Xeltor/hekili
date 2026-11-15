@@ -22,7 +22,12 @@ local KIT = {
     riposte = { { 14251 }, 10, 6, "off" }, -- off the GCD (DB2); owner R70: on the Combat priority, in the parry window
     ambush = { { 8676, 8724, 8725, 11267, 11268, 11269 }, 60, 0, "totem" },
     garrote = { { 703, 8631, 8632, 8633, 11289, 11290 }, 50, 0, "totem" },
-    mutilate = { { 399956, 1241582, 1241584 }, 60, 0, "totem" },
+    mutilate = { { 1310707, 399956, 1241582, 1241584 }, 60, 0, "totem" },
+    auto_attack = { { 6603 }, 0, 0, "off" },
+    cheap_shot = { { 1833 }, 60, 0, "totem" },
+    kidney_shot = { { 408, 8643 }, 25, 20, "totem" },
+    evasion = { { 5277 }, 0, 300, "off" },
+    feint = { { 1966, 6768, 8637, 11303, 25302 }, 20, 10, "totem" },
     hemorrhage = { { 16511 }, 35, 0, "totem" },
     ghostly_strike = { { 14278 }, 40, 20, "totem" },
     shank = { { 1329283, 1329549 }, 5, 10, "totem" },
@@ -72,13 +77,16 @@ describe("Forever Rogue", function()
         assert.are.same({
             "ambush",
             "backstab",
+            "cheap_shot",
             "death_mark",
             "eviscerate",
             "expose_armor",
+            "feint",
             "garrote",
             "ghostly_strike",
             "hemorrhage",
             "kick",
+            "kidney_shot",
             "mutilate",
             "rupture",
             "sinister_strike",
@@ -96,13 +104,13 @@ describe("Forever Rogue", function()
                 assert.are.same(want[1], idsOf(a), key)
                 assert.are.same(
                     { want[2], want[3], want[4] },
-                    { ld.run(a.spend, e) or 0, ld.run(a.cooldown, e), a.gcd },
+                    { ld.run(a.spend, e) or 0, ld.run(a.cooldown, e) or 0, a.gcd },
                     key
                 )
                 assert.are.equal("function", type(a.known), key)
             end
         end
-        assert.are.equal(22, n)
+        assert.are.equal(27, n)
         assert.are.same({ 8928, 8927, 8926, 6950, 6949, 6947 }, w.abilities.instant_poison.items)
         assert.are.same({ 20844, 8985, 8984, 2893, 2892 }, w.abilities.deadly_poison.items)
         assert.are.equal("cooldowns", w.abilities.vanish.toggle) -- the native Cooldowns toggle (APL usability audit B)
@@ -387,11 +395,16 @@ describe("Forever Rogue", function()
 
     it("reminds of poisons from the bags only, the sim enchanting the weapon", function()
         local ip = w.abilities.instant_poison
-        -- buff consumables: under Potions, like the shared mana and energy ones (user, 2026-10-21)
-        assert.are.same({ "potions", "potions" }, { ip.toggle, w.abilities.deadly_poison.toggle })
+        w.state.main_hand = { size = 1 }
+        -- Weapon upkeep has its own opt-out; combat consumables keep their separate toggle.
+        assert.is_nil(ip.toggle)
+        assert.is_nil(w.abilities.deadly_poison.toggle)
         assert.is_false((ld.run(ip.usable, e)))
         w.game.bags[8927] = 3
-        assert.are.same({ true, 8927 }, { (ld.run(ip.usable, e)), (ip.item()) })
+        assert.are.same({ true, 8927 }, { (ld.run(ip.usable, e)), (ld.run(ip.item, e)) })
+        e.settings.poison_reminders = false
+        assert.is_false((ld.run(ip.usable, e)))
+        e.settings.poison_reminders = true
         ld.run(ip.handler, e)
         ld.run(w.abilities.deadly_poison.handler, e)
         assert.are.same({ "instant_poison", "main_hand_enchant", "deadly_poison", "off_hand_enchant" }, e.applied)
@@ -401,7 +414,8 @@ describe("Forever Rogue", function()
         end
         for _, k in ipairs({ "instant_poison", "deadly_poison" }) do
             local a = w.abilities[k]
-            assert.are.same({ 3, true, k }, { a.cast, a.essential, a.nobuff }, k) -- upstream retail's
+            assert.are.same({ 3, false }, { a.cast, a.startsCombat }, k)
+            assert.is_nil(a.toggle)
         end
     end)
 
@@ -458,17 +472,21 @@ describe("Forever Rogue priorities", function()
 
     it("names only registered abilities, auras, talents and settings", function()
         local w = ld.load(nil, FILE, "ROGUE")
-        -- the shared kit's (Hekili_Shared: an item and the races' racials), not the class file's
-        local shared = { thistle_tea = true, blood_fury = true, eureka = true, elunes_light = true, berserking = true }
-        local kinds =
-            { buff = w.auras, debuff = w.auras, talent = w.talents, settings = w.settings, action = w.abilities }
+        local merged = require("Forever.helpers.engine").abilitySet("ROGUE", "Human")
+        local kinds = {
+            buff = merged.auras,
+            debuff = merged.auras,
+            talent = w.talents,
+            settings = w.settings,
+            action = merged.abilities,
+        }
         for name, p in pairs(packs) do
             for list, entries in pairs(p.lists) do
                 for i, e in ipairs(entries) do
                     local where = name .. " " .. list .. " " .. i
-                    assert.is_true(w.abilities[e.action] ~= nil or shared[e.action], where .. ": " .. e.action)
+                    assert.is_not_nil(merged.abilities[e.action], where .. ": " .. e.action)
                     for kind, key in (e.criteria or ""):gmatch("(%a+)%.([%w_]+)") do
-                        if kinds[kind] and not shared[key] then
+                        if kinds[kind] then
                             assert.is_not_nil(kinds[kind][key], where .. ": no " .. kind .. " " .. key)
                         end
                     end

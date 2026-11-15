@@ -114,6 +114,75 @@ describe("now handlers", function()
         assert.are.equal(1.0, I.auraVerdict.W[k])
     end)
 
+    it("holds a flying debuff for its original target and releases it after a matched full resist", function()
+        register("bolt_test", {
+            id = 2687,
+            expects = "travel",
+            school = "nature",
+            velocity = 20,
+            debuffApplication = "spender_c",
+            now = function()
+                applyDebuff("target", "spender_c", 15) -- luacheck: ignore 113
+            end,
+        })
+        start()
+        ctl.now = 4
+        ctl.Fire("PLAYER_TARGET_CHANGED")
+        local original = ctl.guid.target
+        local a = I.ab.bySpell[2687]
+        I.ab.rMax[a] = 30
+        ctl.now = 5
+        ctl.Fire("UNIT_SPELLCAST_SENT", "player", "Unit", "Cast-anchor", 2687)
+        assert.are.equal("waiting for debuff result", VS.DebuffBlocked("bolt_test", 5))
+        ctl.guid.nameplate1 = original
+        ctl.Fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        ctl.guid.target = "Creature-2"
+        ctl.Fire("PLAYER_TARGET_CHANGED")
+        ctl.now = 5.1
+        ctl.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-anchor", 2687)
+        VS.Drain(5.11)
+        assert.is_nil(VS.DebuffBlocked("bolt_test", 5.2))
+        assert.is_nil(VS.Aura("target", fs.SPENDER_C, 5.2))
+        assert.are.equal("waiting for debuff result", VS.DebuffBlocked("bolt_test", 5.2, original))
+        assert.is_nil(VS.DebuffBlocked("bolt_test", 6.76, original))
+        ctl.now = 6.6
+        ctl.Fire("UNIT_COMBAT", "nameplate1", "WOUND", "RESIST", 0, 8)
+        ctl.Tick(6.75)
+        VS.Drain(6.75)
+        ctl.guid.target = original
+        ctl.Fire("PLAYER_TARGET_CHANGED")
+        VS.Drain(6.75)
+        assert.is_nil(VS.DebuffBlocked("bolt_test", 6.75))
+        assert.is_nil(VS.Aura("target", fs.SPENDER_C, 6.75))
+    end)
+
+    it("restores the old debuff when its late refresh miss follows a different cast", function()
+        register("bolt_test", {
+            id = 2687,
+            expects = "travel",
+            school = "nature",
+            velocity = 20,
+            debuffApplication = "spender_c",
+            now = function()
+                applyDebuff("target", "spender_c", 15) -- luacheck: ignore 113
+            end,
+        })
+        start()
+        ctl.now = 4
+        ctl.Fire("PLAYER_TARGET_CHANGED")
+        local a = I.ab.bySpell[2687]
+        I.ab.rMax[a] = 30
+        cast(fs.SPENDER_C, 5)
+        cast(2687, 8)
+        cast(fs.SPENDER_N, 9)
+        ctl.now = 9.5
+        ctl.Fire("UNIT_COMBAT", "target", "MISS", "", 0, 8)
+        ctl.Tick(9.65)
+        VS.Drain(9.65)
+        local aura, stacks, applied = VS.Aura("target", fs.SPENDER_C, 9.65)
+        assert.are.same({ 20, 1, 5 }, { aura.est, stacks, applied })
+    end)
+
     it("shifts a resource by `gain` (est, lo and hi) and writes its energize row back-dated to the cast", function()
         register("rage_test", {
             id = 2687,
@@ -223,6 +292,7 @@ describe("now handlers", function()
     -- Every Forever ability whose sim `handler` (or a channel's `start`) changes an aura or gains a resource declares
     -- a `now`: the belief never runs the sim handler, and own auras are secret in combat. A text scan of the files.
     local EXEMPT = {
+        auto_attack = "the synthetic autoattack aura is read from IsCurrentSpell",
         heroic_strike = "the queued-strike pseudo-aura has no spell id: untracked; poll 3 reads the queue",
         cleave = "as heroic_strike",
         maul = "as heroic_strike",
@@ -1008,7 +1078,9 @@ describe("now handlers", function()
             start()
             local k = I.auras.bySpell[fs.SPENDER_C]
             I.Sources.Direct(VS.Obs.Read, 5, I.AURA_UNIT + k, 30, I.ReadOf.Aura + I.AURA_STACK) -- target A: up
-            I.Sources.Direct(VS.Obs.TargetSwap, 5, 2, 1, 1) -- to target B (slot 2)
+            ctl.now = 5
+            ctl.guid.target = "Creature-2"
+            ctl.Fire("PLAYER_TARGET_CHANGED")
             cast(fs.SPENDER_C, 5)
             local rec, n = VS.Aura("target", fs.SPENDER_C, 5.1)
             assert.are.same({ "modelled", 1 }, { rec.basis, n })
@@ -1463,13 +1535,22 @@ describe("now handlers", function()
                 ctl.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-1", fs.SPENDER_C)
                 ctl.Tick(5.01)
                 VS.Drain(5.01)
-                I.curSwapN = I.curSwapN + 1 -- as a swap's TargetSwap fold moves it (Families/Auras.lua; lane A)
                 ctl.now = 5.02
-                ctl.Fire("UNIT_COMBAT", "target", "DODGE", "", 0, 1)
+                ctl.guid.nameplate1 = ctl.guid.target
+                ctl.Fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
+                local original = ctl.guid.target
+                ctl.guid.target = "Creature-2"
+                ctl.Fire("PLAYER_TARGET_CHANGED")
+                ctl.Fire("UNIT_COMBAT", "nameplate1", "DODGE", "", 0, 1)
                 ctl.Tick(5.03)
                 VS.Drain(5.04)
-                assert.are.equal(20, VS.Aura("target", fs.SPENDER_C, 5.1).est)
+                assert.is_nil(VS.Aura("target", fs.SPENDER_C, 5.1))
                 assert.are.equal(8, VS.Power(fs.RAGE, 5.1).est)
+                ctl.now = 5.1
+                ctl.guid.target = original
+                ctl.Fire("PLAYER_TARGET_CHANGED")
+                VS.Drain(5.1)
+                assert.is_nil(VS.Aura("target", fs.SPENDER_C, 5.1))
             end
         )
 

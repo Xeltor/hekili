@@ -601,6 +601,8 @@ spec:RegisterAuras({
     },
     lacerate = {
         id = 1328617,
+        debuffMechanic = "bleed",
+        debuffImmuneNPCs = { 114 }, -- Harvest Watcher, verified in WoW Forever.
         copy = { 1328616, 414644, 1235826, 1235827, 414647 }, -- 414647: the viewer's Lacerate (no rank text)
         duration = 15,
         tick_time = 3,
@@ -663,6 +665,8 @@ spec:RegisterAuras({
     },
     pounce_bleed = {
         id = 9007,
+        debuffMechanic = "bleed",
+        debuffImmuneNPCs = { 114 }, -- Harvest Watcher, verified in WoW Forever.
         copy = rest(POUNCE_BLEED),
         duration = 18,
         tick_time = 3,
@@ -676,6 +680,8 @@ spec:RegisterAuras({
     },
     rake = {
         id = 1822,
+        debuffMechanic = "bleed",
+        debuffImmuneNPCs = { 114 }, -- Harvest Watcher, verified in WoW Forever.
         copy = rest(RAKE),
         duration = 9,
         tick_time = 3,
@@ -683,6 +689,8 @@ spec:RegisterAuras({
     },
     rip = {
         id = 1079,
+        debuffMechanic = "bleed",
+        debuffImmuneNPCs = { 114 }, -- Harvest Watcher, verified in WoW Forever.
         copy = rest(RIP),
         duration = 12,
         tick_time = 2,
@@ -855,6 +863,7 @@ spec:RegisterAbilities({
         id = 5211,
         copy = rest(BASH),
         cast = 0,
+        debuffApplication = "bash",
         cooldown = 60, -- Brutal Impact's -30 s unmodelled (a cooldown modifier)
         gcd = "spell",
 
@@ -1097,6 +1106,7 @@ spec:RegisterAbilities({
         id = 339,
         copy = rest(ROOTS),
         cast = 1.5,
+        debuffApplication = "entangling_roots",
         cooldown = 0,
         gcd = "spell",
 
@@ -1746,6 +1756,7 @@ spec:RegisterAbilities({
 
     rip = {
         id = 1079,
+        debuffApplication = "rip",
         copy = rest(RIP),
         cast = 0,
         cooldown = 0,

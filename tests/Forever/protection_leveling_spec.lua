@@ -1,114 +1,7 @@
-local headless = require("Game.harness.headless")
 local SECRET = require("Game.State.helpers.fake_api").SECRET
-local ws = require("Forever.helpers.wowsims")
-local world = require("Forever.helpers.warrior_world")
-local prot = require("Forever.helpers.protection_gate")
-
-local PACK = "Protection (wowsims.com)"
+local fixture = require("Forever.helpers.protection_leveling")
+local warrior, read, cast, PACK = fixture.warrior, fixture.read, fixture.cast, fixture.PACK
 local CASTER = "Creature-0-0-0-0-346-000001"
-local KIT = {}
-for i, key in ipairs(prot.KIT) do
-    KIT[i] = key
-end
-KIT[#KIT + 1] = "concussion_blow"
-KIT[#KIT + 1] = "disarm"
-KIT[#KIT + 1] = "last_stand"
-
-local function warrior(level, rage, options)
-    options = options or {}
-    local character = ws.content(world.Protection, {
-        level = level,
-        learn = ws.learn("WARRIOR"),
-        kit = KIT,
-    }).character()
-    character.talents = options.talents or {}
-    local talentSpells = { 12809, 12975, 23922, 1310317 }
-    for _, spell in ipairs(talentSpells) do
-        if character.talents[spell] then
-            character.known[#character.known + 1] = spell
-        end
-    end
-    character.form = options.form or (level >= 10 and 2 or 1)
-    character.power.value = rage
-    character.instanceType = options.instance
-    character.ranges = { [100] = { 8, 25 }, [1240287] = { 8, 25 } }
-    local hasVanguard = character.talents[1310317]
-    for i = #character.known, 1, -1 do
-        local spell = character.known[i]
-        if (not hasVanguard and spell >= 1240287 and spell <= 1240289) or (hasVanguard and spell == 100) then
-            table.remove(character.known, i)
-        end
-    end
-    if options.noShield then
-        character.items = world.character().items
-    end
-    local H = headless.new({ character = character, pack = options.pack or PACK })
-    local ctl = H.ctl
-    assert.are.same({}, H.loadErrors)
-    ctl.distance.target = options.distance or 3
-    ctl.guid.target = options.target or ctl.guid.target
-    ctl.creature.target = options.creature
-    ctl.classification = options.classification
-    ctl.groupMembers = options.group or 0
-    ctl.threat.target = options.threat
-    ctl.level.target = options.boss and -1 or level
-    ctl.unitHealth.player = options.health or 1000
-    ctl.auras.player.HELPFUL[1] = { spellId = 6673, expirationTime = ctl.now + 100, applications = 0 }
-    if options.victorious then
-        ctl.auras.player.HELPFUL[2] = { spellId = 402975, expirationTime = ctl.now + 20, applications = 0 }
-    end
-    if options.shieldBlock then
-        local buffs = ctl.auras.player.HELPFUL
-        buffs[#buffs + 1] = { spellId = 2565, expirationTime = ctl.now + 7, applications = 2 }
-    end
-    for _, rank in ipairs({ 6572, 6574, 7379, 11600, 11601, 25288 }) do
-        ctl.usable[rank] = options.revenge and { true, false } or { false, false }
-    end
-    if options.potion then
-        ctl.itemCount[118] = 1
-        ctl.items[118] = { "Minor Healing Potion", icon = 134829 }
-    end
-    if options.bashCooldown then
-        local rank = ctl.known[1671] and 1671 or 72
-        local cd = { isActive = true, isOnGCD = false, startTime = ctl.now, duration = 12 }
-        ctl.cooldown[72], ctl.cooldown[rank] = cd, cd
-    end
-    if not options.bloodrageReady then
-        ctl.cooldown[2687] = { isActive = true, isOnGCD = false, startTime = ctl.now, duration = 60 }
-    end
-    H.Fire("UNIT_AURA", "player")
-    H.Fire("PLAYER_TARGET_CHANGED")
-    assert(headless.cycle(H, ctl.now + 0.2))
-    if not options.prepull then
-        ctl.combat = true
-        H.Fire("PLAYER_REGEN_DISABLED")
-    end
-    if options.demo then
-        H.Fire("UNIT_SPELLCAST_SENT", "player", "Unit", "Cast-demo", 1160)
-        H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-demo", 1160)
-    end
-    local VS = H.ns.VirtualState
-    local power, pool = VS.Power, { est = rage, lo = rage, hi = rage, conf = 1 }
-    VS.Power = function(pt, now)
-        return pt == 1 and pool or power(pt, now)
-    end
-    assert.is_true(H.Hekili.Engine.Subscribe("Primary", function() end))
-    return H
-end
-
-local function read(H, seconds)
-    assert(headless.cycle(H, H.ctl.now + (seconds or 1.6)))
-    assert.are.same({}, H.errors)
-    local out = H.Hekili.Engine.Output.Primary
-    return out.count > 0 and out.recs[1].actionName or nil
-end
-
-local function cast(H, interruptible, channel)
-    H.Fire(channel and "UNIT_SPELLCAST_CHANNEL_START" or "UNIT_SPELLCAST_START", "target", SECRET, SECRET, 77)
-    if not interruptible then
-        H.Fire("UNIT_SPELLCAST_NOT_INTERRUPTIBLE", "target")
-    end
-end
 
 describe("the Protection leveling priority", function()
     it("uses early weapon attacks before the Revenge unlock", function()
@@ -123,6 +16,24 @@ describe("the Protection leveling priority", function()
             local H = warrior(12, 5, { health = health, bloodrageReady = true })
             assert.are.equal(health ~= 250, read(H) == "bloodrage")
         end
+    end)
+
+    it("does not show Bloodrage as ready after reloading during its hidden cooldown", function()
+        local H = warrior(28, 5, { bloodrageReady = true })
+        H.ctl.cooldown[2687] = { startTime = SECRET, duration = SECRET, isActive = true, isOnGCD = false }
+        -- No cast or SPELL_UPDATE_COOLDOWN has been seen by this addon session.
+        for _, seconds in ipairs({ 0.2, 0.4, 1.6 }) do
+            read(H, seconds)
+            local out = H.Hekili.Engine.Output.Primary
+            if out.count > 0 and out.recs[1].actionName == "bloodrage" then
+                assert.is_true(out.recs[1].time > 0.05)
+            end
+            H.Hekili.State.reset("Primary")
+            assert.is_true(H.Hekili.State.cooldown.bloodrage.remains > 0.05)
+        end
+        H.ctl.cooldown[2687].isActive = false
+        assert.are.equal("bloodrage", read(H, 0.2))
+        assert.are.equal(0, H.Hekili.Engine.Output.Primary.recs[1].time)
     end)
 
     it("prefers a live Revenge proc at low rage and Shield Slam when both are affordable", function()
@@ -247,6 +158,47 @@ describe("the Protection leveling priority", function()
         assert.are.equal(0, H.Hekili.State.prot_bash_reserve)
     end)
 
+    it("spends Rage on the rotation when Shield Bash will miss the current cast", function()
+        for _, options in ipairs({ { group = 0 }, { instance = "party", group = 5, threat = 3 } }) do
+            options.target, options.demo, options.revenge = CASTER, true, true
+            local H = warrior(28, 10, options)
+            H.Hekili:FireToggle("defensives", "off")
+            local bash = H.Hekili.State.action.shield_bash.id
+            H.ctl.cooldown[bash] = {
+                isActive = true,
+                isOnGCD = false,
+                startTime = H.ctl.now - 9.5,
+                duration = 12,
+            }
+            H.Fire("SPELL_UPDATE_COOLDOWN")
+            cast(H, true)
+            assert.are.equal("revenge", read(H, 1.6))
+            assert.are.equal(0, H.Hekili.Engine.Output.Primary.recs[1].time)
+            local state = H.Hekili.State
+            state.reset("Primary")
+            assert.is_true(state.debuff.casting.up)
+            assert.is_true(state.cooldown.shield_bash.remains > state.debuff.casting.remains)
+            assert.is_true(state.cooldown.shield_bash.remains < 1.5)
+            assert.are.equal(0, state.prot_bash_reserve)
+        end
+    end)
+
+    it("releases the cast reserve when the global cooldown ends too late", function()
+        local H = warrior(28, 15, { target = CASTER, demo = true })
+        cast(H, true)
+        read(H, 1.1)
+        local state = H.Hekili.State
+        local gcd = H.Hekili.Engine.Registry.GCD_SPELL
+        H.ctl.cooldown[gcd] = { isActive = true, isOnGCD = true, startTime = H.ctl.now, duration = 1.5 }
+        H.Fire("SPELL_UPDATE_COOLDOWN")
+        read(H, 0.1)
+        state.reset("Primary")
+        assert.is_true(state.debuff.casting.up)
+        assert.are.equal(0, state.cooldown.shield_bash.remains)
+        assert.is_true(state.cooldown.global_cooldown.remains > state.debuff.casting.remains)
+        assert.are.equal(0, state.prot_bash_reserve)
+    end)
+
     it("lets dungeon threat spend the reserve on the opener or when aggro is lost", function()
         local H =
             warrior(60, 20, { target = CASTER, group = 5, instance = "party", threat = 0, talents = { [23922] = 1 } })
@@ -308,6 +260,49 @@ describe("the Protection leveling priority", function()
         assert.are.equal("heroic_strike", check(60))
     end)
 
+    it("spends excess level-28 Rage before adding filler debuffs", function()
+        for _, group in ipairs({ 0, 2 }) do
+            for _, rage in ipairs({ 80, 95 }) do
+                local H = warrior(28, rage, {
+                    group = group,
+                    threat = 3,
+                    classification = "normal",
+                    demo = true,
+                    shieldBlock = true,
+                })
+                H.ctl.unitIs.targettarget = "player"
+                assert.are.equal("heroic_strike", read(H))
+            end
+        end
+    end)
+
+    it("keeps the level-28 main abilities and low-Rage pooling ahead of an excess dump", function()
+        local options = { classification = "normal", demo = true, shieldBlock = true }
+        assert.are.equal("sunder_armor", read(warrior(28, 35, options)))
+        options.revenge = true
+        assert.are.equal("revenge", read(warrior(28, 95, options)))
+        options.revenge, options.shieldBlock = false, false
+        assert.are.equal("shield_block", read(warrior(28, 95, options)))
+
+        local H = warrior(28, 95, options)
+        cast(H, true)
+        assert.are.equal("shield_bash", read(H))
+        options.distance = 12
+        assert.is_not_equal("heroic_strike", read(warrior(28, 95, options)))
+    end)
+
+    it("uses Cleave for excess level-28 Rage only with multiple targets", function()
+        local H = warrior(28, 95, { demo = true, shieldBlock = true })
+        H.Hekili:FireToggle("mode", "aoe")
+        for _, spell in ipairs({ 6343, 8198, 8204 }) do
+            H.ctl.cooldown[spell] = { isActive = true, isOnGCD = false, startTime = H.ctl.now, duration = 6 }
+        end
+        H.Fire("SPELL_UPDATE_COOLDOWN")
+        assert.are.equal("cleave", read(H))
+        H.Hekili:FireToggle("mode", "single")
+        assert.are.equal("heroic_strike", read(H))
+    end)
+
     it("uses a learned Concussion Blow as a backup on a non-boss cast", function()
         local talents = { [12809] = 1 }
         for _, options in ipairs({
@@ -349,7 +344,7 @@ describe("the Protection leveling priority", function()
             assert.is_true(H.Hekili.State:IsKnown("disarm"))
             assert.is_false(H.Hekili.State.prot_disarm_target) -- old priorities still resolve this condition
             for _ = 1, 3 do
-                assert.are.equal("demoralizing_shout", read(H, 0.2))
+                assert.are.equal(options.group and "thunder_clap" or "demoralizing_shout", read(H, 0.2))
                 local out = H.Hekili.Engine.Output.Primary
                 for i = 1, out.count do
                     assert.is_not_equal("disarm", out.recs[i].actionName)

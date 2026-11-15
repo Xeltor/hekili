@@ -475,6 +475,7 @@ spec:RegisterAbilities({
 
     hunters_mark = {
         id = 1130,
+        debuffApplication = "hunters_mark",
         copy = rest(HUNTERS_MARK),
         cast = 0,
         cooldown = 0,

@@ -109,6 +109,47 @@ describe("Engine.Configure (headless Arms boot)", function()
         assert.is_not_nil(button)
         assert.are.equal(p.iconStore, button.db)
     end)
+
+    local function assertRecommendations(H)
+        assert.are.same({}, H.loadErrors)
+        assert.are.equal("Hekili_Warrior", H.ns.PackAddon)
+        assert.are.equal(ww.PACK, H.Hekili:GetActivePack())
+        assert.is_truthy(rawget(H.Hekili.DB.profile.packs, ww.PACK))
+        H.ctl.inRange.target, H.ctl.level.target = true, 60
+        H.Fire("PLAYER_TARGET_CHANGED")
+        assert(headless.cycle(H, H.ctl.now + 0.2))
+        assert.is_string(H.Hekili.Engine.Output.Primary.recs[1].actionName)
+        assert.are.same({}, H.errors)
+    end
+
+    it("loads class defaults and recommends when the class ID first becomes available at PLAYER_LOGIN", function()
+        local c = ww.Raid.character()
+        local H = headless.new({
+            character = c,
+            beforeLogin = function(_, H)
+                H.ctl.classID = nil
+            end,
+            beforePlayerLogin = function(H)
+                H.ctl.classID = c.classID
+            end,
+        })
+        assert.is_false(H.Hekili.DB.profile.specs[100011].settings.wowsims_stance_dance)
+        assertRecommendations(H)
+    end)
+
+    it("loads the built-in priorities when the specialization first becomes available after world entry", function()
+        local c = ww.Raid.character()
+        local H = headless.new({
+            character = c,
+            beforeLogin = function(_, H)
+                H.ctl.specID = nil
+            end,
+        })
+        H.ctl.specID = c.specID
+        local events = H.ns.frameProfile.GeneralEvents
+        events:GetScript("OnUpdate")(events, 0.016)
+        assertRecommendations(H)
+    end)
 end)
 
 -- Engine.SettingDefault: a setting registered with `option.sim` fills an unset profile value with that value under the

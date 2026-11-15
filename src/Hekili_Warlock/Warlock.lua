@@ -612,6 +612,7 @@ spec:RegisterAbilities({
         cast = function()
             return max(0, 2 - 0.4 * talent.improved_corruption.rank) * haste
         end,
+        debuffApplication = "corruption",
         cooldown = 0,
         gcd = "spell",
 
@@ -629,6 +630,7 @@ spec:RegisterAbilities({
 
     bane_of_agony = {
         id = 980,
+        debuffApplication = "bane_of_agony",
         copy = rest(BANE_OF_AGONY),
         cast = 0,
         cooldown = 0,
@@ -649,6 +651,7 @@ spec:RegisterAbilities({
     -- One hit at the end of its minute; 60 s cooldown (DB2 RecoveryTime).
     bane_of_doom = {
         id = 603,
+        debuffApplication = "bane_of_doom",
         cast = 0,
         cooldown = 60,
         gcd = "spell",
@@ -749,6 +752,7 @@ spec:RegisterAbilities({
 
     siphon_life = {
         id = 18265,
+        debuffApplication = "siphon_life",
         copy = rest(SIPHON_LIFE),
         cast = 0,
         cooldown = 0,

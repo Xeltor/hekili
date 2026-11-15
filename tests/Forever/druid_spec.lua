@@ -1034,64 +1034,30 @@ describe("Forever Druid", function()
     end)
 end)
 
-describe("Forever Druid's bleeds through the real engine's missable handling", function()
+describe("Forever Druid's bleeds use the shared aura rollback", function()
     local engine = require("Forever.helpers.engine")
-    local env, spec, ME
-
-    -- Each reset_precast hook of the Druid spec, run in a stand-in state at t with these debuffs; the keys removed.
-    local function reset(t, debuffs)
-        local removed = {}
-        local e = setmetatable({
-            now = t,
-            query_time = t,
-            debuff = setmetatable(debuffs, {
-                __index = function()
-                    return { up = false, applied = 0 }
-                end,
-            }),
-            removeDebuff = function(unit, key)
-                removed[#removed + 1] = unit .. ":" .. key
-            end,
-        }, { __index = env.state })
-        for _, hook in ipairs(spec.hooks.reset_precast) do
-            setfenv(hook, e)()
-        end
-        return table.concat(removed, ",")
-    end
-
-    local function row(t, sub, spellID)
-        env.client.now = t
-        for _, hook in ipairs(spec.hooks.COMBAT_LOG_EVENT_UNFILTERED) do
-            hook(t, sub, false, ME, "", 0, 0, "Creature-1", "", 0, 0, spellID, "", 1, "DODGE")
-        end
-    end
-
-    before_each(function()
-        env = engine.load("DRUID")
-        spec = env.class.kit
-        ME = "Player-1"
-        rawset(env.state, "GUID", ME)
+    it("leaves modeled abilities to the shared rollback so a failed refresh preserves the first application", function()
+        local env = engine.load("DRUID")
+        assert.are.same({}, env.loadErrors)
+        assert.is_nil(env.class.kit.missedAt)
     end)
 
-    it("removes a missed Rake or Rip at the next reset, not a hit or a newer application", function()
-        assert.are.same({}, env.loadErrors)
-        row(10, "SPELL_MISSED", 1823) -- Rake rank 2, dodged
-        assert.are.equal("target:rake", reset(11, { rake = { up = true, applied = 9.9 } }))
-        assert.are.equal("", reset(13, { rake = { up = true, applied = 12 } })) -- reapplied since
-        row(20, "SPELL_CAST_SUCCESS", 1079) -- a Rip that landed
-        assert.are.equal("", reset(21, { rip = { up = true, applied = 20 } }))
-        row(30, "SPELL_MISSED", 9827) -- Pounce: its bleed, not the stun
-        assert.are.equal(
-            "target:pounce_bleed",
-            reset(31, { pounce_bleed = { up = true, applied = 29.9 }, pounce = { up = true, applied = 29.9 } })
-        )
-        row(40, "SPELL_MISSED", 1079)
-        rawset(env.state, "GUID", "Player-2") -- another player's miss
-        row(41, "SPELL_MISSED", 1822)
-        assert.are.equal(
-            "target:rip",
-            reset(42, { rip = { up = true, applied = 39 }, rake = { up = true, applied = 39 } })
-        )
+    it("shares verified NPC bleed immunity without suppressing a mixed damage and bleed ability", function()
+        local headless = require("Game.harness.headless")
+        local feral = require("Forever.helpers.druid_loop_world").Feral
+        local H = headless.new({ character = feral.character(), pack = feral.PACK })
+        local ctl, state = H.ctl, H.Hekili.State
+        ctl.guid.target = "Creature-0-0-0-0-114-000003"
+        H.Fire("PLAYER_TARGET_CHANGED")
+        assert(headless.cycle(H, ctl.now + 0.2))
+        local VS = H.ns.VirtualState
+        assert.are.equal("immune NPC", VS.DebuffBlocked("rip", ctl.now))
+        assert.is_nil(VS.DebuffBlocked("rake", ctl.now))
+        ctl.now = ctl.now + 1
+        H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-rake", 1822)
+        VS.Drain(ctl.now)
+        assert.is_nil(VS.Aura("target", 1822, ctl.now))
+        assert.are.same({}, H.errors)
     end)
 end)
 

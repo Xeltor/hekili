@@ -875,9 +875,9 @@ local function pin(r, v, width, t, origin, event, mid)
                     calibrate(r, R.swAccG[r] / R.swAccT[r], t) -- nonzero: step > 0, so the window's time is too
                     R.swAccG[r], R.swAccT[r] = 0, 0
                 end
-                -- an interval holding a gain the belief knows besides the swings (our cast's, a refund, a periodic or
-                -- decay step, a hit taken, a crit's extra) adds nothing: the scale measures swings only (the old
-                -- per-interval filter refused such intervals); the instant keeps that verdict for its re-estimates
+                -- an interval holding a gain besides the swings (our cast's, a refund, a periodic or decay step, a
+                -- hit taken, a crit's extra), or a hit whose damage is unknown, adds nothing: the scale measures
+                -- swings only; the instant keeps that verdict for its re-estimates
                 R.pinSkip[r] = R.pinOwn[r]
                 if R.pinOwn[r] then
                     R.skipFrom[r], R.skipTo[r] = R.pinT[r], t
@@ -1614,17 +1614,21 @@ end)
 -- A hit on the player (kinds 1-6; a heal brings no rage): each slot with a `taken` gains what it returns, the interval
 -- by its half-width (lo never below the estimate's gain minus it), clamped to [0, max]; kept out of the regen
 -- measurement and counted as our own gain (a flip it explains pins exactly, as I.ResourceShift's); one `modelled`
--- sample at the hit, and the gain into its second's bin. A `taken` that raises is counted as a `now`'s error.
+-- sample at the hit, and the gain into its second's bin. Amount -1 means unknown damage: the content may still
+-- grant damage-independent gains from the observed kind. A `taken` that raises is counted as a `now`'s error.
 I.On(Obs.PlayerHit, function(o, t)
     local kind = o.a
     if kind < I.HitKind.WOUND or kind > I.HitKind.MISS then
         return
-    elseif kind <= I.HitKind.BLOCKED and o.b < 0 then
-        return -- a wound's secret amount (b = -1, Sources/Player.lua): its rage is the estimate path (L128), not built
     end
     for r = 1, R.n do
         local f = R.taken[r]
         if f then
+            if kind <= I.HitKind.BLOCKED and o.b < 0 then
+                -- A later pin may reveal this hit's unmodelled gain. Exclude its interval from the outgoing-swing
+                -- calibration even when the content cannot credit it; no amount or resource gain is invented.
+                R.pinOwn[r] = true
+            end
             I.NowAt(t)
             local ok, gain, width = pcall(f, I.HitName[kind], o.b, o.c)
             if not ok then
@@ -1883,6 +1887,29 @@ function I.ResourceSet(r, v, width, t, event)
     I.ResourceShift(r, v - R.est0[r], t, event)
     local max = R.max[r]
     R.lo0[r], R.over[r], R.hi0[r], R.topNext[r] = clamp(v, max), 0, clamp(v + width, max), 0
+end
+
+--- A one-time ceiling on the pool, not a spend or a change to its maximum. Each stream loses only its own excess;
+--- subtracting the estimate's excess from the whole band would lower a valid floor and leave an impossible top.
+--- The modelled part of the floor stays modelled. Allocates nothing.
+function I.ResourceCap(r, maximum, t, event)
+    local cap = clamp(maximum, R.max[r])
+    if R.hi0[r] <= cap and R.lo0[r] + R.over[r] <= cap then
+        return
+    end
+    I.SettleDebt(r) -- settle pre-cap corrections before the nonlinear transform, never subtract them afterwards
+    local lo = R.lo0[r]
+    local floor = clamp(lo + R.over[r], cap)
+    R.lo0[r], R.est0[r], R.hi0[r] = clamp(lo, cap), clamp(R.est0[r], cap), clamp(R.hi0[r], cap)
+    R.over[r] = floor - R.lo0[r]
+    -- A cap has no single delta for the whole interval. The next measurement starts a fresh calibration, and a
+    -- pre-cap swing credit cannot retract its old step from this capped pool. No gain/spend hooks or FSR window.
+    R.pinValid[r], R.pinDelta[r], R.pinOwn[r] = false, 0, false
+    R.spends[r] = R.spends[r] + 1
+    R.gain[r], R.castGain[r], R.ownT[r], R.ownV[r] = 0, 0, -1e9, 0
+    R.sinceShort[r], R.sinceShortEst[r] = cap, R.est0[r]
+    R.sinceYes[r], R.sinceSnap[r], R.capT[r] = false, false, -1e9
+    I.Sample(R.power[r], "modelled", R.est0[r], t, event)
 end
 
 -- What slot r's out-of-combat decay takes from the clock to `now`, as a fold from the clock to `now` (I.OnAdvance)

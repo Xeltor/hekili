@@ -832,11 +832,14 @@ describe("resources", function()
         end)
 
         it(
-            "learns the swing scale alike with an own gain inside one step, several pins at one instant or a crit (GAP AC)",
+            "learns the swing scale alike with own gains, unknown incoming damage, repeated pins or a crit (GAP AC)",
             function()
-                local function scale(own, stack, crit)
+                local function scale(own, stack, crit, hiddenHit)
                     local def = fs.def(fs.new(9))
                     def.resources[1].swingCrit = 7
+                    def.resources[1].taken = function()
+                        return 0
+                    end
                     boot(def)
                     obs(Obs.Read, 10, 1, 0, I.ReadOf.Resource)
                     I.Fold(10, false)
@@ -855,6 +858,13 @@ describe("resources", function()
                             -- amount the model's 10 where the game gave 14: no part of it is the swings'
                             I.ResourceShift(1, 10, t - 0.5, Obs.CastSuccess)
                             truth = truth + 14
+                        end
+                        if hiddenHit and k == 3 then
+                            local before = VS.Power(fs.RAGE, t - 0.5).est
+                            obs(Obs.PlayerHit, t - 0.5, hiddenHit, -1, 20)
+                            I.Fold(t - 0.5, false)
+                            assert.are.equal(before, VS.Power(fs.RAGE, t - 0.5).est) -- no invented gain
+                            truth = truth + 14 -- the next exact pin reveals damage-based gain absent from the model
                         end
                         obs(Obs.Read, t, 1, stack and truth - 3 or truth, I.ReadOf.Resource)
                         I.Fold(t, false)
@@ -878,6 +888,8 @@ describe("resources", function()
                 within(plain, scale(false, true))
                 within(plain, scale(true, true)) -- an excluded interval's instant: its re-estimate adds nothing
                 within(plain, scale(false, false, true)) -- a crit's extra comes back out of the window
+                within(plain, scale(false, false, false, I.HitKind.WOUND))
+                within(plain, scale(false, true, false, I.HitKind.BLOCKED)) -- an unknown hit's re-estimate is excluded too
             end
         )
 
@@ -2913,22 +2925,22 @@ describe("resources", function()
             assert.are.equal(12, I.res.gain[1]) -- our own gain: a flip it explains pins exactly
         end)
 
-        it(
-            "runs no `taken` for a wound or partial block whose amount is unknown (b = -1); an avoid still runs",
-            function()
-                taken(function(kind, amount)
-                    calls[#calls + 1] = kind .. " " .. amount
-                    return 2, 0
-                end)
-                local before = VS.Power(fs.RAGE, 10).est
-                hit(11, WOUND, -1)
-                hit(12, BLOCKED, -1)
-                assert.are.same({}, calls)
-                assert.are.equal(before, VS.Power(fs.RAGE, 12).est)
-                hit(13, DODGE)
-                assert.are.same({ "DODGE 0" }, calls)
-            end
-        )
+        it("keeps damage-independent gains when a hit's amount is unknown (b = -1)", function()
+            taken(function(kind, amount)
+                calls[#calls + 1] = kind .. " " .. amount
+                -- A block can grant a fixed resource gain even when its damage is hidden.
+                return kind == "BLOCKED" and 5 or 0, 0
+            end)
+            local before = VS.Power(fs.RAGE, 10).est
+            hit(11, WOUND, -1)
+            assert.are.equal(before, VS.Power(fs.RAGE, 11).est)
+            hit(12, BLOCKED, -1)
+            assert.are.same({ "WOUND -1", "BLOCKED -1" }, calls)
+            local r = VS.Power(fs.RAGE, 12)
+            assert.are.same({ before + 5, 5 }, { r.est, r.lo })
+            hit(13, DODGE)
+            assert.are.same({ "WOUND -1", "BLOCKED -1", "DODGE 0" }, calls)
+        end)
 
         it(
             "lets a short answer right after a hit's rage cap it: an estimate, not a declared gain (I.GAIN_SHOWS)",

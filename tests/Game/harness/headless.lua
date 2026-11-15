@@ -249,7 +249,7 @@ end
 --- priority to select; `o.now` the clock [1000]; `o.raw` facade rows answered by the raw client (names: the oracle's
 --- secret-free client, §4), replaced as Facade.lua loads; `o.saved` the HekiliDB saved variables (default nil: a fresh
 --- profile); `o.scenario` Hekili.Engine.scenario ("sim": the settings' harness defaults; default nil: in game);
---- `o.beforeLogin` called with the loaded core, before ADDON_LOADED.
+--- `o.beforeLogin(core, H)` runs before ADDON_LOADED. `o.beforePlayerLogin(H)` runs after it, before PLAYER_LOGIN.
 --- Returns `H = { env, api, ctl, ns, Hekili, frames, timers, misses, errors, loadErrors, prints }`.
 function M.new(o)
     o = o or {}
@@ -949,8 +949,8 @@ function M.new(o)
         ctl.form = c.form or 0
     end
     -- An addon as the client loads it (tests/helpers/addons.lua): its TOC's files, the content each with its own
-    -- (name, ns), then its ADDON_LOADED. Every content addon is load-on-demand: Engine/Content.lua's LoadAddOn calls at
-    -- OnInitialize (Hekili_Shared, then the class pack) load a shipped one here. A dependency is never loaded for it:
+    -- (name, ns), then its ADDON_LOADED. Engine/Content.lua's LoadAddOn calls load Hekili_Shared and then the class
+    -- pack here. A dependency is never loaded for it:
     -- one not loaded yet answers false, "DEP_DEMAND_LOADED" (the client's reason for a load-on-demand dependency), so
     -- the explicit order is what the tests run. Any other name answers false, "MISSING".
     local loaded = {}
@@ -1001,14 +1001,16 @@ function M.new(o)
     end
     core.Engine.scenario = o.scenario
     if o.beforeLogin then
-        o.beforeLogin(core)
+        o.beforeLogin(core, H)
     end
 
-    -- login: ADDON_LOADED (OnInitialize: Hekili_Shared, the class pack, then the AceDB profile), PLAYER_LOGIN
-    -- (OnEnable, VS.Start, the content notice) and PLAYER_ENTERING_WORLD
+    -- ADDON_LOADED initializes the addon. PLAYER_LOGIN enables it and starts VirtualState, then the world opens.
     H.phase = "login"
     local ok, err = xpcall(function()
         H.Fire("ADDON_LOADED", "Hekili")
+        if o.beforePlayerLogin then
+            o.beforePlayerLogin(H)
+        end
         loggedIn = true
         H.Fire("PLAYER_LOGIN")
         H.Fire("PLAYER_ENTERING_WORLD", true, false)

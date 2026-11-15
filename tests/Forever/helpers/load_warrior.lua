@@ -181,7 +181,7 @@ end
 --- A stand-in `state` that records applyBuff/applyDebuff (into `applied`; applyBuff's stacks into `stacks`), removeBuff, spend and gain, with every
 --- talent at rank 0, every aura down and every cooldown ready. The class file's state functions are bound to it.
 function M.env(w)
-    local e = { applied = {}, durations = {}, stacks = {}, removed = {}, spent = {}, gained = {} }
+    local e = { applied = {}, durations = {}, stacks = {}, removed = {}, spent = {}, gained = {}, capped = {} }
     e.talent = default({ rank = 0, enabled = false })
     e.buff = default({ up = false, remains = 0, stack = 0 })
     e.debuff = e.buff
@@ -207,6 +207,10 @@ function M.env(w)
     end
     function e.gain(n)
         table.insert(e.gained, n)
+    end
+    function e.capResource(resource, maximum)
+        table.insert(e.capped, { resource, maximum })
+        e[resource].current = math.min(e[resource].current, maximum)
     end
     function e.setDistance() end
     function e.interrupt() end

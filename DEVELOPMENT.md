@@ -332,6 +332,12 @@ An ability with no `expects` keeps the default: `"strike"` with `onNextSwing`, `
 against DB2 with `make spell-data-check` (it needs `$WOW_DB2`). The design is
 [docs/superpowers/specs/2026-10-22-unit-registry-and-tickets-design.md](docs/superpowers/specs/2026-10-22-unit-registry-and-tickets-design.md).
 
+An ability whose purpose is to apply an enemy aura can name it with `debuffApplication`. For `expects = "debuff"`
+or `"ticks"`, this defaults to the ability's associated aura. The recommendation engine uses the cast's target and
+landing window to hold repeats and can restore an earlier application after an attributed miss. An aura's
+`debuffMechanic` identifies effects that share verified NPC immunity rules, such as bleeds. A damaging ability with
+a secondary debuff can leave `debuffApplication` unset so immunity to the aura leaves the damaging cast eligible.
+
 Two dev-only targets check this layer outside `make check`:
 
 - `make spell-data-check` reads every pack's `expects`, `velocity`, `school` and aura `tick_time` against DB2

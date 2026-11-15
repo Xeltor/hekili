@@ -1,6 +1,5 @@
 -- Engine/Schema/Spec/Abilities.lua
--- RegisterAbility(ies) for the spec mixin (Engine/Schema/Spec.lua's ns.SpecMixin), with the missable-DoT tracking and the
--- ability function fields that stay raw. Loads before Spec/All.lua, which copies the mixin into spec 0 at load.
+-- RegisterAbility(ies) for the spec mixin (Engine/Schema/Spec.lua's ns.SpecMixin).
 
 local addon, ns = ...
 local Facade = ns.Facade
@@ -26,10 +25,7 @@ local protectedFunctions = {
 }
 
 
--- A missable DoT (an ability's `missable`, C15): a dodged, parried or missed cast still raised SPELL_CAST_SUCCESS, so
--- its `now` applied the debuff (`missable = true`: the ability's own key; a string: that debuff's key). Our
--- SPELL_MISSED row of any of its IDs (Game/Events/Rows.lua synthesizes it) removes it at the next reset, unless it was
--- applied again since. One combat-log hook and one reset hook per spec; neither allocates.
+-- Compatibility for saved content without a `now` handler. Modeled debuffs are rolled back by the aura family.
 local function trackMisses( spec, key, data )
     local missedAt, auraOf = spec.missedAt, spec.missAura
     if not missedAt then
@@ -408,7 +404,7 @@ local methods = {
             self:RegisterAuras( a.auras )
         end
 
-        if data.missable then trackMisses( self, ability, data ) end
+        if data.missable and not a.funcs.now then trackMisses( self, ability, data ) end
     end,
 
     RegisterAbilities = function( self, abilities )

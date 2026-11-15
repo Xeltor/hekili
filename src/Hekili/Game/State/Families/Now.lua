@@ -11,7 +11,7 @@
 -- (Families/Windows.lua) runs in the same context, reads only. Every write is a `modelled` sample at the cast's time, so any later observation overrides it (I.Basis). Hekili's sim `handler` is never read for truth.
 -- An `applyBuff`/`applyDebuff` with no duration writes the aura's registered one: its number, or its function evaluated
 -- in this context (gear-aware spec §5), so a pack writes a duration once.
--- An avoid of the latest cast (Obs.Avoided) undoes its target debuffs and refunds the ability's `refundOnAvoid` share.
+-- An attributed avoid rolls back that cast's target debuffs. The latest cast can also receive its resource refund.
 -- A channel that ran to its believed end runs the ability's `now_finish` (the sim's `finish`'s twin; aura audit C11).
 -- A reaction (RegisterReaction) runs in the same context at a settled outcome's row time, never through the cast fold.
 -- Allocates nothing per cast: the context, its proxies and every per-ability array are built at SpecChanged.
@@ -80,19 +80,14 @@ I.nowErrors, I.nowError, I.nowRuns, I.castsRun = 0, nil, 0, 0
 -- The cast's belief time and ability while its effects run; `live` only then: a `now` called from anywhere else (Hekili
 -- keeps it in `ability.funcs`, where RunStressTest or an APL reading `action.x.now` can call it) writes nothing.
 local T, curA, live = 0, 0, false
+local castTarget, castTime
 -- True while a reaction runs: it is folded after its outcome's time T (a swing's row comes ~0.47 s after the swing, an
 -- avoid at its window's close), so its aura reads answer as of T (I.AuraAsOf), not the belief's latest.
 local asOf = false
 
--- The latest cast's undo (Obs.Avoided): its ability, time and target (the swap serial), the cost it paid, and the target
--- auras its `now` wrote, each as it was before (expiry 0: down), at most UNDO of them. Preallocated.
-local UNDO = 4
-local undoA, undoT, undoSwap, paid, undoN = 0, -1, 0, 0, 0
+-- Resource refunds still use the latest cast's payment.
+local undoA, undoT, paid = 0, -1, 0
 local journal = true -- false while an `onCrit` runs: a landed crit's writes are no avoid's to undo
-local undoJ, undoE, undoAp, undoSt = {}, {}, {}, {}
-for k = 1, UNDO do
-    undoJ[k], undoE[k], undoAp[k], undoSt[k] = 0, 0, 0, 0
-end
 local refund = {} -- by resource slot: the class's default share (the resource meta's `refundOnAvoid`), 0 none
 A.refund = {} -- by ability index: the share of its cost an avoid gives back (the ability's `refundOnAvoid`), 0 none
 I.avoidsRun = 0
@@ -124,6 +119,14 @@ local abByKey, auraByKey, auraSpell, auraDur, auraFn, auraMax, resByKey = {}, {}
 local function readAura(unit, spell)
     if asOf then
         return I.AuraAsOf(unit, spell, T)
+    end
+    if unit == "target" and castTarget and I.targetKeys[I.curSlot] ~= castTarget then
+        local j = I.auras.bySpell[spell]
+        if not j then
+            return nil
+        end
+        local expires, applied, stacks = I.DebuffBefore(castTarget, j, T)
+        return expires > T and expires or nil, stacks, applied
     end
     local rec, stacks, applied = I.CastAura(unit, spell, T)
     return rec and rec.est, stacks, applied
@@ -348,13 +351,27 @@ function NAMES.resetResource(resource, amount, upto)
     I.ResourceSet(r, amount, type(upto) == "number" and upto > 0 and upto or 0, T, CAST)
 end
 
+-- A cast's one-time cap of each resource stream; it neither grants resource nor changes the pool's maximum.
+function NAMES.capResource(resource, maximum)
+    if not live then
+        return
+    end
+    local r = resByKey[resource]
+    if not r then
+        error("now: no tracked resource " .. tostring(resource), 2)
+    end
+    if type(maximum) ~= "number" or maximum ~= maximum or maximum < 0 or maximum == math.huge then
+        return
+    end
+    I.ResourceCap(r, maximum, T, CAST)
+end
+
 local function aura(u, key, duration, stacks)
     local j = auraByKey[key]
     if not live or not j or (u == 2 and I.auras.n < 2) then
         return
     end
-    local rec, have, applied = VS.Aura(u == 1 and "player" or "target", auraSpell[j], T)
-    local before = rec and rec.est or 0
+    local before
     local after = 0
     if duration ~= 0 then
         local d = duration
@@ -369,17 +386,20 @@ local function aura(u, key, duration, stacks)
         end
         after = T + d
     end
-    if u == 2 and journal and undoN < UNDO then
-        local first = true
-        for k = 1, undoN do
-            first = first and undoJ[k] ~= j
-        end
-        if first then -- as it was before the cast: a second write of the same aura keeps the first's
-            undoN = undoN + 1
-            undoJ[undoN], undoE[undoN], undoAp[undoN], undoSt[undoN] = j, before, applied or 0, have or 0
-        end
+    if u == 2 and after > T and I.DebuffImmune(j, castTarget or I.targetKeys[I.curSlot], T) then
+        return
     end
-    I.AuraModel(u, j, T, after, stacks or 1, T, CAST, u == 2)
+    if u == 2 and castTime and journal then
+        local active
+        active, before = I.DebuffApply(castTarget, j, curA, castTime, after, stacks or 1, T)
+        if not active then
+            return
+        end
+    else
+        local rec = VS.Aura(u == 1 and "player" or "target", auraSpell[j], T)
+        before = rec and rec.est or 0
+        I.AuraModel(u, j, T, after, stacks or 1, T, CAST, u == 2)
+    end
     -- cdm-default rule 2.5.1: this application is ours (Sources/Auras.lua); a projectile's travel widens the
     -- verdict's window (cdm-verdict §2.3; velocity > 0 only: the client raises on x/0)
     local v = A.velocity[curA] or 0
@@ -787,7 +807,7 @@ local function run(o, t)
         return
     end
 
-    undoA, undoT, undoSwap, paid, undoN = a, o.t, I.curSwapN, 0, 0
+    undoA, undoT, paid = a, o.t, 0
     local started = o.kind == CAST and A.castStartT[a] or 0 -- read before `automatic` and the line after clear it
     automatic(a, t, o.kind, o)
     A.castStartT[a] = 0 -- consumed: a later instant cast of the same ability starts its own GCD
@@ -796,7 +816,9 @@ local function run(o, t)
     if A.now[a] then
         rawset(NAMES, "cast_start", started)
         rawset(NAMES, "instant", started == 0)
+        castTarget, castTime = o.guid, o.t
         call(A.now[a], a, t)
+        castTarget, castTime = nil, nil
         rawset(NAMES, "cast_start", 0)
         rawset(NAMES, "instant", false)
     end
@@ -856,29 +878,22 @@ I.On(Obs.Landed, function(o)
     end
 end)
 
--- Our cast's own avoid (Events/Rows.lua): the latest cast, when it is the one avoided, loses the target auras its `now`
--- wrote (each back as it was, when the target is still the cast's) and gets back the ability's `refundOnAvoid` share of
--- the cost it paid; both `modelled` at the outcome. Any other cast's avoid changes nothing (its effects are no longer
--- the latest's to undo). The cooldown,
--- the GCD and the player auras stay (an avoided ability still triggers them). Allocates nothing.
+-- A matched refusal restores only this application's previous aura state. The resource refund still belongs to the
+-- latest cast's payment. The cooldown, GCD and player auras stay.
 local DEFLECT, EVADE = I.HitKind.DEFLECT, I.HitKind.EVADE
 I.On(Obs.Avoided, function(o, t)
     fire(2, OUTCOME_OF[o.c] or 0, o.t) -- first: the target's reactions, at the outcome's row
     if o.c == DEFLECT or o.c == EVADE then -- staged for reactions only (Events/Rows.lua REACTED): no undo, no refund
         return
-    elseif o.a ~= undoA or o.b ~= undoT then
+    end
+    I.DebuffUndo(o.guid, o.a, o.b, t)
+    I.DebuffRefused(o.a, o.guid, o.c, t)
+    if o.a ~= undoA or o.b ~= undoT then
         return
     end
     undoA = 0
-    for k = 1, I.curSwapN == undoSwap and undoN or 0 do -- another target since the cast: its auras are not these
-        local j = undoJ[k]
-        local rec = VS.Aura("target", auraSpell[j], t)
-        local was, back = rec and rec.est or 0, undoE[k] > t and undoE[k] or 0
-        I.AuraModel(2, j, undoAp[k], back, back > 0 and undoSt[k] or 0, t, Obs.Avoided, true)
-        I.Log.Aura(2, j, auraSpell[j], was, back, t)
-    end
     local r = A.slot[o.a]
-    if r > 0 and paid > 0 and A.refund[o.a] > 0 then
+    if o.c ~= I.HitKind.IMMUNE and r > 0 and paid > 0 and A.refund[o.a] > 0 then
         I.Refund(r, paid * A.refund[o.a], t) -- at the fold; the answers since the cast's spend already saw it
     end
     I.avoidsRun = I.avoidsRun + 1

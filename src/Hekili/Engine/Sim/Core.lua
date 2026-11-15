@@ -38,10 +38,9 @@ local EARLY_EXIT = 0.2 + 1e-6
 ns.EARLY_EXIT = EARLY_EXIT -- shared with tests/Forever/loop_priest_spec.lua
 
 
--- OnInitialize()
--- Addon has been loaded by the WoW client (1x).
-function Hekili:OnInitialize()
-    ns.LoadContent() -- Engine/Content.lua: the class pack first, so the profile's defaults see its spec
+local function initialize( self, deferIfUnavailable )
+    -- The class pack must load before the profile so AceDB sees the spec defaults.
+    if not ns.LoadContent( deferIfUnavailable ) then return end
     self:InitializeProfile() -- Options/Profile.lua: the AceDB profile, handed to the engine by Engine.Configure
 
     self:RegisterChatCommand( "hekili", "CmdLine" )
@@ -59,10 +58,16 @@ function Hekili:OnInitialize()
 end
 
 
+function Hekili:OnInitialize()
+    initialize( self, true )
+end
+
+
 -- Hekili:ReInitialize() moved to Options/Profile.lua (it writes the profile).
 
 
 function Hekili:OnEnable()
+    if not self.DB then initialize( self ) end -- Cold login can expose the class only after ADDON_LOADED.
     ns.StartEventHandler()
     self:TotalRefresh( true )
     ns.ContentNotice() -- Engine/Content.lua: the class pack's notice, if any; after the UI, which shows it

@@ -26,7 +26,7 @@
 -- Disagreements (P7; floor 0.96 -> 0.96, decisions on-GCD 0.964, n 83): hemorrhage -> rupture 156.49 (wowsims casts on
 -- the unseen 27788's instant: lo 12.8, truth 33); eviscerate -> rupture 174.25 and hemorrhage -> slice_and_dice 178.15
 -- (the fight's last 6 s: Rupture and SnD skipped, gap AN). Regen/pool not refreshed (as Assassination).
-return {
+return require("tools.wowsims.rogue_pve")({
     class = "ROGUE",
     pack = "Subtlety (wowsims.com)",
     spec = "subtlety",
@@ -51,5 +51,4 @@ return {
     -- by role (docs/dev/wowsims-packs.md): Garrote a stealth-window cast; Slice and Dice and Rupture both at 1, so they
     -- sort by soonest; Venom none (the user, 2026-10-21)
     focus = { garrote = 1, slice_and_dice = 1, rupture = 1 },
-    leveling = {},
-}
+})

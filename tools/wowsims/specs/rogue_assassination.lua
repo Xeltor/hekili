@@ -33,7 +33,7 @@
 -- Eviscerate at 3 points; remainingTime reads 3600, gap AN, API); venom -> slice_and_dice 80.69: wowsims casts Venom at
 -- exactly 25 energy after the unseen 27788 at 79.25 (belief lo 13.1, truth 25). Without the three fight-end misses 0.949.
 -- Regen/pool: the log's 10 a tick and 100 max; kit and world unchanged (not refreshed, lanes 10-12 precedent).
-return {
+return require("tools.wowsims.rogue_pve")({
     class = "ROGUE",
     pack = "Assassination (wowsims.com)",
     spec = "assassination",
@@ -58,5 +58,4 @@ return {
     -- by role (docs/dev/wowsims-packs.md): Garrote a stealth-window cast; Slice and Dice and Rupture both at 1, so they
     -- sort by soonest; Venom none (the user, 2026-10-21)
     focus = { garrote = 1, slice_and_dice = 1, rupture = 1 },
-    leveling = {},
-}
+})

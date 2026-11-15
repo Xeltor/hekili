@@ -289,7 +289,9 @@ spec:RegisterResource(
                 local _, armor = stat("UnitArmor")
                 armor = armor * armorScale
                 local gain, width = 0, 0
-                if kind == "WOUND" or kind == "BLOCKED" then
+                -- -1 is the source's plain sentinel for hidden damage. The block kind still proves eligibility
+                -- for Shield Specialization below; neither invent damage nor train its average from the sentinel.
+                if (kind == "WOUND" or kind == "BLOCKED") and amount >= 0 then
                     local post = amount
                     if kind == "BLOCKED" then
                         post = post + stat("GetShieldBlock") -- the unblocked amount
@@ -474,6 +476,9 @@ spec:RegisterTalents({
 })
 
 spec:RegisterAuras({
+    -- Simulation-only marker. Attack changes the real client's autoattack flag, not an aura; this marker keeps
+    -- one forecast from recommending Attack repeatedly while the live flag has not changed yet.
+    warrior_autoattacking = { duration = 3600, max_stack = 1 },
     battle_shout = {
         id = 6673,
         copy = rest(BATTLE_SHOUT),
@@ -531,6 +536,7 @@ spec:RegisterAuras({
         id = 12809,
         duration = 5,
         max_stack = 1,
+        debuffRetryDelay = 30, -- A refused stun can be temporary; never blacklist this target for the session.
     },
     death_wish = {
         id = 12328,
@@ -661,6 +667,8 @@ spec:RegisterAuras({
     },
     rend = {
         id = 772,
+        debuffMechanic = "bleed",
+        debuffImmuneNPCs = { 114 }, -- Harvest Watcher, verified in WoW Forever.
         copy = rest(REND),
         duration = function()
             return REND_DURATION[knownRank(REND)] or 9
@@ -753,10 +761,7 @@ spec:RegisterStateFunction("swap_stance", function(stance)
     removeBuff("defensive_stance")
     removeBuff("berserker_stance")
 
-    local lost = rage.lo - stanceKeep(talent.improved_tactical_mastery.rank) -- the sim's floor (border batch 2)
-    if lost > 0 then
-        spend(lost, "rage")
-    end
+    capResource("rage", stanceKeep(talent.improved_tactical_mastery.rank))
 
     applyBuff(stance)
 end)
@@ -793,17 +798,16 @@ local IMPROVED_EXECUTE = { [0] = 0, 3, 5 }
 local enemy_revenge_trigger, enemy_dodged, enemy_dodged_target = 0, 0, nil
 local last_overpower = 0
 local misses = { DODGE = true, PARRY = true, BLOCK = true }
-local overpower_ids, rend_ids = {}, {}
+local overpower_ids, rend_ids, sunder_ids = {}, {}, {}
 for _, id in ipairs(OVERPOWER) do
     overpower_ids[id] = true
 end
 for _, id in ipairs(REND) do
     rend_ids[id] = true
 end
-
--- A short, bounded memory per unit. An immune result can come from a temporary buff.
-local rendImmuneTargets, rendImmuneUntil = { false, false, false, false }, { 0, 0, 0, 0 }
-local nextRendImmune = 1
+for _, id in ipairs(SUNDER_ARMOR) do
+    sunder_ids[id] = true
+end
 
 spec:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED", function()
     local _, subtype, _, sourceGUID, _, _, _, destGUID, _, _, _, actionType, _, _, spellMissType, blocked =
@@ -813,14 +817,6 @@ spec:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED", function()
         lastIncomingSwing = GetTime()
     end
     if
-        sourceGUID == state.GUID
-        and subtype == "SPELL_MISSED"
-        and spellMissType == "IMMUNE"
-        and rend_ids[actionType]
-    then
-        rendImmuneTargets[nextRendImmune], rendImmuneUntil[nextRendImmune] = destGUID, GetTime() + 30
-        nextRendImmune = nextRendImmune % #rendImmuneUntil + 1
-    elseif
         sourceGUID == state.GUID
         and subtype:match("_MISSED$")
         and (actionType == "DODGE" or spellMissType == "DODGE")
@@ -851,6 +847,11 @@ spec:RegisterEvent("SPELL_UPDATE_USABLE", function()
 end)
 
 spec:RegisterHook("reset_precast", function()
+    if plain(IsCurrentSpell(6603)) == true then
+        applyBuff("warrior_autoattacking")
+    elseif buff.warrior_autoattacking.up then
+        removeBuff("warrior_autoattacking")
+    end
     -- The stance comes from the belief's Forms source (Game/State/Sources/Forms.lua) through the aura walk.
     local hs, cl = knownRank(HEROIC_STRIKE), knownRank(CLEAVE)
     if hs > 0 and IsCurrentSpell(HEROIC_STRIKE[hs]) then
@@ -926,6 +927,22 @@ local function interruptReadyTime()
 end
 
 spec:RegisterAbilities({
+    auto_attack = {
+        id = 6603,
+        cast = 0,
+        cooldown = 0,
+        gcd = "off",
+        startsCombat = true,
+        known = knows({ 6603 }),
+        nobuff = "warrior_autoattacking",
+        usable = function()
+            return state.prot_start_attack, "requires an eligible melee target with autoattack off"
+        end,
+        -- Only predict the result. The player starts autoattack with the real Attack action; no live command is run.
+        handler = function()
+            applyBuff("warrior_autoattacking")
+        end,
+    },
     battle_shout = {
         id = 6673,
         copy = rest(BATTLE_SHOUT),
@@ -965,10 +982,7 @@ spec:RegisterAbilities({
         now = function()
             removeBuff("defensive_stance")
             removeBuff("berserker_stance")
-            local lost = rage.current - stanceKeep(talent.improved_tactical_mastery.rank)
-            if lost > 0 then
-                spend(lost, "rage")
-            end
+            capResource("rage", stanceKeep(talent.improved_tactical_mastery.rank))
             applyBuff("battle_stance")
         end,
 
@@ -1025,10 +1039,7 @@ spec:RegisterAbilities({
         now = function()
             removeBuff("battle_stance")
             removeBuff("defensive_stance")
-            local lost = rage.current - stanceKeep(talent.improved_tactical_mastery.rank)
-            if lost > 0 then
-                spend(lost, "rage")
-            end
+            capResource("rage", stanceKeep(talent.improved_tactical_mastery.rank))
             applyBuff("berserker_stance")
         end,
 
@@ -1187,6 +1198,7 @@ spec:RegisterAbilities({
     concussion_blow = {
         id = 12809,
         cast = 0,
+        debuffApplication = "concussion_blow",
         cooldown = 45,
         gcd = "off",
 
@@ -1257,10 +1269,7 @@ spec:RegisterAbilities({
         now = function()
             removeBuff("battle_stance")
             removeBuff("berserker_stance")
-            local lost = rage.current - stanceKeep(talent.improved_tactical_mastery.rank)
-            if lost > 0 then
-                spend(lost, "rage")
-            end
+            capResource("rage", stanceKeep(talent.improved_tactical_mastery.rank))
             applyBuff("defensive_stance")
         end,
 
@@ -1584,6 +1593,7 @@ spec:RegisterAbilities({
     piercing_howl = {
         id = 12323,
         cast = 0,
+        debuffApplication = "piercing_howl",
         cooldown = 0,
         gcd = "spell",
 
@@ -1635,8 +1645,10 @@ spec:RegisterAbilities({
 
     -- Fury talent (1329555, new at 4b0030a44b): 15 s cooldown, a 1 s GCD, 25% of base health (unsimulated, like
     -- Bloodrage's: the player's health is secret) for 4 charges in 8 s; each white swing spends one and gives 5 rage.
-    -- shortcut: the belief cannot spend a charge on our own swing (consumedBy reads hits on us only), so the four
-    -- swings' 20 rage are granted at the cast; upgrade when central support exists (blocker note warrior-1).
+    -- Do not grant the four swings' 20 rage at the cast. Their live and forecast bonus remains unmodelled until
+    -- resource models share a bounded charge budget that respects late swing settlement and later resource pins
+    -- (CN15). A plain gain() from a landed-swing reaction would double-count a bonus already included in a later pin.
+    -- Actual rage/usability observations still reconcile the pool through the ordinary resource model.
     reckless_swings = {
         id = 1329555,
         cast = 0,
@@ -1653,7 +1665,6 @@ spec:RegisterAbilities({
             if talent.gore_drinker.rank > 0 then
                 applyBuff("gore_drinker", nil, 3)
             end
-            gain(20, "rage")
         end,
 
         handler = function()
@@ -1661,7 +1672,6 @@ spec:RegisterAbilities({
             if talent.gore_drinker.rank > 0 then
                 applyBuff("gore_drinker", nil, 3)
             end
-            gain(20, "rage")
         end,
     },
 
@@ -1687,6 +1697,7 @@ spec:RegisterAbilities({
 
     rend = {
         id = 772,
+        debuffApplication = "rend",
         copy = rest(REND),
         cast = 0,
         cooldown = 0,
@@ -2095,6 +2106,17 @@ spec:RegisterStateExpr("prot_contextual", function()
     return state.prot_pve_target and instanceType ~= "raid" and not Facade.IsInRaid()
 end)
 
+-- An invalid target must not select the raid priority just because the contextual predicate is false.
+spec:RegisterStateExpr("prot_sustained", function()
+    return state.prot_pve_target and not state.prot_contextual
+end)
+
+-- Normal and rare enemies get the short-pull budget in dungeons as well as outdoors.
+-- This is a classification rule, not an estimate of hidden remaining health or lifespan.
+spec:RegisterStateExpr("prot_short_pull", function()
+    return state.prot_contextual and not boss and not target.is_boss and state.arms_short_pull
+end)
+
 spec:RegisterStateExpr("prot_adventuring", function()
     return state.prot_pve_target and (level < 60 or state.arms_open_world)
 end)
@@ -2110,20 +2132,57 @@ spec:RegisterStateExpr("prot_interrupt_window", function()
     return casting.up and (casting.v3 == 1 or buff.shield_block.down or now - casting.applied >= 0.25)
 end)
 
--- Session-only observations. Keep a bounded set of NPC types that actually cast.
+-- Session-only observations. START alone does not prove interruptibility: the facade's target cast is modelled,
+-- and a NOT_INTERRUPTIBLE event can follow START. Remember only an explicit INTERRUPTIBLE event for the same
+-- active, readable target. A later uninterruptible spell does not erase a type's proven interruptible spell.
 local casterIDs, casterSlots, nextCasterSlot = {}, {}, 1
 local CASTER_SLOTS = 64
-local function rememberProtectionCaster()
+local pendingCasterGUID, pendingCasterID, pendingCastBar = false, 0, 0
+local function clearProtectionCast()
+    pendingCasterGUID, pendingCasterID, pendingCastBar = false, 0, 0
+end
+
+local function protectionCasterTarget()
     if
         not state.spec.protection
         or not isPvE()
+        or plain(Facade.UnitExists("target")) ~= true
         or plain(Facade.UnitCanAttack("player", "target")) ~= true
         or plain(Facade.UnitIsPlayer("target")) ~= false
+        or plain(Facade.UnitIsDeadOrGhost("target")) ~= false
     then
         return
     end
+    local guid = plain(Facade.UnitGUID("target"))
+    if type(guid) ~= "string" then
+        return
+    end
     local id = state.target.npcid
-    if id > 0 and not casterIDs[id] then
+    if id > 0 then
+        return guid, id
+    end
+end
+
+local function beginProtectionCast(_, _, _, _, bar)
+    clearProtectionCast()
+    local guid, id = protectionCasterTarget()
+    if guid then
+        pendingCasterGUID, pendingCasterID = guid, id
+        bar = plain(bar)
+        pendingCastBar = type(bar) == "number" and bar or 0
+    end
+end
+
+local function rememberProtectionCaster()
+    if not pendingCasterGUID then
+        return
+    end
+    local guid, id = protectionCasterTarget()
+    if guid ~= pendingCasterGUID or id ~= pendingCasterID then
+        clearProtectionCast()
+        return
+    end
+    if not casterIDs[id] then
         local replaced = casterSlots[nextCasterSlot]
         if replaced then
             casterIDs[replaced] = nil
@@ -2132,26 +2191,51 @@ local function rememberProtectionCaster()
         nextCasterSlot = nextCasterSlot % CASTER_SLOTS + 1
     end
 end
-spec:RegisterUnitEvent("UNIT_SPELLCAST_START", "target", nil, rememberProtectionCaster)
-spec:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "target", nil, rememberProtectionCaster)
+
+local function endProtectionCast(event, _, _, _, fourth, fifth)
+    local bar =
+        plain((event == "UNIT_SPELLCAST_CHANNEL_STOP" or event == "UNIT_SPELLCAST_INTERRUPTED") and fifth or fourth)
+    if type(bar) == "number" and bar ~= 0 and pendingCastBar ~= 0 and bar ~= pendingCastBar then
+        return -- A delayed stop for the preceding cast must not clear the new active cast.
+    end
+    clearProtectionCast()
+end
+
+spec:RegisterUnitEvent("UNIT_SPELLCAST_START", "target", nil, beginProtectionCast)
+spec:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "target", nil, beginProtectionCast)
+spec:RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTIBLE", "target", nil, rememberProtectionCaster)
+spec:RegisterUnitEvent("UNIT_SPELLCAST_STOP", "target", nil, endProtectionCast)
+spec:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "target", nil, endProtectionCast)
+spec:RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTED", "target", nil, endProtectionCast)
+spec:RegisterUnitEvent("UNIT_SPELLCAST_FAILED", "target", nil, clearProtectionCast)
+spec:RegisterUnitEvent("UNIT_SPELLCAST_FAILED_QUIET", "target", nil, clearProtectionCast)
+spec:RegisterEvent("PLAYER_TARGET_CHANGED", clearProtectionCast)
+spec:RegisterEvent("PLAYER_ENTERING_WORLD", clearProtectionCast)
 
 spec:RegisterStateExpr("prot_bash_reserve", function()
     if combat == 0 or not state.prot_pve_target or not state.toggle.interrupts then
         return 0
     end
-    local casting = debuff.casting
-    local needsBash = casting.up and casting.v2 == 0
-        or casting.down and state.prot_contextual and casterIDs[target.npcid]
+    local bashCooldown = cooldown.shield_bash.remains
     if
-        not needsBash
+        bashCooldown > 1.5
         or not equipped.shield
         or not (buff.defensive_stance.up or buff.battle_stance.up)
         or not target.within5
         or target.outside5
         or not action.shield_bash.known
         or state:IsDisabled("shield_bash", true)
-        or cooldown.shield_bash.remains > 1.5
     then
+        return 0
+    end
+
+    local casting = debuff.casting
+    if casting.up then
+        -- Hostile cast ends are estimated. Release Rage if Bash cannot fit in the remaining forecast.
+        if casting.v2 ~= 0 or max(bashCooldown, cooldown.global_cooldown.remains) >= casting.remains then
+            return 0
+        end
+    elseif not state.prot_contextual or not casterIDs[target.npcid] then
         return 0
     end
     return action.shield_bash.cost
@@ -2200,6 +2284,14 @@ local function observePullEnemy(guid, time)
     end
 end
 
+local function durableRendEnemy(unit, guid, time)
+    local classification = plain(Facade.UnitClassification(unit))
+    if classification ~= "elite" and classification ~= "rareelite" and classification ~= "worldboss" then
+        return false
+    end
+    return Facade.DebuffImmunity("rend", guid, time) == nil
+end
+
 local function protectionPull()
     local time = state.now
     local guid = plain(Facade.UnitGUID("target"))
@@ -2209,7 +2301,10 @@ local function protectionPull()
 
     -- Sample live units once for all priority evaluations at this instant.
     pull.updated, pull.target, pull.nearby = time, guid, 0
-    pull.packLoose, pull.nearbyOnMe = false, false
+    pull.spreadTargets, pull.rendSpreadTargets = 0, 0
+    pull.currentMelee, pull.currentRendEligible = false, false
+    pull.rendExpires, pull.sunderExpires = 0, 0
+    pull.packLoose, pull.nearbyOnMe, pull.nearbyMeleeOnMe = false, false, false
     local onMe, onParty = protectionVictim("targettarget")
     local status = not state.solo and plain(Facade.UnitThreatSituation("player", "target")) or nil
     pull.status, pull.onMe = status, onMe
@@ -2221,13 +2316,34 @@ local function protectionPull()
     if (pull.targetEngaged or state.solo) and state.target.within8 and not state.target.outside8 then
         pull.nearby = 1
     end
+    if pull.targetEngaged and state.target.within5 and not state.target.outside5 then
+        pull.spreadTargets, pull.currentMelee = 1, true
+        if durableRendEnemy("target", guid, time) and not state.arms_skip_rend then
+            pull.rendSpreadTargets, pull.currentRendEligible = 1, true
+        end
+        -- The cycle simulation virtualizes debuff.* to absent. Read the current target's plain belief
+        -- through the public client API, retaining only expiry numbers in this once-per-instant sample.
+        for i = 1, 40 do
+            local aura = Facade.C_UnitAuras.GetDebuffDataByIndex("target", i)
+            if not aura then
+                break
+            end
+            local expires = aura.expirationTime == 0 and math.huge or aura.expirationTime
+            if rend_ids[aura.spellId] then
+                pull.rendExpires = expires
+            elseif sunder_ids[aura.spellId] then
+                pull.sunderExpires = expires
+            end
+        end
+    end
 
     -- A self-centered Clap can't prove another unit's range. A positive Rend check puts it inside melee and Clap.
     local meleeProbe = REND[knownRank(REND)]
     for plate, victim in pairs(protectionPlates) do
         local plateGUID = plain(Facade.UnitGUID(plate))
         if
-            plateGUID
+            guid
+            and plateGUID
             and plateGUID ~= guid
             and plain(Facade.UnitExists(plate)) == true
             and plain(Facade.UnitCanAttack("player", plate)) == true
@@ -2238,9 +2354,15 @@ local function protectionPull()
             local plateOnMe, plateOnParty = protectionVictim(victim)
             if plateOnMe or plateOnParty then
                 observePullEnemy(plateGUID, time)
-                if meleeProbe and C_Spell.IsSpellInRange(meleeProbe, plate) == true then
+                if meleeProbe and plain(C_Spell.IsSpellInRange(meleeProbe, plate)) == true then
                     pull.nearby = pull.nearby + 1
+                    pull.spreadTargets = pull.spreadTargets + 1
+                    if durableRendEnemy(plate, plateGUID, time) then
+                        pull.rendSpreadTargets = pull.rendSpreadTargets + 1
+                    end
                     pull.nearbyOnMe = pull.nearbyOnMe or plateOnMe
+                    local _, creatureType = Facade.UnitCreatureType(plate)
+                    pull.nearbyMeleeOnMe = pull.nearbyMeleeOnMe or (plateOnMe and plain(creatureType) ~= 4)
                     if plateOnParty and not pull.packLoose then
                         local plateThreat = plain(Facade.UnitThreatSituation("player", plate))
                         pull.packLoose = plateThreat == nil or plateThreat < 2
@@ -2291,6 +2413,64 @@ spec:RegisterStateExpr("prot_nearby_enemies", function()
     return nearby
 end)
 
+spec:RegisterStateExpr("prot_attack_target", function()
+    if not state.prot_pve_target then
+        return false
+    end
+    if state.prot_sustained or protectionPull().targetEngaged then
+        return true
+    end
+    -- A selected outdoor enemy is a pull cue; instance targets must already be fighting us or our party.
+    if combat == 0 then
+        return state.arms_open_world
+    end
+    return state.arms_open_world
+        and (state.false_start > 0 or solo and plain(Facade.UnitAffectingCombat("target")) == true)
+end)
+
+spec:RegisterStateExpr("prot_start_attack", function()
+    if
+        not state.prot_contextual
+        or not state.prot_attack_target
+        or weapon.size == 0
+        or not target.within5
+        or target.outside5
+        or plain(IsCurrentSpell(6603)) ~= false
+        or buff.warrior_autoattacking.up
+    then
+        return false
+    end
+    return true
+end)
+
+local function protectionSpreadTargets(rend)
+    if state.combat == 0 or not state.prot_contextual or state.max_targets == 1 or state.toggle.mode == "single" then
+        return 0
+    end
+    local current = protectionPull()
+    if not current.targetEngaged then
+        return 0
+    end
+    -- The global aura count includes the current target. If it is missing its aura, exclude it from
+    -- the comparison: it cannot prove that ANOTHER eligible unit needs a cast. Forecast-only current
+    -- applications remain conservative until observed, and expiry is checked at the forecast's time.
+    if rend then
+        return current.rendSpreadTargets
+            - (current.currentRendEligible and current.rendExpires <= state.query_time and 1 or 0)
+    end
+    -- These are confirmed units, never the assumed enemy count from forced AoE mode. The engine's
+    -- cycle icon asks the player to select a target; it cannot rank individual threat or time to die.
+    return current.spreadTargets - (current.currentMelee and current.sunderExpires <= state.query_time and 1 or 0)
+end
+
+spec:RegisterStateExpr("prot_spread_targets", function()
+    return protectionSpreadTargets(false)
+end)
+
+spec:RegisterStateExpr("prot_rend_spread_targets", function()
+    return protectionSpreadTargets(true)
+end)
+
 spec:RegisterStateExpr("prot_charge_range", function()
     return not action.rend.in_range and C_Spell.IsSpellInRange(CHARGE[1], "target") == true
 end)
@@ -2304,6 +2484,9 @@ spec:RegisterStateExpr("prot_melee_target", function()
         return false
     end
     if lastIncomingSwing > 0 and now - lastIncomingSwing <= 3 then
+        return true
+    end
+    if protectionPull().nearbyMeleeOnMe then
         return true
     end
     return target.within5
@@ -2386,25 +2569,8 @@ spec:RegisterStateExpr("arms_short_pull", function()
     return not issecretvalue(classification) and (classification == "normal" or classification == "rare")
 end)
 
-local BLEED_IMMUNE_NPCS = {
-    [114] = true, -- Harvest Watcher, confirmed in WoW Forever.
-}
-
 spec:RegisterStateExpr("arms_skip_rend", function()
-    if not state.arms_pve_target then
-        return false
-    elseif BLEED_IMMUNE_NPCS[target.npcid] then
-        return true
-    end
-    local guid = Facade.UnitGUID("target")
-    if guid then
-        for i = 1, #rendImmuneUntil do
-            if rendImmuneTargets[i] == guid and rendImmuneUntil[i] > now then
-                return true
-            end
-        end
-    end
-    return false
+    return state.arms_pve_target and Facade.DebuffImmunity("rend", Facade.UnitGUID("target"), now) ~= nil
 end)
 
 spec:RegisterStateExpr("arms_moving_humanoid", function()
@@ -2450,6 +2616,40 @@ spec:RegisterStateExpr("prot_bloodrage_safe", function()
     -- Keep the early kit's rage generation, while honoring an observed low-health result.
     local playerHealth = Facade.PlayerHealthFraction()
     return rage.lo <= 25 and (playerHealth == nil or playerHealth >= 0.65)
+end)
+
+-- Icy Veins' leveling advice: low rage, health to spare and time to keep attacking. 75% is this fork's conservative
+-- health policy, not a guide threshold: the 25%-base-health cost can leave at least half of maximum health. An
+-- unreadable health value never authorizes the cost. A durable target classification is positive evidence of an
+-- attack opportunity; ordinary mobs' lifetime is unknown and target.time_to_die is not a usable estimate here.
+spec:RegisterStateExpr("prot_reckless_safe", function()
+    if
+        not state.prot_contextual
+        or not state.prot_attack_target
+        or combat == 0
+        or not action.reckless_swings.known
+        or rage.hi > 25
+        or (rage.actual_hi or rage.hi) > 25
+        or buff.reckless_swings.up
+        or weapon.size == 0
+        or not target.within5
+        or target.outside5
+        or plain(IsCurrentSpell(6603)) ~= true
+        or state.execute_phase
+    then
+        return false
+    end
+    local classification = plain(Facade.UnitClassification("target"))
+    if
+        not target.is_boss
+        and classification ~= "elite"
+        and classification ~= "rareelite"
+        and classification ~= "worldboss"
+    then
+        return false
+    end
+    local playerHealth = Facade.PlayerHealthFraction()
+    return playerHealth ~= nil and playerHealth >= 0.75
 end)
 
 -- The time to the next main-hand swing, ported from Hekili's Classic profile (Classic/Warrior.lua:462-575, without its
@@ -2539,8 +2739,8 @@ spec:RegisterSetting("maintain_thunder_clap", false, {
 -- /hekili priority <name>.
 spec:RegisterPack(
     "Protection (wowsims.com)",
-    20261112001,
-    [[Hekili:TZvBVnUns4Fl5l(Sr364KSzVUlwhG9L2R9q72fR3763SmJeTTollPtukU5qG)TFZqklrsjkrzRK0dxrbAJEHdFMNz4mdPM65xm)RZN5rsPZ)0LtU8vxCXfxozYfZNLEFmD(SyI7gYk4pcjBH)9NtIsPUP(rH7xmCx0oM)w2y3OTJW38(GiIhkTBZ8ds)PW53wRGzXu35Z(T39LV8t)6xEtCHeNpBTVNhvmmkZTHz7n7xKUMUFr(9oFzuc9oAY(fE0LKSG09lE3N)59lGBVFHIqY8phNE257ijj(rjNxo9NtIdyNNlGXWfJ)xSOWrVaMQesilauep4VJWP2NTFbXZlk8Va)Xg69SX7x8rsk5n1aPH)Yp9vqiRttJzV58Zx5NUo7wulox7vhbYeqo9AYRD9UKCP3sxqSFikkWlAxidN7vRcaTgOjkdMQVqtjb(ee8We8rkjD9(f)MpBnC1SDuASF4k4Vst83qrah6LtBjexFsaCRHVpikcU7pKLCpmO3tty0KnWWGl((Se6gc(hbzHuur)z)vRthHykGWy(Ui36VLKC)(fUeGDzRJ2TFrq0UVDnLeGGbytAiZ)oC6bveENDRX)nhfUb(0W0C1z)I7JYa2smsyo(r4p44pocvq4fYy08r(rjXkifya)AwQxeAW56Pxw4kkAYJZccom4pSMKSIM)gfcbPisOl6o5JGMGAIpnWde6)KeUkJKaVEanvaYsXGVEugObSDKybzZ4scDh(BjrzXOhtoawsUdb3xxNf6HUfahgVFbIWqkj5wGdXLAhmtZ4aa(VbKTVaT0a5HtjkIz5s4DjBXl5o5(B3s9axbodLaEcJlLbyJD3aVci7ekyFVdrLyuHGBih3BPbukN1tIqdRWPjhmFiGsqAcw5Gx(fcIKa6sqZJ4U4KLP4)jl(G4eyaa(w)u)veXIpUS8dHxnjloLjJqcBD(Z)CgOjbGZHqYcNc3SKeURsks8POuG38UVNV8i0ndCgXjau0DhCftJI5wsxclvqZWfHrHF7Trm2b3qU1mGGSdbjhI39siCSASJe6w62BHvi7x8Pp)balq8r0)BnUOvmnIadmAoE4keJWDtfKgN1L1AzhfbPHtex5lwvjyDX8KBa3V4wAkScpumZix(pqh8VsYqAIpnWkB(cgoLvS8NeUr4VwmMp6ZijBHNVI4hIAbnKU1hXCXYbp(RqUfd(SJsIJchJAKVNYQsiwwgeLmkbJvWYGLc(H8fayGw)07HX89HcH8lWJWhJRcbNyyL()reRsSEYFzUTHKG(GaDUk8qW3nqCn4nsr3TXqwNKOL(bqMjc3mXghJ032BjPtlc(4iwv(caQorlx6SY1B6fVWF5um4VJBeyW)90msWG8bozG4b8L5oqW)v0b0)DMFmyMglcnmaI8cEKJVlp(WykxZ8uhj6qn4SBZwUCSoygNfpy4zcqpgM00GINSjec3)GyyQpjlE0GeWrACq0BNkUNdETZgAC6()Efk4BMEUIaojgWKMPdXbNzIB6i0fZ1PGzducMZdN7QIE4zAc)bvHxmuhgzjDuZuo6lJcvLMW7Yn(MNRrdgkMniaHt(k(PtEq86IqHCU7MPA(pCz7gXs)MkJFulG1G)HbtCHNBf3AzN3A85hnqxRRhwjsL2GWWQb1(c(MwlQBn0wXxYF)FBGL2Dx6GE)ueoPFdIastyJ4lSkesmq9IKS5c5MjdexpgtG6hEnQc8RHLNmOy3Rh4r56kM7gY7HAP2DU7YdqPOCeND(HWgbKHtmVyPhFKOqOffCHrd3zGz7hOKxBFznJfVJkigJBqc8FGs7keRpZHFDXAbjB3Hvc18eUR4dv5GlgvkjbTRjK8BAE8YKie0AtauMOddmQRyngIdEDy7wP8veEA0nuywCa5ENBPalm9LtkJXvoeLac5Q6osqGs4a57dbdQXNhFK28D11LZNQakNqjCipFkWtD6sJcPqbSB1MSRNisq3f5EI6nejIMGzCz0NBWi2wmNBA0f4Qj6Jc8VCeBH2cFN6JkEJIqp2SFqea9CDgZGPKYXC5AgNOkLk92PxEDDLWPQyK01quwrS9QfeiUHyxAo8DL15c1kNctLPPeQfCeCex6e4ZsFbEgCtD9CoC(n1Kzc3RFn11MNR8gWo)WqbTNiotbNmgMovzrB(JYDoDZpbQIBd7eg3Q4BNEX4RhnAu1ANYlYdGayqXJtQR8KS20EbTG6Nkowfh3asCJEgdRyefWap8fnBl)(IdNXjFpX3Cr9AYWoiwTCdiZoQbQqwZSXPjN6y4bh1er0w24ZgwNZWadUoM9rMasQk7uhluDvRU)aQucoqdB49AIeTz815IzWABL60j80SnnhMVyzeu1tlH(AZU(iPrTWKkEOchAcE8LThfxbuptkNmITrdVZ3nnk5ENKmixspy0QBhyhoDbJY8SoetQ6juugJFsxdEBZPrOM3T8ial1RHmAkACyJ3MFyHovFXh00(dlypv(iFJhLF(cvleWjAMi8o0FN6MLsDIxty0dUyvXSiwNam6zxeaIFy85BF6ikXOYe2RjqviIVtNh(Ud6TsARM04Hvuzm1tYwMteylC2fLafkYVguMeWALfemYyK5oyJ7ymGJmpSHcYmtVv88QYpYBwquIKebBTJIn1yPMec2(P1Eg1wrH9gNZew8n(Xo48AyXf(OCDV(sxTWtQR0gFoTGUSolxR0MQQpSnv6a5OK0c2zL7MP1SXOBGngnc2sqBsf4jJY9Tx)qDpRifYvgxV2G3zht56Y)gLAl0ePEV8KO)AJA1qPQcGibzVSTXhGS6MZXp1kSNx8lT(0aCiBE7bxhO4VnQbvvrdSqJz59Kq(iyvdlIV7D022TvdEnAZGnEo6z(0WWL1S92oIkBsD0w9(Nkg6s95Q7G8uN5oUxht1o305JYpthyzqctu6yDa803fG0SyJIabUsjbhwF)4blL5XgG1Id)fpdo897wamx6DrkPxD6kzhk0Ur6F4zQLmVml5EPVdJcxwI)6o1ToQaD2kPV1Zw214Z2h4wQy1cYLx2g)mohczCwtc9WvBupampOFNkNupp2L2HHk)OC1(M8deThSnnvLzJLz2yvAdpjfR2clLS49HEBtzFJoIQOgQgKdQdQ4eXVCIzClxjtJ42MsHg1PcwhwjSS0z43diUX6u1w3B(lWKJP3(6j10bfw27mLFqJP83XbJaQov19YiWk7xvBEDQOJwT6vXEEL5eGD8Q(aMp7oyEHXO1xZ4NOHHT)CPKGR(eV)QZ7zH5VF(mjPHpmVX1MpRu3NNcs22rvqb4OUYYrjycCeV02ririZX)zwENs3fvu)l9buvIFknXNWBKVA2NZFmAzMU3ZmDYekl2JKsmPQ6q(i6MMU4xjqWXPd15nEqUsDOrfH3pTAI19FdcZRnatrpG80HqelVYwtJAlZ8ibYh5o2PHw2Pl9St9nTtTsaP4)QbZTwx8itP65crX8DAIrPbmaF)jkcGdfR7IN67GeZEdLcgr2RBgzxDDLvI4mufUw3eq12GmisUysZq56jsq5qNcjdKooNhbNIOupHxtOuUnIE6rkpjKUxGU9vcUsnAKSgIIspjqJ(V1h3)MjMDjvBwj(mABXjDVUIU0msCOOhYVXQ4WCNwHHkLNBQpL4yqpuFP6FORIu9V0Rh3(oyQXJ9OTwyIJvtXm17PjrzZoI)VluQWzug6bmnX5YFjlfgqAhtp052E6XRVNA)WsBUXN4KJEm7dKH8P6yLpynFvoJFwo(9TRLOQ9BX2Tpg7jE2v8AW1ZNO5ZGNYHvSuBLc9)GTlv7UH9u)sz9HC3fezWERNzUhmTpA6ulSPCHM8xC(m(5dHX(qvvF)LfU2sNHMveqvn5zJsS58)4kVEXiwOMTOuLeO8NGsJZnTbv5dO2kWuxZqym6ylh0ETgdZCSnhMoxznTn3QF5dLSUw9vBQ5Z20pC1ZwRBjqKf9Uv)8nL4witve25Iau4OEORU63266pi1sOxtBxRh1m73Zn9v75rBSatUYQx8DzUOqp7uQwRyQd20EQFWo(gc7i)wDCQ0uP6DorDRu6tqRID69k2X2Sy9qzdxPVDGEG0Rna4X2GyfLBCzdNKlxaC15rOA3AuNNH2gZgEqroC6W2V4IEBIjtC470ElO1KVOL9GghX6LX2wcCn0zDZPDIP)eGvV4xZh3DNbXPTvORmvPQHD5FYW1YDJELE9zn8bcSy3hxz6q1K6mnLkXRvR6HDPzrNWXXRPAiuAzTNeeBvtYXXCxpxTQXlozVlRxr(stNU1J0o06ZgRRF2fKGg0td2Mn7rUL76ftRPt3X0jn0YzeuZxdOLUX7epbbHwyk)M(UiSQp96uJ6zrdT1Ho17il)xqcg7Qbd1)3C1Zn1eFwO09xx8DI1Jl4g9m3sSGAK1JSL9AaK2uhkGYJPs0xAoXF)0xFnOwT0yF2OpL7W4L2EMh1(DpZ1S67oWMBpW58EmR4x3P5)zxM9NDzwH7zp3LzDYN(iCKn2VyMYLFw1K51)lg3troCBBWmJoyg8rA73qUU8JihItZDPvXpLCnUbS0QDO1XeHPPf)vmF6)gZnpV3AjzPRXAc(r6g)a)9lg(d5)ebZF88)7d]]
+    20261114003,
+    [[Hekili:T3vBZTTns4Fl(dNoPPUYYVO20CXzMKM2R9M20mX5U(nrblcjXZuK8iiTQVXJ(TF7casccsqckrzN5A(sJ4lyXUp7IDxSyP7SZN9Pz34ssOZE)ftU4Bo)8ZVAYKlNDtYdr0z3erwChzf8JaYg4)(H4We6IeVWGDZhUnClZBdB8IWnJW38b)qIlsTBt98t(5Gz3wlHzr0fZU53FZh)4p)BF8Lr5uC2nR9CDPIHrzlAy2E5U5jRP7MlV3zldJP3tJ3n3LUKK6NSB(B(WVSBoC7DZlrKuVZWPND2wsCSxy8zft)zKiF2zscmgUy8)Mfgm6uyQIjbmFqqCHFhItThB3CIRByWFf(XD0hyJ3n)DKeYlRHLg(R)8NaISojjI9YZoBLxY60BrP4mTxDeqtGZPtjF3c3lix4UCbq2Vpm03nCBadN7vR8bPgGjkdMQpsti(EeK5Hj4DusY6DZ)Dp2A4QB2sPrEbRGFLe7Dhfz4axjSftw4r8HBn8T(HHWD)X04hGb9wAmJgFhmm4IFinMEhb)HFAaff0FXB16Krip5tymVfi26THe)WU5lia6YwhUD3C)WTF9AkXhzganPbmV7XPher4D2Ug)VCUyHVhnirko7M)qykGwIrcZXpb)GZ)rHOacVqkJkh57uiRauGb8BPjUHOcpk1hLnolXhZ3VMeVc(x8HVjjbSOr1vAWkkAtq43jdFYE3OyAejMimBIP)NuVyk(kGCeq3asmXpMsCHFSerfoNcsGyseIcm(KhgNnLa8Ka3GjEJyklDdY(BO(uGWSTafGlVLIgdWZdtbAc)420LlzzWgjnjKiPgAcgUCjq))fjyvkjgyEFActYgzYXwWCdOfodKiHbbWhblOOj7FhMMi0Qwczlj3Jm3NwNg4IMUGEocMfyMdOK4BFaLPcOcwUs9X)1NS5u0AeuWzW8nsk8M4n4L8fIEB2qDbZvUweaVeHsJbQF0K0ZLDAL5g0cWlYQHjGb)(W4neFj3etqCdvoEiUgqr5kmW)b8)QIOcw7VbqBiJLVUG67LGxGUUCrL69On1hPW60nu8f(eINj4clsuM1flD1kkdb3i0yqSCtY)EWZxH4B2m8rozilIHPfwzKgtUfxmlnaYzC7TRaM7oFksSBKwpOqZ4RaHNcETpfbqIRyIYwtgUu4NXNsqw)BN(xovyyta3G3tlBLX5CUvpIpcU4wUaGYNK3b3JRq0kZGaCQKzHc25047rvHWeiaWtUmXhkFzECi6jr4LkBriWBiNaUQ5ihbnR8Plb2nK7tLSmb)N0OmYjmOabzJxI3k5YwoT8cGxnonkHPYHe2A5Z)qkOGbJOfcklG4fPXXCFtjsTokTF4(FG7poyrk49dNG3YrAHPqsiyUsWRquLp9Gcjm4RfWLybmxt6lqwHU5bfoCC5Gvmc3bNq6VLMaE0de0NLzzZb13)HVhyuiAnE7BZWB894qto594MbaMcR1vx8lWoKD4yqU3Cb4NSw8moD15dGm)t0d7NiPiAXzhiIc3rnh5Ym(bxo3j8bLpM35XiXBGNVI4fGyw(sa0NfhGC5VIW8DlLefgGM9ONc1Obqm0ui6CymgJILcU3G15OtnmaVhFPYpeiiYVcpcFmgcbCmbry(VIfTcFKElLQiUVemg3QGSG(3bXtH3ibT6gdz7ehU0ZhYiIW1wSXri8T5wsY15b9CeEApfyvhWvTZQfUxF(PElVgt6WzriOy(JKuI)a(1ILCocCBGKwtepBb3BUdFH2amyueO5gZ4wZdGKaaB1X3lddmMYfw3YJen1gCcgnzSo)nonAWWteYXyyst8ZFYDbqMhpkgw5NKgnAqmyzo2p8vxlUNdETZD0OKD)JkOYxD9zLiqFdkMewDUEWjMGRoknI5QNfJ6Nk0HSKevNVYeJNJH8DnOfWm(qzZaRxMvhkOA2IQhlpB50YHrwsh1SAhxIHZsz9cExUbyhM8rYNCl4f3r6z66jpkqtHNBU271xRzuZNSfHSKVQY4h1c3BWO1Grw(YPkR1uxrvZcXrdklZ1ZuXkj(NP3AziT7uQbNdA6bDtCnhsfi5xCfw48ODBPddkEkCaE0D71do7asimg4lVn4wtqNxpzG46XyghEbtrSHFDOyBjth4s5GOmzke(0UZ9xKXn55z5azJd7yxLJI4jz(KWmLuw55QIUQ3ALh)dGBKBfViJ783PmFmgRNbyEcjgNtwpMd)68vFkkXS1E18eUL(JvHHZhvqjb4Rre5nnpEvCmwUtlhX20BWNl8Y(av4l3C1WBiB2iFYdo3sbm46RMu40TyiLCajf0TeF)sUFuVp48PgtF8rAZ3LtlMVYeOycv4d15Re7vE6sG9wdz9VrBYMYfUUr3ol3dgk8H7X3sd6dZjk0Jbein6Xkpc(nSHxAvadm)PXyEdm6ZHuOYmITOZb1gTDUCI(OaZshrHYSWOt3xD2sEvI29i35oo0dkBmuBhD7)6wC73wMT2eDkBoutJ8vxFX06Y3TmCrswdo(ngXrphQt4xl26TdFR2DoR2I50uoTLIfa2BoIlD89yjNIf0)6fUozfdUMaOyDCQcMdLjk8AWC6XHcTBSO4FoPmCXwjNkYhjxdSqwo78Bht3G7))vxF(4PJgnshOgiakGbaRgSY0DfLuLL2Z9VbN9f3xt3NikzPZcFsuxn2kfK9f6bzFHySI6E6iRpYRpVEiy4WkMucyjIpXLS00c4HkKrnGHQsOn2AsmNHfg(qaKAY64KH1zwnWGrOzRTjaLQcy1bmvDiOBBHYPaw04n8EnHR2m(6mxnyayL40j(Pz1SKnpDziKDx3D02MQ(ijKTaULSJfM9e8qm6Q0vLpFMKxvHWgH(EVfjHXp4eNcbZooQ262uCw5H6Y0CshC5vAZW8cbve5zsxdQytbLkNEqr1Mle1HmAcQczJ3iRlTt1xuVAlzl(pcqKC)BfhABz9iatAks8o0)GUinbs9EnKDDMTzvXq4kvWm6XZeme)eHK8)EKluLj0My9hZq3sOOuSZMaHHvqbmyx8gMtiOEC2ggd5sZVgKpiby8mBhzmwqhu7D0FYEMmGHKj1r8c4TIXyv8rD)uIe8uayRTDSjdXszsZpDsnrr4O8IdYiQMyc1AQuxgjVOMnUKlHcowr2Ct3eLjBL3kjEASWoSWdJ9ztcbpYTB6pOKJNrDgtkjQwanafC7BzVloNpri)35HChKfq9oEXhjxeu)(VAfxn5rXmsYNtlw3WrWWea4LavVNxHyS484i6idjbW1miFCp1XnmHZWVY0R2GjJMGAYs5qYASnbSETEPu8yiHH93muSZ5cnBDQWlM2z1DxZNSeCCCv)NWc9dLfjQb9Vkh9QAE7M2Xx9c)NbMc6ABZ2gaThA8HVA6J19S8CLV8OBV8zz41)ChiDpdzYK9GQCeSQz)jxuQxzR6kDQ92BAZ6ETrang7IkLLSJmLnjnBvTv2BoOlL9OMY3T3ZBhRPuJvFO2ZBJxuEynrmlPXAV37fwrzITrYa3Fje)mxcpPCAPP2gETLLdN)KVCOFlGI5QuKhN7BourSdvKOrOF4jLlKWY04huo6)sizb3x9Cu6i73znKED8SPEBnFezzn7rNZ4WMQZvDNjQynptF(HyneIxTMW3LaL6cmZJ63PYj(YD1PDAxQpsIdVwEIxhSQQP9F1y5SBmlWHhKyvB2NkgahUuBtALJ2JuYgw2xhKbfoT8J78IjM4A1mGAKRTjfQrDkD4Hv8nNZVxD48BJj8Q5aW8XVl5Ox9DDBHVivuTMmTyohxC41xZFjh03Onn5uDKaLGIp)P9NiuXNn1bqa8ZTI54JF(h2rMz3CpW5aL0(q7WJ5NHFpEf0hU698p4pzt)n7TZUrzoWhk7O9z3uGPafI9sOXEeEJVRXaZsG51wAMdXTtZlTKMceVD6DLT0trb0kvtWVvr(NmyxGw9MHPY0yZEc)8OJy7ElX2j7fvY2FOKjPxxk2JMLTlwUcoO3eRUyKR0VvQZV5gSfj(unINrmLoYS5fm2xndR61vbxQ34TiN(ng4urBF(KYKi78TwQv0Au2JhFEKBv3g6v3U0SU13TU1sbeLFHbLUwhDvbvZZ8ajY3PrKsnqjS(AI6W7y77wFhGA2COGWiND(KMzTlNwzfjofv5xRB)3A7WvoROhOtJvMorHvY6ryvgPJZz3b1gBo4g7oyU8PhFQj5tTdIFsLroNYJ1OBaPBzOWUk9ySQeIKsp2rJM(6rQYCgz2AUCFkZNr9ak9r(sDVpK5SIEeJ9kWzDTOmN62gaiFZo7vsbDP7L5SLjpMfTwClHG036M991CJLoRTgBMZ86EQZdIQ1PZInc5i(dyIYwHW0q1DPAsVO2JiLwJRSz7h7CZqFS6g62lhFZTdnhA0DXBB00s9jnNs6otZOKAng3x79sP(CynqDTnnv36AQdSGQC0sFZdAMGyT26fW6)pAU62n17PUR26JHPlCKbta9aXhhT9rtmBbGvDLWFXz3WRNj6WfLEJ7YuPIV7lMuv4E2qjBkGnhp0Zmz)K8wKZcyw9ey10m6zXKN1IYbUSV8xD9cNrNVLkwJDnZ9bEErC53C6s6N1xPCeS6ukR5ykpAW3ZwJEl4il607(5Gv5kntPj(uK9rx7b8(TjW)8iHMlp0CS1vihTweV9i3nM2mxy1ZAUhSRSRxV672cp31)fnuUsob4YTEo(pzYDF1JBhCZIBdGvIoCCZu2(4H6FSqXofRON6789VXZ3ZoFGJUpnjsZhB8ZqxNRBUO2D1YC2U8yMnDBaZb1T61P3n2U69qE2x(KKN9Nh9OUjZG6mGmL0)ZGbu)1J77xtU3hwz67H44aC8XAtcchHub0t4(jtc7Rubo2b9VY6mI1ALDvSu6RypAD(MSITT355IHPkeBANvASSLnv)bUfebR2s6P7plCy166Q9PyV7pZAz9hVQL0MkoVClkA0vMsarP95T6qMocLGZIo4NlcM6MKs9v)ZLqyvZ9ZfdtrYTC9QLD9FVSE9jUsB93heq)u4kbi01kxDu)ub6d16u9aF5(cmuazBQZBlhiDlFfbhyzHfIL5JkT8M4T67lOtFGbw0k(w)fgSNB0wabMoJxt7sO5SZB6JpWcrUV(6doW89fiJEiEfmOSd296tnObw0M8xbECFYGDQ5me6JVhHgeQw(GeSrAk2QYuB7)OABlhPCz7x1qlFwdZ49sE(FYMN9LUj)lDt(FU6M8oT47GxWHCGP86nLoYjvZhXY)01)uKgI19yOPvbgSAB7pM92)xZEKln3K25)nTVHnCMuTbT3hVIn4DsxXPVgs)p29ZKFfqWsG1yko)e9opFVDZh(JY)V6f)XZ(F)]]
 )
 spec:RegisterPack(
     "Fury (wowsims.com)",

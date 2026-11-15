@@ -25,15 +25,16 @@ local Plain = S.Plain
 
 --- Staged observations one frame holds before the newest is dropped (and counted).
 S.STAGE = 128
-local stKind, stT, stA, stB, stC = {}, {}, {}, {}, {}
+local stKind, stT, stA, stB, stC, stGUID = {}, {}, {}, {}, {}, {}
 for i = 1, S.STAGE do
     stKind[i], stT[i], stA[i], stB[i], stC[i] = 0, 0, 0, 0, 0
+    stGUID[i] = false
 end
 S.stN, S.dropped = 0, 0
 
 --- Stages one observation until the next Flush (a frame's aura reads go to the log first). False when the stage is
 --- full (dropped and counted). Allocates nothing.
-function S.Stage(kind, t, a, b, c)
+function S.Stage(kind, t, a, b, c, guid)
     local n = S.stN
     if n >= S.STAGE then
         S.dropped = S.dropped + 1
@@ -42,6 +43,7 @@ function S.Stage(kind, t, a, b, c)
     n = n + 1
     S.stN = n
     stKind[n], stT[n], stA[n], stB[n], stC[n] = kind, t, a or 0, b or 0, c or 0
+    stGUID[n] = guid or false
     return true
 end
 
@@ -54,7 +56,7 @@ end
 function S.Flush()
     local log = I.log
     for i = 1, S.stN do
-        Add(log, stKind[i], stT[i], stA[i], stB[i], stC[i])
+        Add(log, stKind[i], stT[i], stA[i], stB[i], stC[i], stGUID[i])
     end
     S.stN = 0
 end

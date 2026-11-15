@@ -61,6 +61,7 @@ Game\Events\Bands.lua
 Game\Events\Tickets.lua
 Game\Events\Melee.lua
 Game\Events\Kinds.lua
+Game\Events\Debuffs.lua
 Game\Events\Rows.lua
 Game\Events\Attackers.lua
 Game\API\Facade.lua

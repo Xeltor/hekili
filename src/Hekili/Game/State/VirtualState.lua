@@ -71,8 +71,20 @@ VS.Obs = {
 --- What a `PlayerHit` observation reports (its `a`), and each kind's name (the `taken` and `consumedBy` keys): a WOUND
 --- flagged BLOCK or BLOCK_REDUCED is BLOCKED (part of it blocked), the BLOCK action a full block. DEFLECT and EVADE
 --- (UNIT_COMBAT actions, Blizzard's CombatFeedback) feed reactions only: the other PlayerHit readers key on their kinds.
-I.HitKind = { WOUND = 1, BLOCKED = 2, BLOCK = 3, DODGE = 4, PARRY = 5, MISS = 6, HEAL = 7, DEFLECT = 8, EVADE = 9 }
-I.HitName = { "WOUND", "BLOCKED", "BLOCK", "DODGE", "PARRY", "MISS", "HEAL", "DEFLECT", "EVADE" }
+I.HitKind = {
+    WOUND = 1,
+    BLOCKED = 2,
+    BLOCK = 3,
+    DODGE = 4,
+    PARRY = 5,
+    MISS = 6,
+    HEAL = 7,
+    DEFLECT = 8,
+    EVADE = 9,
+    IMMUNE = 10,
+    RESIST = 11,
+}
+I.HitName = { "WOUND", "BLOCKED", "BLOCK", "DODGE", "PARRY", "MISS", "HEAL", "DEFLECT", "EVADE", "IMMUNE", "RESIST" }
 
 --- What a `Read` observation read (its `c`): TDF's Enum.ReadOf integers (5 and 7-9 reserved), plus Health = 10 and
 --- RegenSpirit = 11 (an `fsr` slot's spirit part: the not-casting rate less the casting one), VirtualState kinds past

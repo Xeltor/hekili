@@ -34,10 +34,11 @@ local OWN = {
     Troll = { { "berserking", "rapid_regeneration" }, 0, 0 },
     Undead = { { "cannibalize", "will_of_the_forsaken" }, 0, 0 },
     HighOrderSkyborne = { { "read_ley_line" }, 0, 0 },
+    WindshaperSkyborne = { { "skysight" }, 0, 0 },
 }
 
 -- The racials whose aura is not under their own key
-local AURA_OF = { read_ley_line = "energized" }
+local AURA_OF = { read_ley_line = "energized", skysight = "elemental_blessing" }
 
 describe("race packs", function()
     local ns, hekili, state, all, saved
@@ -122,6 +123,34 @@ describe("race packs", function()
         end
     end)
 
+    it("registers Skysight and Elemental Blessing for a Windshaper Rogue by token or race ID", function()
+        for _, who in ipairs({ "WindshaperSkyborne", 96 }) do
+            load(who, nil, "ROGUE")
+            local a = all.abilities.skysight
+            assert.are.same(
+                { 1259686, 0.5, 120, "spell", "cooldowns", false },
+                { a.id, a.cast, a.cooldown, a.gcd, a.toggle, a.startsCombat },
+                tostring(who)
+            )
+            assert.is_function(a.now)
+            assert.are_not.equal(a.handler, a.now)
+            setfenv(a.usable, { moving = true })
+            assert.is_false(a.usable())
+            setfenv(a.usable, { moving = false })
+            assert.is_true(a.usable())
+            assert.are.same({ 1259688, 15, 1 }, {
+                all.auras.elemental_blessing.id,
+                all.auras.elemental_blessing.duration,
+                all.auras.elemental_blessing.max_stack,
+            })
+            assert.are.same({ maxMods = {}, costMods = {}, regenMods = {}, gcdMods = {} }, ns.raceMods)
+        end
+        for _, other in ipairs({ 95, "HighOrderSkyborne", "Orc", "NightElf", "Human" }) do
+            load(other, nil, "ROGUE")
+            assert.are.same({ false, true }, { all.abilities.skysight.known, all.abilities.skysight.unlisted })
+        end
+    end)
+
     -- An ability as Engine/Schema/Spec/Abilities.lua's RegisterAbility builds it: function fields in `funcs`, called on access, wrapped.
     local function ability(key, data)
         local a = setmetatable({ funcs = {} }, {
@@ -197,6 +226,25 @@ describe("race packs", function()
             })
         end
     )
+
+    it("uses the class-specific Eureka spell as the primary learned ability and aura", function()
+        local ids = { WARRIOR = 1259813, ROGUE = 1259812, MAGE = 1259817, WARLOCK = 1259821, PRIEST = 1259823 }
+        for class, id in pairs(ids) do
+            load("Gnome", nil, class)
+            local eureka = all.abilities.eureka
+            assert.are.equal(id, eureka.id, class)
+            assert.are.equal(id, all.auras.eureka.id, class)
+            assert.is_nil(eureka.known, class) -- the ordinary spellbook check uses this class's primary ID
+            for _, alias in pairs(ids) do
+                assert.are.equal(eureka, all.abilities[alias], class)
+            end
+            for _, alias in ipairs(eureka.copy) do
+                assert.are_not.equal(id, alias, class)
+            end
+        end
+        load("Gnome", nil, "DRUID")
+        assert.is_false(all.abilities.eureka.known)
+    end)
 
     it(
         "prices Heroic Strike at 13.5 with Eureka! up in the simulation, no cast takes a stack; Rend stays 10",
@@ -328,6 +376,7 @@ describe("race packs", function()
             load("Dwarf", { stoneform = stone, [20594] = stone })
             local s = all.abilities.stoneform
             assert.are.same({ 20594, 180, "spell", "defensives" }, { s.id, s.cooldown, s.gcd, s.toggle })
+            assert.is_nil(s.buff) -- the class priority owns cleanse/mitigation policy; the spell requires no debuff
             assert.are.same({ 20594, 8 }, { all.auras.stoneform.id, all.auras.stoneform.duration }) -- not 65116
             local class = { abilities = { stoneform = stone }, auras = { stoneform = { id = 65116 } } }
             ns.applyRace(class)
@@ -510,9 +559,9 @@ describe("race packs in VirtualState's now context", function()
     end
 end)
 
--- Audit item 3: a Dwarf Protection Warrior's Stoneform gate reads only auras that exist (no "Unknown buff" logged).
+-- Stoneform's class priority owns cleanse/mitigation policy; the shared spell imposes no cleanse requirement.
 describe("the Dwarf's Stoneform through the engine", function()
-    it("evaluates its buff gate without an unknown aura", function()
+    it("keeps Protection's existing cleanse policy in its priority without a shared buff requirement", function()
         local headless = require("Game.harness.headless")
         local ww = require("Forever.helpers.warrior_world")
         local c = ww.Protection.character()
@@ -521,7 +570,17 @@ describe("the Dwarf's Stoneform through the engine", function()
         assert.are.same({}, H.loadErrors)
         local a = H.Hekili.Class.abilities.stoneform
         assert.is_table(a)
-        assert.is_string(a.buff) -- the ability's `buff` function reads each aura it gates on
+        assert.is_nil(a.buff)
+        local found
+        for _, list in pairs(H.Hekili.DB.profile.packs["Protection (wowsims.com)"].lists) do
+            for _, entry in ipairs(list) do
+                if entry.action == "stoneform" then
+                    found = entry
+                end
+            end
+        end
+        assert.is_table(found)
+        assert.is_truthy(found.criteria:find("buff.dispellable_poison.up||buff.dispellable_disease.up", 1, true))
         for _, k in ipairs(H.Hekili.ErrorKeys) do
             assert.is_nil(k:find("Unknown buff", 1, true), k)
         end

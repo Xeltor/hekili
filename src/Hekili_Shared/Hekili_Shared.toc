@@ -22,3 +22,4 @@ Races\Orc.lua
 Races\Troll.lua
 Races\Undead.lua
 Races\HighOrderSkyborne.lua
+Races\WindshaperSkyborne.lua

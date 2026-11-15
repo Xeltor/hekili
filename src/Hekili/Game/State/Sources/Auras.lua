@@ -21,6 +21,50 @@ local HUGE = math.huge
 -- in one filter would hide a tracked aura past it.
 local SCAN = 128
 local FILTERS = { "HELPFUL", "HARMFUL" }
+-- Positive dispel evidence is independent of the tracked spell set: an NPC's otherwise unknown harmful effect can
+-- still have a plain dispel type and expiry. Keep only those scalars from the current player walk, never raw rows.
+-- Reuse fixed slots; no type-keyed table grows when the client introduces an unregistered effect.
+local dispelType, dispelExpiry, dispelApplied, dispelCount = {}, {}, {}, {}
+local dispelN = 0
+for i = 1, SCAN do
+    dispelType[i], dispelExpiry[i], dispelApplied[i], dispelCount[i] = false, 0, 0, 0
+end
+
+local function observeDispel(api, data, t)
+    local kind, expiry = Plain(api, data.dispelName), Plain(api, data.expirationTime)
+    if
+        type(kind) ~= "string"
+        or kind == ""
+        or type(expiry) ~= "number"
+        or expiry ~= expiry
+        or expiry >= HUGE
+        or (expiry ~= 0 and expiry <= t)
+    then
+        return
+    end
+    local duration, stacks = Plain(api, data.duration), Plain(api, data.applications)
+    local applied = t -- without a plain duration, only the observation time is known
+    if expiry > 0 and type(duration) == "number" and duration >= 0 and duration < HUGE then
+        applied = expiry - duration
+    end
+    if type(stacks) ~= "number" or stacks <= 0 or stacks >= HUGE or stacks ~= stacks then
+        stacks = 1 -- a positively observed effect exists; its exact stack count is not required for a cleanse
+    end
+    dispelN = dispelN + 1
+    dispelType[dispelN], dispelExpiry[dispelN] = kind, expiry == 0 and HUGE or expiry
+    dispelApplied[dispelN], dispelCount[dispelN] = applied, stacks
+end
+
+--- First positively observed harmful player effect of this dispel type at t: count, expiry, applied/observed time.
+--- No signal is not proof of absence. A secret/failed player walk discards older evidence; no hidden timer is guessed.
+function VS.PlayerDebuffByDispel(kind, t)
+    for i = 1, dispelN do
+        if dispelType[i] == kind and dispelExpiry[i] > t then
+            return dispelCount[i], dispelExpiry[i], dispelApplied[i]
+        end
+    end
+end
+
 -- The walk status per unit index ("aura walk <unit>", built at OnBuild for every tracked unit), so Snapshot tells
 -- them apart.
 local WALK = {}
@@ -122,6 +166,7 @@ local function zeroEdge(k)
 end
 
 I.OnBuild(function(def)
+    dispelN = 0
     local U = I.auras
     for u = 1, U.n do
         WALK[u] = "aura walk " .. tostring(def.units[u])
@@ -171,11 +216,17 @@ end
 -- One unit's walk at t; returns whether it completed. Allocates nothing (the client allocates its aura tables).
 local function walk(api, u, unit, t)
     local U = I.auras
+    if u == 1 then
+        dispelN = 0 -- a partial/secret next walk must not leave an old cleanse recommendation standing
+    end
     serial = serial + 1
     local complete = true
     local count = exiting and u <= 2 and not I.inCombat
     for f = 1, #FILTERS do
         local filter = FILTERS[f]
+        local helpfulTarget = u == 2 and filter == "HELPFUL"
+        local shield, shieldExpires, shieldUnknown
+        local ended = false
         for i = 1, SCAN do
             local ok, raw = pcall(api.C_UnitAuras.GetAuraDataByIndex, unit, i, filter) -- secret: tested next
             if not ok then
@@ -189,13 +240,25 @@ local function walk(api, u, unit, t)
             end
             local data = Plain(api, raw)
             if not data then
+                ended = raw == nil
                 break
+            end
+            if u == 1 and filter == "HARMFUL" then
+                observeDispel(api, data, t)
             end
             local id = Plain(api, data.spellId)
             if id == nil then
                 complete = false
                 Note(WALK[u], "secret")
                 break
+            end
+            if helpfulTarget and I.DebuffProtection[id] then
+                local expires = Plain(api, data.expirationTime)
+                if type(expires) ~= "number" or expires == 0 then
+                    shieldUnknown = true
+                elseif expires > t then
+                    shield, shieldExpires = id, expires
+                end
             end
             local j = U.bySpell[id]
             if j then
@@ -230,6 +293,9 @@ local function walk(api, u, unit, t)
                     U.harm[u][j] = filter == "HARMFUL"
                 end
             end
+        end
+        if helpfulTarget then
+            I.ObserveDebuffProtection(I.Units.Uid(1), shield, shieldExpires, ended and not shieldUnknown)
         end
         if not complete then
             break

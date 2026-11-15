@@ -26,7 +26,11 @@ local DECLARED = {
         disarm = { "debuff", nil, nil },
         intimidating_shout = { "debuff", nil, nil },
     },
-    Rogue = { expose_armor = { "debuff", nil, nil } },
+    Rogue = {
+        cheap_shot = { "debuff", nil, nil },
+        expose_armor = { "debuff", nil, nil },
+        kidney_shot = { "debuff", nil, nil },
+    },
     Warlock = {
         shadow_bolt = { "travel", 20, "shadow" },
         incinerate = { "travel", 20, "fire" },

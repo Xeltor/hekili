@@ -977,6 +977,11 @@ local function applyDebuff( unit, aura, duration, stacks, value, noPandemic )
         if not model then return end
     end
 
+    if unit == "target" and duration ~= 0 and not state.cycle
+        and Facade.DebuffImmunity( model.key, UnitGUID( "target" ), state.query_time ) then
+        return
+    end
+
     if state.cycle then
         if duration == 0 then
             if Hekili.ActiveDebug then Hekili:Debug( "Removed an application of '%s' while target-cycling.", aura ) end
@@ -1593,6 +1598,21 @@ state.rawGain = rawGain
 
 state.spend = spend
 state.rawSpend = rawSpend
+
+-- A one-time pool ceiling: each stream keeps its own value up to the cap. A common spend delta cannot model this
+-- nonlinear change, and gain/spend hooks (including the five-second rule) do not apply.
+function state.capResource( resource, maximum )
+    if type( maximum ) ~= "number" or maximum ~= maximum or maximum < 0 or maximum == math.huge then return end
+    local r = state[ resource ]
+    local cap = min( maximum, r.max )
+    local pre, preLo, preHi = r.current, r.actual_lo and r.lo, r.actual_hi and r.hi
+    state.changes = state.changes + 1
+    r.actual = min( pre, cap )
+    if preLo then
+        r.actual_lo, r.actual_hi = min( preLo, cap ), min( preHi, cap )
+    end
+    if resource ~= "health" then forecastResources( resource ) end
+end
 
 
 -- Rotation windows, the core's side (re-pin design §3a, decision 11): the forecast only. `state.window.<name>` answers
@@ -7333,6 +7353,15 @@ do
 
         local ability = class.abilities[ spell ]
         if not ability then return true end
+
+        if self.IsCycling( nil, true ) then
+            if Facade.DebuffCycleBlocked( spell, self.now, self.true_active_enemies ) then
+                return false, "no eligible debuff target"
+            end
+        else
+            local blocked = Facade.DebuffBlocked( spell, self.now )
+            if blocked then return false, blocked end
+        end
 
         local hook, reason = ns.callHook( "IsUsable", spell )
         if hook == false then

@@ -64,7 +64,7 @@ describe("the Rogue wowsims.com packs #slow #wowsims", function()
     for _, p in ipairs(PACKS) do
         local pack, spec, base, FLOOR, LIVE60, knobs, LIVE40 = p[1], p[2], p[3], p[4], p[5], p[6], p[7]
         it(pack .. " follows wowsims's casts", function()
-            ws.gate(pack, content(spec, base, pack, 60), spec, FLOOR, knobs)
+            ws.gate(pack, W.sustained(content(spec, base, pack, 60)), spec, FLOOR, knobs)
         end)
         for _, level in ipairs({ 10, 40, 60 }) do
             it(pack .. " stays live at level " .. level, function()

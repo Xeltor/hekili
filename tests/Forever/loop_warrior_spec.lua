@@ -80,9 +80,13 @@ describe("the Warrior world mapping", function()
 
     it("keeps the rage the class file's swap_stance keeps on a stance swap", function()
         local s = H.Hekili.State
-        s.rage.current, s.rage.lo, s.rage.actual = 100, 100, 100 -- the class file reads the floor (border batch 2)
+        local combat = s.combat
+        s.combat = s.now - 1 -- compare the stance cap without an out-of-combat decay beat
+        s.rage.actual, s.rage.actual_lo, s.rage.actual_hi = 100, 100, 100
+        s.forecastResources("rage")
         s.swap_stance("berserker_stance") -- the booted class file, on the character's talents and spells
         local keep = s.rage.actual
+        s.combat = combat
         assert.are.equal(25, keep) -- Forever's Tactical Mastery passive 10, the talent's 3 ranks 5 each (wowsims/forever's curve)
         local W = { t = 0 }
         local e = { power = 100, form = 1 }

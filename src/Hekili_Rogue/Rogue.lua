@@ -3,8 +3,8 @@
 -- Forever's spell data (ranks, costs, cooldowns and durations from the Forever DB2 at build 1.60.1.70338, wowdb; energy
 -- costs are DB2 points), Forever's Shank, Death Mark and Mutilate, energy and combo points as the Druid's cat has them
 -- (combo points plain in combat, measured), Adrenaline Rush as a regen multiplier, Stealth and Vanish from IsStealthed
--- (unprobed, so the belief also models them from our casts) and the poisons as abilities (no list recommends them
--- now). The defaults are the "<Spec> (wowsims.com)" packs, generated from wowsims/forever's Rogue APL
+-- (unprobed, so the belief also models them from our casts). The defaults are the "<Spec> (wowsims.com)" packs,
+-- generated from wowsims/forever's Rogue APL and this fork's leveling and PvE extensions
 -- (tools/wowsims/specs/rogue_*.lua; no in-game check yet). Research: docs/research/2026-10-15-forever-rogue/research.md
 -- and the class-completion research §2.
 -- Talents: the DB2's Classic nodes and the Forever-only ones this file reads, as the 0.7 re-pin's rework left them
@@ -27,7 +27,7 @@ if UnitClassBase("player") ~= "ROGUE" then
 end
 
 local state = Hekili.State
-local max = math.max
+local max, min, HUGE = math.max, math.min, math.huge
 
 -- The class kit and one spec a talent tree (ids the core's: Assassination 100041, Combat 100042, Subtlety 100043; the
 -- client's one pseudo-spec, 1488, only keys the legacy profile the core migrates). Icons: the DB2 talent tabs'.
@@ -39,6 +39,7 @@ local spec = Hekili:NewClass("ROGUE", {
             tree = 1,
             icon = 132292,
             role = "attack",
+            nameplateRange = 5,
             package = "Assassination (wowsims.com)",
         },
         {
@@ -47,6 +48,7 @@ local spec = Hekili:NewClass("ROGUE", {
             tree = 2,
             icon = 132090,
             role = "attack",
+            nameplateRange = 5,
             package = "Combat (wowsims.com)",
         },
         {
@@ -55,6 +57,7 @@ local spec = Hekili:NewClass("ROGUE", {
             tree = 3,
             icon = 132320,
             role = "attack",
+            nameplateRange = 5,
             package = "Subtlety (wowsims.com)",
         },
     },
@@ -74,7 +77,7 @@ local KICK = { 1766, 1767, 1768, 1769 }
 local RIPOSTE = { 14251 }
 local AMBUSH = { 8676, 8724, 8725, 11267, 11268, 11269 }
 local GARROTE = { 703, 8631, 8632, 8633, 11289, 11290 }
-local MUTILATE = { 399956, 1241582, 1241584 } -- 1310707 (the talent rank 1) left at the 0.7 re-pin
+local MUTILATE = { 1310707, 399956, 1241582, 1241584 }
 local SHANK = { 1329283, 1329549 } -- levels 24, 44
 local DEATH_MARK = { 1316709, 1325756, 1325757, 1325758 } -- levels 40, 48, 56, 60
 local VANISH = { 1856, 1857, 1285372 } -- 1285372: Forever's "Rank 3" (checkpoint Q12)
@@ -86,9 +89,26 @@ local BLADE_FLURRY = { 13877 }
 local COLD_BLOOD = { 14177 }
 local PREMEDITATION = { 14183 }
 local PREPARATION = { 14185 }
+local CHEAP_SHOT = { 1833 }
+local KIDNEY_SHOT = { 408, 8643 }
+local EVASION = { 5277 }
+local FEINT = { 1966, 6768, 8637, 11303, 25302 }
 -- The poisons' items (ItemSparse), best first.
 local INSTANT_POISON = { 8928, 8927, 8926, 6950, 6949, 6947 }
 local DEADLY_POISON = { 20844, 8985, 8984, 2893, 2892 }
+local POISON_LEVEL = {
+    [8928] = 60,
+    [8927] = 52,
+    [8926] = 44,
+    [6950] = 36,
+    [6949] = 28,
+    [6947] = 20,
+    [20844] = 60,
+    [8985] = 54,
+    [8984] = 46,
+    [2893] = 38,
+    [2892] = 30,
+}
 
 -- Relentless Strikes (14179, 4% a rank a combo point to restore 14181's 25 energy): only the certain part, 5 ranks at
 -- 5 points (the rank curve {4, 8, 12, 16, 20}).
@@ -126,6 +146,438 @@ local function knows(ids)
         return knownRank(ids) > 0
     end
 end
+
+local function plain(value)
+    if not Facade.issecretvalue(value) then
+        return value
+    end
+end
+
+local function pveInstance(instance)
+    return instance == "none" or instance == "party" or instance == "raid" or instance == "scenario"
+end
+
+-- Loss-of-control rows are plain on Forever, but reading each row creates a client table. Read them only when the
+-- client announces a change (or when this class loads), and keep finite scalar expiries for prediction.
+local lossOfControl = Facade.C_LossOfControl
+local control = { stun = 0, forsaken = 0, movement = 0, incapacitated = 0 }
+local controlGroup = {
+    STUN = "stun",
+    STUN_MECHANIC = "stun",
+    FEAR = "forsaken",
+    FEAR_MECHANIC = "forsaken",
+    CHARM = "forsaken",
+    SLEEP = "forsaken",
+    ROOT = "movement",
+    SNARE = "movement",
+    CONFUSE = "incapacitated",
+    PACIFY = "incapacitated",
+    PACIFYSILENCE = "incapacitated",
+    DISARM = "incapacitated",
+    POSSESS = "incapacitated",
+}
+local function refreshRogueControl()
+    control.stun, control.forsaken, control.movement, control.incapacitated = 0, 0, 0, 0
+    if not lossOfControl then
+        return
+    end
+    local count = plain(lossOfControl.GetActiveLossOfControlDataCount())
+    local time = plain(Facade.GetTime())
+    if type(count) ~= "number" or type(time) ~= "number" or count < 0 or count >= HUGE or time >= HUGE then
+        return
+    end
+    for i = 1, min(32, count) do
+        local row = plain(lossOfControl.GetActiveLossOfControlData(i))
+        if type(row) == "table" then
+            local kind = plain(row.locType)
+            local group = type(kind) == "string" and controlGroup[kind]
+            if group then
+                local start, duration, remains = plain(row.startTime), plain(row.duration), plain(row.timeRemaining)
+                local expires
+                if type(start) == "number" and type(duration) == "number" and duration > 0 then
+                    expires = start + duration
+                elseif type(remains) == "number" and remains > 0 then
+                    expires = time + remains
+                end
+                if expires and expires > time and expires < HUGE then
+                    control[group] = max(control[group], expires)
+                end
+            end
+        end
+    end
+end
+spec:RegisterEvent("LOSS_OF_CONTROL_ADDED", refreshRogueControl)
+spec:RegisterEvent("LOSS_OF_CONTROL_UPDATE", refreshRogueControl)
+spec:RegisterEvent("PLAYER_ENTERING_WORLD", refreshRogueControl)
+refreshRogueControl()
+
+spec:RegisterStateExpr("rogue_stunned", function()
+    return control.stun > query_time
+end)
+spec:RegisterStateExpr("rogue_forsaken_control", function()
+    return control.forsaken > query_time
+end)
+spec:RegisterStateExpr("rogue_movement_control", function()
+    return control.movement > query_time
+end)
+spec:RegisterStateExpr("rogue_incapacitated", function()
+    return max(control.stun, control.forsaken, control.incapacitated) > query_time
+end)
+
+spec:RegisterStateExpr("rogue_pve_context", function()
+    local _, instance = Facade.IsInInstance()
+    return pveInstance(instance) and plain(Facade.UnitIsDeadOrGhost("player")) == false
+end)
+
+spec:RegisterStateExpr("rogue_can_recover", function()
+    return state.rogue_pve_context
+        and combat == 0
+        and plain(Facade.UnitAffectingCombat("player")) == false
+        and not moving
+        and not stealthed.all
+        and not state.rogue_incapacitated
+end)
+
+-- Unit tokens keep this scan useful without storing restricted GUIDs. Unknown token equality cannot prove a
+-- second enemy; range and engagement must both be positive before a plate adds to the cleave count.
+local rogueVictims = {}
+for i = 1, 40 do
+    local unit = "nameplate" .. i
+    rogueVictims[unit] = unit .. "target"
+end
+local nearby = { at = -1, count = 0, pressure = false, otherPressure = false }
+spec:RegisterEvent("NAME_PLATE_UNIT_ADDED", function()
+    nearby.at = -1
+end)
+spec:RegisterEvent("NAME_PLATE_UNIT_REMOVED", function()
+    nearby.at = -1
+end)
+spec:RegisterEvent("PLAYER_TARGET_CHANGED", function()
+    nearby.at = -1
+end)
+
+local function engagedMelee(unit, victim, probe)
+    if
+        not probe
+        or plain(Facade.UnitExists(unit)) ~= true
+        or plain(Facade.UnitCanAttack("player", unit)) ~= true
+        or plain(Facade.UnitIsPlayer(unit)) ~= false
+        or plain(Facade.UnitIsDeadOrGhost(unit)) ~= false
+        or plain(Facade.UnitAffectingCombat(unit)) ~= true
+        or plain(Facade.C_Spell.IsSpellInRange(probe, unit)) ~= true
+    then
+        return false, false
+    end
+    local onMe = plain(Facade.UnitIsUnit(victim, "player")) == true
+    local threat = plain(Facade.UnitThreatSituation("player", unit))
+    local onParty = not state.solo
+        and (plain(Facade.UnitInParty(victim)) == true or type(plain(Facade.UnitInRaid(victim))) == "number")
+    if not onMe and not onParty and type(threat) ~= "number" then
+        return false, false
+    end
+    local pressure = (onMe or type(threat) == "number" and threat >= 2)
+        and plain(Facade.UnitCreatureType(unit)) ~= "Elemental"
+    -- Cast observations cover the selected target. For other plates, nearby aggro is only a pressure estimate;
+    -- the facade's absent cast answer cannot prove they are not casting.
+    if unit == "target" then
+        pressure = pressure and not Facade.UnitCastingInfo(unit) and not Facade.UnitChannelInfo(unit)
+    end
+    return true, pressure
+end
+
+local function nearbyEnemies()
+    if nearby.at == state.now then
+        return nearby
+    end
+    nearby.at, nearby.count, nearby.pressure, nearby.otherPressure = state.now, 0, false, false
+    local probe = SINISTER_STRIKE[knownRank(SINISTER_STRIKE)]
+    local engaged, pressure = engagedMelee("target", "targettarget", probe)
+    if engaged then
+        nearby.count = 1
+        nearby.pressure = pressure
+    end
+    -- Existing plates also count after reload or late activation, before any ADDED event is delivered.
+    for unit, victim in pairs(rogueVictims) do
+        engaged, pressure = engagedMelee(unit, victim, probe)
+        if engaged then
+            if plain(Facade.UnitIsUnit(unit, "target")) == false then
+                nearby.count = nearby.count + 1
+                nearby.otherPressure = nearby.otherPressure or pressure
+            end
+        end
+    end
+    return nearby
+end
+
+spec:RegisterStateExpr("rogue_melee_enemies", function()
+    local count = nearbyEnemies().count
+    return (state.max_targets == 1 or state.toggle.mode == "single") and min(count, 1) or count
+end)
+
+spec:RegisterStateExpr("rogue_pve_target", function()
+    local _, instance = Facade.IsInInstance()
+    return pveInstance(instance)
+        and plain(Facade.UnitExists("target")) == true
+        and plain(Facade.UnitCanAttack("player", "target")) == true
+        and plain(Facade.UnitIsPlayer("target")) == false
+        and plain(Facade.UnitIsDeadOrGhost("target")) == false
+        and not target.is_dummy
+end)
+
+spec:RegisterStateExpr("rogue_outdoors", function()
+    return Facade.IsInInstance() == false and Facade.IsInRaid() == false
+end)
+
+spec:RegisterStateExpr("rogue_engaged", function()
+    -- Forecast continuation belongs only to this prediction; live engagement is re-read on the next update.
+    if buff.rogue_opening_engagement.up then
+        return true
+    end
+    if plain(Facade.UnitAffectingCombat("target")) ~= true then
+        return false
+    end
+    return (target.is_boss and state.encounter)
+        or target.is_targeting_player
+        or type(plain(Facade.UnitThreatSituation("player", "target"))) == "number"
+        or (solo and state.rogue_outdoors and plain(Facade.C_Spell.IsCurrentSpell(6603)) == true)
+        or (
+            not solo
+            and (
+                plain(Facade.UnitInParty("targettarget")) == true
+                or type(plain(Facade.UnitInRaid("targettarget"))) == "number"
+            )
+        )
+end)
+
+spec:RegisterStateExpr("rogue_melee", function()
+    local inRange = plain(Facade.C_Spell.IsSpellInRange(SINISTER_STRIKE[1], "target"))
+    return inRange == true or (inRange == nil and target.within5 and not target.outside5)
+end)
+
+spec:RegisterStateExpr("rogue_field", function()
+    local _, instance = Facade.IsInInstance()
+    return instance ~= "raid"
+        and not Facade.IsInRaid()
+        and state.rogue_pve_target
+        and (state.level < 60 or not target.is_boss)
+end)
+
+spec:RegisterStateExpr("rogue_sustained", function()
+    local _, instance = Facade.IsInInstance()
+    return plain(Facade.UnitExists("target")) == true
+        and plain(Facade.UnitCanAttack("player", "target")) == true
+        and plain(Facade.UnitIsDeadOrGhost("target")) == false
+        and not state.rogue_field
+        and (
+            instance == "raid"
+            or instance == "none"
+            or instance == "pvp"
+            or instance == "arena"
+            or state.rogue_engaged
+        )
+end)
+
+spec:RegisterStateExpr("rogue_outdoor_opener", function()
+    return state.rogue_pve_target and state.rogue_outdoors and not target.is_boss
+end)
+
+spec:RegisterStateExpr("rogue_planned_pull", function()
+    local _, instance = Facade.IsInInstance()
+    return state.rogue_outdoors
+        or instance == "raid"
+        or (state.rogue_pve_target and target.is_boss)
+        or state.rogue_engaged
+end)
+
+spec:RegisterStateExpr("rogue_durable", function()
+    local kind = plain(Facade.UnitClassification("target"))
+    return target.is_boss or kind == "elite" or kind == "rareelite" or kind == "worldboss"
+end)
+
+spec:RegisterStateExpr("rogue_stunnable", function()
+    local kind = plain(Facade.UnitClassification("target"))
+    if state.weapon.size == 0 or target.is_boss or (kind ~= "normal" and kind ~= "rare") then
+        return false
+    end
+    local guid = Facade.UnitGUID("target")
+    return not Facade.DebuffImmunity("cheap_shot", guid, now)
+        and not Facade.DebuffImmunity("kidney_shot", guid, now)
+        and not Facade.DebuffRepeatBlocked("cheap_shot", guid, now)
+end)
+
+spec:RegisterStateExpr("rogue_behind", function()
+    -- An already-stealthed player chooses their own approach. Unknown facing is not a reason to withhold an
+    -- opener; a visibly engaged enemy targeting the player is the exception. The explicit override still wins.
+    return settings.behind
+        or (stealthed.all and not (state.rogue_engaged and plain(Facade.UnitIsUnit("targettarget", "player")) == true))
+        or (
+            state.rogue_engaged
+            and plain(Facade.UnitIsUnit("targettarget", "player")) == false
+            and plain(Facade.UnitExists("targettarget")) == true
+        )
+end)
+
+spec:RegisterStateExpr("rogue_mutilate", function()
+    return action.mutilate.known and state.weapon.dagger and state.off_hand.dagger
+end)
+
+spec:RegisterStateExpr("rogue_garrote", function()
+    return (state.rogue_behind or talent.dirty_deeds.enabled)
+        and not Facade.DebuffImmunity("garrote", Facade.UnitGUID("target"), now)
+end)
+
+-- The sustained priority manages its own Vanish windows, including after the forecast's initial opening attack.
+spec:RegisterStateExpr("rogue_hold_opening_stealth", function()
+    return stealthed.all and combat == 0 and buff.rogue_opening_engagement.down and state.rogue_pve_target
+end)
+
+spec:RegisterStateExpr("rogue_opening_attack", function()
+    return stealthed.all
+        and state.rogue_pve_target
+        and state.rogue_melee
+        and state.weapon.size > 0
+        and (state.rogue_field or combat == 0 and buff.rogue_opening_engagement.down)
+end)
+
+spec:RegisterStateExpr("rogue_field_damage", function()
+    return state.rogue_field
+        and state.rogue_melee
+        and state.weapon.size > 0
+        and (state.rogue_engaged or state.rogue_outdoors and (combat == 0 or state.false_start > 0))
+end)
+
+spec:RegisterStateExpr("rogue_danger", function()
+    local enemies = nearbyEnemies()
+    return combat > 0
+        and (enemies.otherPressure or enemies.pressure and debuff.cheap_shot.down and debuff.kidney_shot.down)
+end)
+
+spec:RegisterStateExpr("rogue_high_threat", function()
+    local status = plain(Facade.UnitThreatSituation("player", "target"))
+    return status == 1 or status == 2 or status == 3
+end)
+
+local function shankRefund(talents)
+    return (knownRank(SHANK) >= 2 and 25 or 15) + 3 * talents.flash_of_steel.rank
+end
+
+spec:RegisterStateExpr("rogue_shank_room", function()
+    local refund = shankRefund(talent)
+    return energy.hi <= energy.max - (refund - 5) and (not talent.boot_knife.enabled or combo_points.current <= 3)
+end)
+
+spec:RegisterStateExpr("rogue_shank_finisher", function()
+    if
+        combo_points.current ~= 5
+        or talent.boot_knife.enabled
+        or state.off_hand.size == 0
+        or not action.shank.known
+        or not state.rogue_shank_room
+        or min(energy.lo, energy.actual_lo or energy.lo) < action.shank.cost
+    then
+        return false
+    end
+    -- Be conservative about the next finisher: beat even the cheapest learned one. Shank must recover more than
+    -- waiting through its own GCD would, and it must be affordable now rather than from a future energy guess.
+    local cost = action.eviscerate.known and action.eviscerate.cost or HUGE
+    if action.slice_and_dice.known then
+        cost = min(cost, action.slice_and_dice.cost)
+    end
+    if action.rupture.known then
+        cost = min(cost, action.rupture.cost)
+    end
+    if action.death_mark.known then
+        cost = min(cost, action.death_mark.cost)
+    end
+    if cost == HUGE then
+        return false
+    end
+    local wait = energy.timeToLo(cost)
+    local recovered = max(0, cost - shankRefund(talent) + action.shank.cost)
+    return wait > gcd.execute + 0.1 and energy.timeToLo(recovered) + gcd.execute + 0.1 < wait
+end)
+
+spec:RegisterStateExpr("rogue_reserve_kick", function()
+    local casting = debuff.casting
+    return state.toggle.interrupts
+        and action.kick.known
+        and casting.up
+        and casting.v2 == 0
+        and max(cooldown.kick.remains, cooldown.global_cooldown.remains, energy.timeToLo(action.kick.cost)) < casting.remains
+        and energy.lo < action.kick.cost
+end)
+
+spec:RegisterStateExpr("rogue_start_attack", function()
+    return state.rogue_field_damage
+        and not stealthed.all
+        and buff.rogue_autoattacking.down
+        and plain(Facade.C_Spell.IsCurrentSpell(6603)) == false
+end)
+
+spec:RegisterSetting("behind", false, {
+    type = "toggle",
+    name = L["Always Behind"],
+    desc = L["Allow attacks that require being behind the target when the addon cannot infer your position."],
+    width = "full",
+}, "assassination", "combat", "subtlety")
+
+spec:RegisterSetting("pve_continuous_combat", false, {
+    type = "toggle",
+    name = L["Continuous Combat"],
+    desc = L["Keep Slice and Dice on ordinary enemies when you expect to keep fighting between targets. Raid priorities are unchanged."],
+    width = "full",
+}, "assassination", "combat", "subtlety")
+
+spec:RegisterSetting("stun_spacing", 30, {
+    type = "range",
+    name = L["Stun Spacing"],
+    desc = L["Minimum seconds between our stun attempts on the same target. This conservative spacing is not a full diminishing-returns tracker. Zero disables spacing."],
+    min = 0,
+    max = 60,
+    step = 1,
+    width = "full",
+}, "assassination", "combat", "subtlety")
+
+spec:RegisterSetting("poison_reminders", true, {
+    type = "toggle",
+    name = L["Poison Reminders"],
+    desc = L["Suggest poisons for uncoated weapons before combat, independently of the Potions toggle. Existing weapon coatings are kept."],
+    width = "full",
+}, "assassination", "combat", "subtlety")
+local poisonChoices = {
+    auto = L["Automatic"],
+    instant = L["Instant Poison"],
+    deadly = L["Deadly Poison"],
+    off = L["No Reminder"],
+}
+spec:RegisterSetting("main_hand_poison", "auto", {
+    type = "select",
+    name = L["Main Hand Poison"],
+    desc = L["Automatic uses Instant Poison. This preference only applies when the weapon is uncoated."],
+    values = poisonChoices,
+    width = "full",
+}, "assassination", "combat", "subtlety")
+spec:RegisterSetting("off_hand_poison", "auto", {
+    type = "select",
+    name = L["Off Hand Poison"],
+    desc = L["Automatic prefers Deadly Poison on durable targets and Instant Poison otherwise. This preference only applies when the weapon is uncoated."],
+    values = poisonChoices,
+    width = "full",
+}, "assassination", "combat", "subtlety")
+
+spec:RegisterStateExpr("rogue_poison_main", function()
+    if not settings.poison_reminders or settings.main_hand_poison == "off" then
+        return 0
+    end
+    return settings.main_hand_poison == "deadly" and 2 or 1
+end)
+spec:RegisterStateExpr("rogue_poison_off", function()
+    if not settings.poison_reminders or settings.off_hand_poison == "off" then
+        return 0
+    end
+    return (settings.off_hand_poison == "deadly" or settings.off_hand_poison == "auto" and state.rogue_durable) and 2
+        or 1
+end)
 
 -- The finishers' durations by combo points (DB2 durations and per-point steps): Slice and Dice 6 + 3 a point,
 -- Improved Slice and Dice +15% a rank (14165 aura 108 base 15); Rupture 6 + 2 a point. Blood Splatter (1329256: duration
@@ -245,6 +697,28 @@ spec:RegisterAuras({
         duration = 3600,
         max_stack = 1,
     },
+    cheap_shot = {
+        id = 1833,
+        duration = 4,
+        max_stack = 1,
+        debuffRepeatGroup = "controlled_stun",
+        debuffRepeatDelay = 30,
+        debuffRepeatSetting = "stun_spacing",
+        debuffRetryDelay = 30,
+    },
+    kidney_shot = {
+        id = 408,
+        copy = { 8643 },
+        duration = 6,
+        max_stack = 1,
+        debuffRepeatGroup = "controlled_stun",
+        debuffRepeatDelay = 30,
+        debuffRepeatSetting = "stun_spacing",
+        debuffRetryDelay = 30,
+    },
+    evasion = { id = 5277, duration = 15, max_stack = 1 },
+    rogue_autoattacking = { duration = 3600, max_stack = 1 },
+    rogue_opening_engagement = { duration = 3600, max_stack = 1 },
     -- Death Mark (rank 4 1325758, 6 s): the mark's payout lands when it ends.
     death_mark = {
         id = 1325758,
@@ -260,6 +734,8 @@ spec:RegisterAuras({
     },
     garrote = {
         id = 703,
+        debuffMechanic = "bleed",
+        debuffImmuneNPCs = { 114 }, -- Harvest Watcher, verified in Forever.
         copy = rest(GARROTE),
         duration = 18,
         tick_time = 3,
@@ -284,6 +760,8 @@ spec:RegisterAuras({
     },
     rupture = {
         id = 1943,
+        debuffMechanic = "bleed",
+        debuffImmuneNPCs = { 114 }, -- Harvest Watcher, verified in Forever.
         copy = rest(RUPTURE),
         duration = 16,
         tick_time = 2,
@@ -335,7 +813,7 @@ spec:RegisterCostMod({
     aura = "poised",
     flat = -10,
     charges = 1,
-    spells = { 8676, 53, 13877, 2098, 8647, 703, 14278, 16511, 1766, 399956, 14251, 1943, 1752, 5171 },
+    spells = { 8676, 53, 13877, 2098, 8647, 703, 14278, 16511, 1766, 1310707, 14251, 1943, 1752, 5171 },
 })
 
 -- Stealth by kind (Hekili's Classic table, Forever's two auras): the APLs and Hekili's keybinding order read `.all`.
@@ -358,6 +836,9 @@ spec:RegisterStateTable(
 spec:RegisterHook("runHandler", function(key)
     local a = class.abilities[key]
     if (not a or a.startsCombat) and (buff.stealth.up or buff.vanish.up) then
+        if a and a.startsCombat and state.rogue_opening_attack then
+            applyBuff("rogue_opening_engagement")
+        end
         if buff.stealth.up then
             setCooldown("stealth", 10)
         end
@@ -389,16 +870,14 @@ local function finisherUsable()
 end
 
 -- A poison reminder (C4): the best of `items` in the bags, offered while one is there; its use (a 3 s cast, DB2) puts
--- its own aura `key` and the pseudo-aura `slot` names up for 30 minutes in the sim. The belief has no `now` for it (an
--- id-less item use never reaches Build(def)): it reads the client (Sources/Enchants.lua), in combat too. Upstream
--- retail's `essential` and `nobuff`: a precombat line is prompted in combat while the poison is down. Under the Potions
--- toggle: a buff consumable (user ruling 2026-10-21, as the shared mana and energy ones); with Potions off the
--- reminder is skipped.
-local function poison(name, items, slot, key)
-    local function best()
+-- its own aura `key` and the slot's pseudo-aura up for 30 minutes in the sim. The belief reads enchants from the
+-- client. The priority only offers these before combat with Poison Reminders enabled and labels the hand.
+local function poison(name, items, kind, key)
+    local function best(playerLevel)
         for i = 1, #items do
-            if GetItemCount(items[i]) > 0 then
-                return items[i], true
+            local item = items[i]
+            if (playerLevel or 0) >= POISON_LEVEL[item] and GetItemCount(item) > 0 then
+                return item, true
             end
         end
         return items[#items], false
@@ -409,28 +888,141 @@ local function poison(name, items, slot, key)
         cooldown = 0,
         gcd = "off",
 
-        item = best,
+        item = function()
+            return best(level)
+        end,
         items = items,
         bagItem = true,
 
         startsCombat = false,
-        toggle = "potions",
-        essential = true,
-        nobuff = key,
-
         usable = function()
-            local _, have = best()
-            return have, "none in the bags"
+            local _, have = best(level)
+            return settings.poison_reminders and have, "requires enabled poison reminders and usable poison in the bags"
         end,
 
         handler = function()
             applyBuff(key, 1800)
+            local mainKind = settings.main_hand_poison == "off" and 0
+                or settings.main_hand_poison == "deadly" and 2
+                or 1
+            local slot = state.main_hand.size > 0
+                    and mainKind == kind
+                    and not buff.main_hand_enchant.up
+                    and "main_hand_enchant"
+                or "off_hand_enchant"
             applyBuff(slot, 1800)
         end,
     }
 end
 
 spec:RegisterAbilities({
+    auto_attack = {
+        id = 6603,
+        gcd = "off",
+        startsCombat = true,
+        known = knows({ 6603 }),
+        usable = function()
+            return state.rogue_start_attack, "requires an eligible melee target with autoattack off and Stealth down"
+        end,
+        handler = function()
+            applyBuff("rogue_autoattacking")
+        end,
+    },
+
+    cheap_shot = {
+        id = 1833,
+        gcd = "totem",
+        spend = function()
+            return 60 - 10 * talent.dirty_deeds.rank
+        end,
+        spendType = "energy",
+        startsCombat = true,
+        known = knows(CHEAP_SHOT),
+        ladder = false,
+        refundOnAvoid = true,
+        expects = "debuff",
+        usable = function()
+            return stealthed.all, "requires stealth"
+        end,
+        now = function()
+            removeBuff("stealth")
+            removeBuff("vanish")
+            applyDebuff("target", "cheap_shot")
+        end,
+        handler = function()
+            applyDebuff("target", "cheap_shot")
+            gain(talent.initiative.rank >= 3 and 3 or 2, "combo_points")
+            interrupt()
+        end,
+    },
+
+    kidney_shot = {
+        id = 408,
+        copy = rest(KIDNEY_SHOT),
+        cooldown = 20,
+        gcd = "totem",
+        spend = 25,
+        spendType = "energy",
+        startsCombat = true,
+        known = knows(KIDNEY_SHOT),
+        ladder = false,
+        refundOnAvoid = true,
+        expects = "debuff",
+        toggle = "interrupts",
+        readyTime = function()
+            return cooldown.global_cooldown.remains
+        end,
+        usable = finisherUsable,
+        now = function()
+            applyDebuff("target", "kidney_shot", combo_points.current + knownRank(KIDNEY_SHOT) - 1)
+            if talent.relentless_strikes.rank >= 5 and combo_points.current >= 5 then
+                gain(RELENTLESS_ENERGY, "energy")
+            end
+        end,
+        handler = function()
+            applyDebuff("target", "kidney_shot", combo_points.current + knownRank(KIDNEY_SHOT) - 1)
+            if talent.relentless_strikes.rank >= 5 and combo_points.current >= 5 then
+                gain(RELENTLESS_ENERGY, "energy")
+            end
+            spend(combo_points.current, "combo_points")
+            interrupt()
+        end,
+    },
+
+    evasion = {
+        id = 5277,
+        cooldown = function()
+            return 300 - 90 * talent.endurance.rank
+        end,
+        gcd = "off",
+        startsCombat = false,
+        known = knows(EVASION),
+        toggle = "defensives",
+        nobuff = "evasion",
+        now = function()
+            applyBuff("evasion")
+        end,
+        handler = function()
+            applyBuff("evasion")
+        end,
+    },
+
+    feint = {
+        id = 1966,
+        copy = rest(FEINT),
+        cooldown = 10,
+        gcd = "totem",
+        spend = 20,
+        spendType = "energy",
+        startsCombat = false,
+        known = knows(FEINT),
+        refundOnAvoid = true,
+        toggle = "defensives",
+        readyTime = function()
+            return cooldown.global_cooldown.remains
+        end,
+    },
+
     adrenaline_rush = {
         id = 13750,
         cast = 0,
@@ -481,7 +1073,7 @@ spec:RegisterAbilities({
         handler = function()
             removeBuff("ghostly_strike_next")
             removeBuff("cold_blood")
-            gain(1, "combo_points")
+            gain(talent.initiative.rank >= 3 and 2 or 1, "combo_points")
         end,
     },
 
@@ -625,6 +1217,7 @@ spec:RegisterAbilities({
 
     garrote = {
         id = 703,
+        debuffApplication = "garrote",
         copy = rest(GARROTE),
         cast = 0,
         cooldown = 0,
@@ -654,7 +1247,7 @@ spec:RegisterAbilities({
         handler = function()
             removeBuff("ghostly_strike_next")
             applyDebuff("target", "garrote", 18 + 9 * talent.blood_splatter.rank)
-            gain(1, "combo_points")
+            gain(talent.initiative.rank >= 3 and 2 or 1, "combo_points")
         end,
     },
 
@@ -728,7 +1321,12 @@ spec:RegisterAbilities({
         known = knows(KICK),
         toggle = "interrupts",
         debuff = "casting",
-        readyTime = state.timeToInterrupt,
+        readyTime = function()
+            if state.rogue_field and debuff.casting.up and debuff.casting.v2 == 0 then
+                return cooldown.global_cooldown.remains
+            end
+            return max(cooldown.global_cooldown.remains, state.timeToInterrupt())
+        end,
 
         handler = function()
             interrupt()
@@ -766,7 +1364,7 @@ spec:RegisterAbilities({
 
     -- Both hands; +2 combo points (one effect).
     mutilate = {
-        id = 399956,
+        id = 1310707,
         copy = rest(MUTILATE),
         cast = 0,
         cooldown = 0,
@@ -843,6 +1441,7 @@ spec:RegisterAbilities({
 
     rupture = {
         id = 1943,
+        debuffApplication = "rupture",
         copy = rest(RUPTURE),
         cast = 0,
         cooldown = 0,
@@ -1026,6 +1625,7 @@ spec:RegisterAbilities({
         id = 1316709,
         copy = rest(DEATH_MARK),
         cast = 0,
+        debuffApplication = "death_mark",
         cooldown = 10,
         gcd = "totem",
 
@@ -1056,10 +1656,10 @@ spec:RegisterAbilities({
     },
 })
 
--- The poison reminders (no wowsims.com list recommends them yet).
+-- Both Instant Poison reminders use the same bag item. The priority supplies the destination in the label.
 spec:RegisterAbilities({
-    instant_poison = poison("Instant Poison", INSTANT_POISON, "main_hand_enchant", "instant_poison"),
-    deadly_poison = poison("Deadly Poison", DEADLY_POISON, "off_hand_enchant", "deadly_poison"),
+    instant_poison = poison("Instant Poison", INSTANT_POISON, 1, "instant_poison"),
+    deadly_poison = poison("Deadly Poison", DEADLY_POISON, 2, "deadly_poison"),
 })
 
 -- The hand-built lists this file shipped before the wowsims.com packs: a saved choice of one falls back to the spec's
@@ -1071,16 +1671,16 @@ spec:RetirePacks({ "Combat", "Assassination", "Subtlety" })
 -- /hekili priority <name>.
 spec:RegisterPack(
     "Combat (wowsims.com)",
-    20261110000,
-    [[Hekili:TVvBVTTnx0Fl5lA2yf2XoXDTbrbyBp7LoSNUH5UVkzAjkBollAqsLmdy4F7JI6ftYqQ3StxbwYhAvejV3dpxsQlVheVjEFYBEiGb9(40RN(2jtMCn)hV5S97GEZ3bc2awXFibSL)VFpE7sa74IbpHFII2shfG3omRx7JXGWmlTmffZ(qI3sJgLUdg4n)p(TF6p)H7ce2YB(AuyimFaqAGfFC3XfS1WJlkE34imb(iKCCrimcKgZ7(3(7)6Xf8xFCrLbsrJZCiDmbVkfooChDmyxmDCXygX)Lr)ffNm8nCRtaj0yoId5pJZ8gIECbimeN8v8h2a3thDCX)dWa3zafd()F4tCJSMX2rVB84vi260LzaFSwxhYTjhAWzG3heofmnmkyeN)i4iumNFbbmeoHoAhbMtpUlJbHq)O4ucz)XF5zT)1UJ5pVfgIyGSMEtkf6JJI8xfe6oPAaUe0omLbvB(nr4Guk))rrUWeiz1(rX4hCZhZOIHWNfuwLH4(BfGqWCtjn4bzGb7VdJsy84fhRWe29ZCUkeUmnkAuXqgLUBOSLEeKGOR1WuM5gCvbgkh4Me8tjhmyohlD95tNY2ZModDSaygAl8b3jkOKZV7aKC2ndCLomh9LqlaJJd5pv(AceeUxXolJX4q)OuYEdZ4sJkhUlm9aRn5iydL3ZPK27068A18rPT8zLt1WknE(G088PXL7nlJYHtWpoAI07hEqczAD(Yd6HslI6OnvMVqcfs2Gswvt4LgJcG(GKq)q(dfEqef1ArBNcDniztoloGbI5lwhTeJz(BsqrWr8JU28G7Sd2A5wRTCJ1wMAOfycyzmm0YUh3BCQ21DV77Uolk(LayvbLcTcc5iheJsG(Ku(jrzeSu3NDTtVICoLdcgNMaP(XOvRzfRFTTWUh7A1qV(6v9Ml2gyDBO19CYBbQAj3ANmNHP6a70WjtQ0wLr7dR3yK9sFa0R8Vk)NnWle58fWSrE1KSznD6(GAN02XDn4IVe8C5YEsy9KVA92pdX2InGYTiTf04IHxP8H574Aht8cpF7gS7YwR(IVTaucLNk)KBvDxkbUbyWrLbor7fRYofYYFRyw70aMQnCKNXUEtCsPHH14evhQHP53yPjdhLX7(fw5(MCJwSl7oYSyOpdAIrhiNk1e(LblYrlecyR93ciBQYr7Gr6xA4tNX7JYVFkmizV8iqXTeLEVyvNJ5BPEJzNlmrXBE2I2AUYD2u3s6XYw4e4SnaEMWYdGKUJXrJYTURYUwKwaDxmGXGKswTmN41WTycznyvdjWZtWU6c7fEJpZDUAG6Ae33oSkugfdEkgsP(W)ggKMtIfUq52lkNbOmfmDgrLNU2coNycukEmGVo2xqlgwyAYOUslOGpIObq((h7ftqQl51tOUt(VkFTKCdplbJk7LhynpVNDWm2VT8UTB5XG4kCp0C35lS6Xb3YmTn7EJZZJk1TTxPQsR58y8EFkJG2aRROsvyxTIpA1gQcd3QY0LuuR8G8jcT6ycZD6kJFiXsNhy27MnHnOEEF28ExRFor8JmFE60Lxz0EZOovjhRSM2X8A6hCF3WdLBRu33uT1s98xuc)d1qI8MRRmEKrv5jK(OrzgiVgy7EGLhg8M)iKq5VqtkKyEiHk0Ejxnc(JFuOftri0778Mhqq8WgcK9Y6kpV3CX3uZmWCPV3j(98U7nVO)EmooS6Moui)twU4LsGG7JB08HnyLxUCfmy5a(Uu()ZT()zZGB1MbLiwspafyxIefDbSjmqMdM1sk6uvFm6pd1SU7AgKHN3EE4Pwavxv0Twz(mq9nwIcY2rfgwSMPQ81QY8DXMoni0qTgnJkExBJpvkryC9IXu(SDz9m)(ElHaHOeQCFn17VMc(xtf)RPK)xabkQxHIpRiwtLImEFY1wiETVfPec6I8fxu9leiw)dy99ieZFmU56rzD3SnyF4LO46Nv9OTw2mbbR)P72SK4IFI4RrNEj(rRjOViMqILBTnlozhR(rN6RoDnfQV(kx3yPRBMS7lJ2xcnNrTLvzB2a3wLtolPt(pviPfcO8zBs3rOlwn12RqyF)zVbVKalcO02BpKFnzfqug1LVBVXlX3K2l9v8Lxo1xU0YViOA97ezJQL0Nrln92RmtRKMP9AZ0zXzAvTKk4L2Ebjf5BKzglxBqyCB3c60mPjlXV4GO6l6P1lhzQxrN)DL0rQws52sTIptTx9QlPmps3)uXEAGrprzBRfoPuuJ1bRwnIoxrISPsKyYONgw1zPvEqDvKn5J6Q(r9vaPMvq6sjHKGESLtLATXBm(AxBP6exsGa9VdxIGscTt(wP(0T68pl9YwX07u107w50BQE6nMrrtfuxq365Aus3Nox8vc)cr49qAQg1MsedTvyxnXQmMT6lIOvVg4F2onMixPmweyuFQYyMsX4niWu7seJL7rqkBnM4n)NHBqXOJlg8Jf)PZiA27Fo]]
+    20261114016,
+    [[Hekili:T3vBZnUTr4Fl(lkstVkBzl7C5MtEM(sstY08YeN28nrrtcjXkksneKYXD0OF7DbiijaiaibfTJ9u9LC64l7(S7cS7ca(Cz(K5)68h8DtrZ)XRV667MmzY0RMC38hsFEhA(d7C924Uc(rK7w4)(3I3(OB6XfdFk(jCWw8yV4TJip1ZHXU(ej9ywqy63fn)rLcfVd5n)HF5N(h)RV(tEuzn)H1b((O8xaH90OJpDCr6A0XfSRD5Y4e0EuYXf(OLUzHWJ)x(5)5XfWLpUOuazbxsui(YK4vzOl93HV0Dxi(s27mg(lJ)p44OrFaKEIBeoeqSp87yI2cWhx467hh9fWp2GEgp(4I)UBQ7NuGIH)W39RGqwNMUd)PlVCvq66Shja)sPhDeitaAOBD)kp)RDV2FPhi2Fl(3oU4Bkewi8hHbrRGhncqtuCuIBa8JFE)xFCXUKG4KG0aeMyTHHXpDCX3598Xf)BuqegWWtGUjYWnjc5)Nb7pmKjONqU7IJGxZnm8riUsmOFL4uXz4u3GiIPNRjF3TqqVuzpxOkmlkSliI(0aUFamUJlirDFqC)CCaMOIe02GiFucMPAKRhaQ1WVjoZDjOLOeuKhICT9iQudalp(j4D)fsWcafknfCceq(qkYnKyvKqcoB1keMgNOr74Su)yYp2LfgIlSF3JlYWUpgcckEhkcLmggLMeVmiegf76LgehHhd4iFq4SNccdDsJDWzj7d2J(qWYz0Xmo72JC8IJsr)E6GlW54a5pg8GdYFaCAg1x891e6FA2LuXgV0bEhhaSy3nOilKDXRqFQK4q1kbM04Ud54MKgGtTq6BJ3J2IIslK(GhZwUCSG0g7tIik1konocbaCBR04qQS9dOdhjHfND0rkJZ2DO2TGFJCXi4EJYXuPUmHN1UPPOehVSeC7IF10l9vbTYukVanO4e3Db(ojOvKrzUK7)HmmcI6lDw55pBYhiQi09zNhrWmOz3Dvf48CJCiscM1NRZ6YYKIrU(oHONDGCfijT8rQwsJxTkeWomBlcddRXd0OxI6wf8FbhJE1bzxsDHrl5bojBeCGOWz)aKe54IVfMLt0oBQ1vdUixRK5HWeAhWTcjFgufFsDtwHshSfEBhskIXyak3Fvo0kVQdKVa(Z8XKfVnfloKNz2e1W2h8sHp)Mf1x3vu)tlx2DqtewnmxCrdqgEeDiUfdpETG8WAyEYH6MXGYcmLsj)2Z(c3S04VyKU8E0CisgiVbXSN8Yso5vFksOhGc9DYRUkNoI8(XeieLcT8KLa1ht)80bdhMJIXERHY3o41XPJ3evfzO1FiPVgm8cnp5bFe1BXDDIFAu1BSjWpcsKu)v4Vb7DWXHXhYdkJdWSWdjYrs)an4m6qjKD3(ygEntISRrB8i19X8RoIB(JVluyVWt9iAn0abil2RTYnjjofjy6(zjudp)VXEIbmKx8cuuRjw(yORpeucbN9ZvzLl7gQyqyOlPcVdP)IIrR0aPAHc)ElYpivvPGtqh9ylkVGnM8A2oYBJMqELB94vUHJxL2mAx1J)qltpHhSnxC(puSETDy91QQC9kWwoa41cO9D7dNBA49EtdqeCtG3MQa29xvFew(fqrRGWurz9TOquPW9CXetMKLxkkk9a7VE2vI6U0F2FqqEGGCTsRhxOj4ZpEXBdtgEXXHKBMFnOHjiEIVFMekzx)qD3ZKrkh5FVyoL1udIw32yfYBUYSBv01iRb6O44gldpTZkPQjhPc73QrIfnDWgW7grMHOQde9T0G27In0(ATXCQvczwFv8F16yCkulcNMeSHnPmVVlP7qhp1mAu5nScEx0x4Bjcgf21PM5OqzlXRdwTgArh6alvEgCTU0c2byuEC(YyVmCEGJ271ZJdJVFgZEzVYyp4)cEbUInhuv4j)AjimkbmlYexjql4sQspufwKQrRP21B0ku8ghRmbV7vPfouTjEq1LNnDWfPUHWVghefKganJVhbDmt8b(JST4fpAZlO(AasJLL5Hur9C7gBCB7vaAFa2JSIgKvQ4(zt5LY2S0GqtYGnpM9yAqTybJTXjjRHjuwHlrHGbFpMS(W88rNGKiDQYEAT7ubmtiL9mcHWW4yFNLzjpR7nTm9XGYKNSNnicw6VRhzNuGuMdfMbCGldkKvfTnab9pC9HYMYlQdgeLfNHDYL9ObCzbNYweqLHuBMZJiy93jBab(E3glnK6v6dZIqyyX9RwN(o3k5nL62zwcAJ77ul8RkSqQruZ20wpQZMLGbmqrtqorqhMvRJWqPOESaJIQA9NjBYinw35fYaXG(20d2flnorAGqGkhRrjIjYvTj4NO6KhSle58bhbzDtGefAmPZ6KntzDWNND7vvT)Hdd8qoKDMXh(bFd9s3HShVd1mlvyMGyasqi94iX(j9HkdLTI6ppBsBw)Cs2UuiHtpAzIPvyjlyQrA3cSk4PCMMqNoEXaIPL679saQvELLu1lkZkQVumUhHSASrn1kBxWQz)tFLTrEFw5Z(KehVTfnLwFXb2IgZPRzPF3Lf5bJ7i9l)uCwKpUilClGO2oWTfPnRkf12vxV52bxiv9LmZG5)lpUrgMwtMouSCbgK416ExsHI6tvgwTBj87T6bvQwZJwF0FX9Pd91T0V0GTO7jB8NKfXJ6DjODUSJeJa2caKBnfqTCZhzxMCaxpBuUMwRtPs4RJYu1qT3QyPhCxhCzDheMqrP9kCpMvx(ALlcITf7grIyhddhQrkdGaY(Xt4U(OdCiv6H7FJye3GqBLPj73WYc7w9ldkRmX8WHdzzUEmoo1ztuWsOGoCZ7ND7bD3zQ27CJ27CTI7uUfpkNDo7MQfR85zF8ksu(Tayfbv9KHYfRAzYrfnWoKtvDUf0Ygg4xhB(CdDtA6HmgswJ8Cd5BZMEODkV2538t3kVtU0QeNctFOE3sLifUxPq7suWOhvvKVVt(DoEigpiVyp5CEdynMgDzER4GuQgDc6Tdd4KCU7NOVTJoWo6)680tfXE2eu(7Wnfv5GLZHGr5ZiBNN4f2ETd2NYuVUIx2h2WKjtnREnBoD5G3899nFuyvin)QuVYGgWOXWv(QrKVf40A41A0WLHkzNFiYRjbVKehCk2TQMutdXwctUsdroqJCQ6dIV1Tj3wU7S(i301oBDt2u2p5bLHdUx)6BHNr4Vxfw4KxEeHTIzURNpkv9Q7VrTY5pvGghK3WxMSUw7niXkWRtaqx9DDpiuS9JvlbI2Yc57)G8HYweHkwlq1PSAEHlWclk30KIDHK81znuC83S7gvoSyzO7tHim2b97iVS8aI4z0BTDQFFKhACpCvVZJqYgvgGXbgM2CuLdhpXT30yfRlQFwEn24KWwKoujKjl8uTTmTy)dkoh)Y6u6gqBFbi(iHo5EZafrndPJ664nXZ4Y0gkwANI7GN0E9vI3PkwIDlXe)xArJOHpdyRslQ(HUqzHunp8q1AxTi0b1tRnIpptB508MYK995)9YVoLwgke)evohm6uWO6lWw8Bqw9uN7N9XrhkMPl9XgwmBVZtTuCwfL2UygVYDzIR(zrJENhey)GG(mKzHK0fT0eZfZsC87N)WEuc5ZTv6F6gcbiHP)Bfr()6ja)8hP)BhbBe68)AbX6N)Gex1M)GxsaypbUZFixDnYgmgN1MNcOWKsK4Wwh0Kmx2iQ8gnQuGnADqxTLJBemmvdgk)OTTs)M4(M1KFJaVB1bpEURzfeRHcVgifhbg3jbdHpkC42xvhcTLeCZFGRzyYy9sBS(lqGYxAgkF8kobWZPoEe2rQ0ru)hLuFLqZpC(2ZvQtK)zGJIsyR5purdo9(srIFrmKV6TIHCTvgIat7i2XKR6ndr(GQO2rSs2RjyguMQvAfLeOZgJqof)RIrOIcEDHdE2y61hiorUYJUxLLhtPZH5BEdrSVUWBIMioHzU9PHCFDKDF9f9(OHyDv6jFSo1JN2XSNUW7pkO0v6NZ73)ytEauRjeyVWiqlPeOvCcK6tL7xrQ68nx1opQOxrFkboUhsvFd9Pm9fq9bLetKIGgAp5UBBOftfGQJenKch52v0zjmU)PUtYwqYVwWXp9K8JIu5(ru446i2AdbenaUg9zKfpj3esXZq5Sy7g0Ppls35UifB67TWk2k2r6kc(aYwTt9CA70pxRu0QBDOv59QpqOnmYYgkp(Ax7MA4Y1iBWi1rhIoWhcBlQxfuyxLlgtSeDfwZBl5v1Ym2KdfS6wHDr7sncxn7duZAwUyvvELIZzPt6((ztPIxUsuH4l2dQgfolfKzAxsvLCvMQ6Jf7WzJkZG0LRmuw)uC)7obvCJC6BDjQ4yYzD1H54WjvQYjE1j1QVmS6c1Y0TvueOnuMthPxAK1lntWtQdOTRSR6t999SdqK9NuhGCoDTTsWDoSVJDb1Ogk1jixoqRtGU5(VdnFf8gLA4YLw6ndtWeEH4nAhQ22qFb3ixWR38hM8aDJuPNK1x0NJGXRRCmL5b9OVGvlsGiQuaORinpTm6DCipVIIeDf0Lo)VEem2qDvR5UQe5vjM4u9Bk9jAj9v6lvgzZ8wLByRWRkowFQ(vCEIwVyIp7z2QLuBLBfQ56qYoBB)nvF5x9OVqnKn8fJ1IpzmQvP9yznSUKUyfk83e1R9ez75eLYhucFItdCOLIr7x0OTW8fHCTuSRBzNnUCkBnbdyqUyyLQEHyDBdTMmTT7tAozwfaSMpFpBiRBFZwxQjPRklh9DfSJcOjqJ32YJxIgVTTRIw96DlbGcoKE6C8LcWtBb5gzoB3OoRsuQBhq11OMvCJRvKJR3SVgOgSvCdM6BA7cQvVJcDS5avaP1vPmsOydK01alDnqt3EGuXMzv8RkI7rMftdA6kBByHhwr54xuohtTa5I3DndM6VeZM5eM2Ch6mJdVeeG9K4mARjnk1HRBz7MgY075JphT6eHLBTd6nHbPC4xB7lv3gi3edsnqMwZSlTr6L2SZVRE4U6Gv7H7WMrznBNpj6o))vHOwq65xnJ2sORA01DTDjr6N)2zJXaPOPqRTlgQ(XY0F8LUReM(LJX0V0uMM66B7(gYXPAPLu0E2u3k6u3E(uBnHQBfrL04NA7Q9eOCnVNs3sEuPmDRORYsBsYwYcBQw1FgHnXc73p0WUHTr)o9Nl4lj1SB3zzCN8caSBp(TNx3Tyx6nxxULm7MAC6otq1B1VEkFBlNV7kPVBM13)rq7BQRuxFKIhlDJJn0Zh8(Iq4e0(L6(Evv9XH1iofi7zRY3R5P0XmvROMQDCtTjYP2yhwwZo18)EB4lonsPJ8NQ)26ohRoHyvhOtEVYNCA8w3U)B445kDlVien)8GKUt3CAev35P34bU2kvOlyQziHy2haFP02NZpv85NjBU166mzZpt2CQaot28cxXzYM3cdr(SlP2rSsEAlygXNjBERn9ZKnV8v6xcR9UKS5M)qNLxGM2)FfpvhTLtdA3zs7vkTvnyoW64K5p8TOnbHbhxm8BItq7ZPqy685)V)]]
 )
 spec:RegisterPack(
     "Assassination (wowsims.com)",
-    20261110000,
-    [[Hekili:TVvxVnUTs0Fl5fvB0a74K4T7gefGTO92UfTBVOE7RsMwIYM1YIgKuj1ag(3EPO(WKmK6l7Snan(HfkIKZCMZmKA4my9M49fVzHag07ZxF11VBYKjxX)5nJTBl0B2wqWAWs(djGn8)9JukGsrjagcNCy(GNWprrBOJcWBgMn5DXyqyMaxKIIzFkXBHrzt3cd8M9h)(p9N)4Dazr6nBfkmeMVoinOEnE3H5SvWdZlE34imb(iKCyEimcKgZom)J))F9WC(R5pPjNu04muqhtWltHJd3shd2gthxS0r8)y0FrXjdVKReciHgZnJq(Z4mLIOhMdcdXjFd)H1WD0rhM)dag4odGzWV9PVWfYkgBl9UXJxIyRsxKH)XAtDixMCmdNc(qq41GRdJcgXjvcocfZ5Eqqg0PJ2sG8fVaWCxedcH(rXPeYUd)YZg)BDhZFEdmeXew9LPuOpokYFzqO7KQf4Ueqiyg8YiCqk1DYLOi3bzsa7VfJsyCUMRayc7(PoxecxKgfnQyjJs3oSsoC19iibrxPQhH4gCr(KQw46e8tj7niohltfMajl3nkg)GR24bykBOJfaZqBGp4orbLCszlGKtjzGRuH5OVeAbyCCi)PYxtGGWDkYzrmgh6hLs2zWIlfQSpQq0dSoKJGnuEpNsAVsRtRv2JYy5wLt1YkfE(I008X1LRnlRYHtWpoAI07hUxczAt(8d6HsbrDuMk2lKqHK1OKL14EPXOaOpij0pK)qHgeErTr02PqxbswNZIdyGyEW6OfymZFDckcoIFEZ6hCNU32i3ADKBSoY1ggbMaweddTS7X9gNQDD37((RY8IVgaRkOuOvqih5Gyuc0NKYpjkJGLM(0RC6LNZPCrW40ei1pgTCfRi(1wGDp21QHE94v9Hl2gyDBO19CYBbQgjxAhfNbtDGDA4OivgRsO9H1B0ZEUpa6n(xL)Zw4zICEfynYrtYI10P7dQ1OTJ7AWfpe8u5YEsy9KVA92pd(2InGYJiTf0yWWBu(W8DCTJjEHT3Ub7US1QV4BdaLq5PYp5wv1LsGRbguuPJtmEru2rxw(BfwTtdyQw3rEg76dXjLgwwJgQoudtZVXstcokJ39lKY9nPgnFx2fBzXqFg0eJoqovQj8ldwKJwieWw5VbqwxLJ2EJ0V0YVEkFok)9r3GK8Y9af3su69IOohZ3s9gZkxiII38SG2AUNCMPBj9yzjCeC2wapty5fqs3Y4Or5w3vzxlslGUngWyqsjRwMt8k4gmHScSSHe45jyxDH9cTXTCNlgOgJ4(UHvUYOyWtXqk1h(3WG0CsSqfk3Er5maftW0zevA6kl4CIjqPOXaECSVGwmeyAsOUsbuWhr0aiF)J9IjinL86ju3j)xKhljpWZsWOsE5owZ2909MX(TL3TDd3hexH7HMNopWQhhClZ02K7nop3Ru32Ezgy5kopgVZNYiO1W6kQuf2vR4JwTHQWWTQmDjf1kniFIqRoMW8KUW4hsSm5bM1UzrydQN2NnV316Nte)K5ZJNU8gJ2Bg1Pk5yLyAhZX0p4((H7l3wPUVPARL65VOe(hQHe5nxxy8iJQYti9rJYmqEZX2Dhl3n4n7riHYFHwtnI5UeQOzk5TqG)4NfnxPWf699EZciiUBdb8M1HkSxw6FVzfV0BM4lUzINXbHMoK((y2mQwCEDSvWGLtE7sD5p1cZNzb3OzbLiwQq9kWUejkfS3wf7ZuWTTKIowogJ6ZqXK7EX8ZWZ0tdp1cO6kVT1sMNbQ3zXlilhvyyrAMk)wRQ)2zZCAOda1k0mQ47AR)PQfbgJxmMlMTBrNP33BXfi6wGk3xtH4RPs81uk(AQf)zOZb136GVQiwR9bz8(hSW7AFJqXd0L2kCw7RqgGNCvBJqB4eeZFKS56ezDZSnyV)LOO3NuDITwolbbR)L72esC2pq8nVtVAkrRjOxfgKiCRTjXjRy1V5uFvJRPa61xr5glPCZKDFz0(sO5mQTKkBZg422rJtQLg)NYL0IgB8vZO7i0frtT9ge23F2BWl14dbuA7LhYV(Qcik96Y3524LRBQNi9TPiVCDf5C3webvRFLiBuTuFt0YsV9DmPvTmP99mPZnnPv14PGxA79JuARImZy5wdcHB7sqhTKMKe)EdcjPNwVSNP(oT8VBRwoAZfYsRGp6j)lzxNX2ViD9tf5Pbg9eLTflCSdonwgSA7DZP28gBDVrym6PHvDwALguJIS1wNU2xN(2yNM7SZ5Q1oc6XwovQ1SUr)R9E(uxtFeiq)7WLiOKq7KUvQBCRo)ZYSSvK7ovL7UvM7MQZDJzu0uHUf0TEUgL09XZfFJWpteEpAzuJ9ms4dTvxxTMizmB1xKMj9MJ)z70yICLYyrGX(gv6ZuQfFh69JAIySCncszRWeVz)mCnkgDy(G)xX)pued79pd]]
+    20261114016,
+    [[Hekili:T31wZnUTv4Fl(ffPPBLTSLD2SZkpt60KMKP5YeL28MOGeHKyffPgcs54oA0V9Ea4nqqaqakAh7P6LSA5LZ57Cb4Caa)2mB0SFB2uxumE2pD7n3(WOrJgFZOhMnn(594zt3JwUfTg(raAh8F)AcbriEbOyVWGtZ7)u4teVDKHld3nG(Wp7hICPcCrINF83hmBHuzt2JxoB6V(Z)J)138jeViNnDJNRlo99WKL614NonpEd(08SRD9QWi8bC0P5U4vOe)4tZ)6F5FEAoCz4xcYjX7AkkixhfUobFT7EY1O9(KRZE1HWFz4)Hegm4dGsIqbeFWmCHFhsvQh50CKRByWxa)yl(zYWtZ)7Oy0NKaM()43)BGq2ehVN8PRVETx8MKfu8FTWJoaKjGz89OVAP7TOBDxTee7Vh(7NM)T5cZh(dFVG1WJgaOjimic5b)4xo8nNMVpYlmYl2dtOgTVF4tNM)9lF(08)n2lGay4jq3uzGIcWU)vW(99Ze0ty0EQFzfY3FbeZPg0Vr9TKesmYlGA6PAYfTdsiku2Z5QIKfm27fWEAa3tbJ70CAQGliUFj0JqvreENxGloIKPAmAjaQnWVPoZ9r4v4iCWsm9AhWmP6bwE4tW7(R0GfakCCm4eOGCAmg5tTkAiHKSEnMWItSGEysSBi9h7t89j52p608ecAHpiOW94aC0qi1nkCLNpKHJwstqidbCaHOfO4jp5577eh6qsIo4Da)bVvty5mo7pGDwggeJ)J4ExrsXb2Di4b7L(aK4eMV4hQj0)YKRzInCLd8ooayjOT4alKD(RWEQOqF5kbgcH2JDqrXEKylK(UWd4D4G4CP3BrYQvdRiTHU0iIuTsIddWaa3zKg7ZKTRhlDKgwC2ZYugMS)yTBb)gJiy4EdsXuHU0HNnO4yCKZYKiIzXVA6L9QGwZukVa1O4i0EpxNi8AAwgBMNpKqWquFLZ6LUtg9bQk8rp7SadJGM8WnLGBjkWHkjyuFQoRllDkgJCD8Xp7aZvGf0YhzAjoC9AFa7WOTacKwt6PqVu1T27)cog1QdMDjgbzlPbobBeCGy)j)imjYP5FhmkNQ9SHw307QuTshhcdODa3km5tVY4tmkAnoU3o4TDOtrmKaq5XBsHwXvDG5lG)mnNm)TzyXH(mtgjh2UGxY)53SO(22I6FE1Q2dAQWQH58lQbYWJOcXgKE8Ab5(1W8OJ1nJEffykKs6TN8fOK4WVyGQ59yZHiyG8guM9KwwYjT6t(e6EyFxN0QRIthrF)qkecIHoFsIG6JXFECV(9trXWLBGY3oKnHXd3gugzy1FOtF1R)vkEYJUyM3I76u)0GY3yRNBamrs9xH)gzVdj0p8yAqzOhjl8qJC0PFGgCgCSaYODlsiBYKy21ynEeJwKE1bCJFCrqH9Cp1c8gObcqwzV2AuuuymUIP7MeXm80)w2t0ld55Vad1kILl8rUqqXhC2pxoRCr3q5jH(iAfEhA)f5zRSaPCHc)Eh21lwwPGZqhDylkVGnM8A2oYBJMqELB94vUHJxL2mmR6XFQLPhXd2Mlo)NkwV1oS(AvvUEfyltaETaAx3(WLMgEV30aeb36TCBza7XBQNHLEbCWAimLxwFh2hxi8Lic1KPZYleffEGd3o5MQ6UWF2DqqmrqSwP15fkc(85ll3MjJLHH(0BMEnOHjiEsECIakZU(X6UNrdKM5)y15u2WmiwDBTviV7g9U1QUgrnWYIdBSm84wRKYMCekSFVcjM30rwcpkGocrwhiQBPbFar00(ATCo5kHoQVm(VEtijgQfrIJ82MnOmTVlH7WYNAgnY8gwbVR6k8TcdzHTDOzkkK2s8gV1BGw0HoWIfhblgWkhow6geQjQOwXB0kc8gx20YFyv4YecFEOGf2xUjEu2LNmU3vXiF4xd9c8I9GMFpGHouP(a3b2wSGhTPfWEnaP2YG8qkV(PD5g3BUcWh8ilPRGaBLkECYyEPSlj2ZxNmYg3K9ykqD1jO3fgfTbg0zfUQkec47j01JLo()mKeTZWSNw5odaJeIZEMkHq)WqxNvjrpR6nR2Ny61IWeCemleToRSEhztwL9SEbWsTrlP7Cbmfv)kJaoYnJfmlgENhgQxF7XIMGZR74fKeMqCsL9GESv898q)qisN10DPHuBKZcmSE3OTGaFVBJfgs9kR(jbycSy61BIFNBL8MsD7mjcVf9o1c)QClKze1SnL1JATzvXa6jPPdNaOJUY(21ukQdlWiPQw3zY6msT1DEHmqcOVTDGDLnnovAGqGkhBWrv0JV3sSdD)cCHF0Ho0Uzuq6cdQGX8fI95jJmzzxrj7JHXnDOLvD0rwoFMAewKPaY5AIx4o091vActLc2lH1P6WQy15ZKjx5Lwszlvzwb38t1FKLW4Obn1rMTyv6aTj3NNAPRnSjJFrgCjUnE8d2Icd3zqpy1BY0w0yG5xvL1B)2wvQFcXRSgrkBP1wGzVQLu8u(e6337kHYB0XSzr8IZpldaBOduZ7hpdI8A9aIotC9bX9lx(p)MfEuMQv8O1hxMFF2GsvRTk2Bh(r6ozjyr8OEFeEpk7mEOGnhaPwtoul2nTSltpXMN1kxDlMOqj8NoAMQ6R8w592ZDDWL1EqOdff2BL7Lz1fVwXQmY2ZyTiP65a3VVcP0dcihgoI76doYHuHhU7nIbCjH2ktD2VM1D1UkRAuwrPG(97N1z2IWWyNTbERGwnGB(iuIr1DgR8o3P8o3k5of7HI0rNtURC1aFEYhVHgLFla2QGQ(KHILhnCYrKly10DYgMRpBRR6ZPQ7VPL9xv0kd)cfthBOAqthmJHG1io2q82zdpuoKx54B(HBf3jvALItIP3xTBPuKvUxHqBtuqRhvwKVRN87s8OA8G(IDKZ5nG1Ol7s)EDbtPQ1jO2o0Gt6bjFM(2w6aBP)R1dpLe7ZgGYFhUHOstwUecgKoI0mpXlS9AhSpNHETfVzNu)OrJ1REf7(BrYB6gRMMfwgstVkZR0RbmQnCLUAeXBboTgETgnCrOs3tkQ8AsWROXbN89rRj10qSLsnPyFSd0iNS(G4BDB09fB)PlgfVXzhkABr)KhLgo4E9BVhEMk)9YWcN8sJizRyM76PzPYxD)DYvo)2U3ysEdFQTQATxJelbVkbaD1329GqYgJwUeiwll0pOb6x(zEekFTaLhJP(fUalSOyttY3Fu6NBu)Q5FtEyqrAXkF0t(ycXb)h4LjPbKQhcU12P6D4UV2Dxw(EIct2iZa0MyOBBBvSPMN1gVQTI1v1pSSgBCQYM32xkKPl8uUTmoF)dY3vUI6uQsOTVaeFKqLCVRNKOMMPJAB(w1drs3gkwyNv3bpH96RaVJLSeBdXe)Um3iA4Nb0OPfL)qxjTqQIhUVCTlxeQG651gXNNOSCAAtzI(EH9A2Wqr1VbKlbJwfmk)KIR(r1kFOZJt(4GJ5J0f(65YhT36Hwso7IcBV6mEf7Yex9Z8g9UKeyFsqxgYSqsQIwkI5vNL40pmB6bCe97hv4FGc8biry)dJq6)Caa)8Ny)dLqwg6S)wotXNnvG8vZMUmYdShp0SPPQRr6nLrcRzXak0Pebsz1cnjsolQkVtHkRqVQwOltjTffdJvGHIVczR0VoYCznBUOW7EvWJNmwwbXAOyzdS8IcJheGrLVYz423uhcMYQRzt5AgMMRxyJ1Fbku(s9q5J3WjaEsIXJWwYnmQ6)OG6lfA6NdG5K)5mjuf4OymqA20sEDP2xwLjtud5RERyi3ALHuH6yu7y0nDMHybDSQygmQxvyffmcZgJqCk(xfJqgNYAdPYSX0RNiosSYJQxnBEmPoNmFZBiMQ1gIj0eZe0twnfSvRL0vRR4RgleRQsp9J3PE80oQQ0gISXaLQs)CE)UhBIjqgZWToHIBwYXnRi5gZNk2VIq157UXmpAvVI6Pe4itht9n0NY4xa17vW0ogcAO9KhUVHwmLaQwYCogCeBxrLLKrMn5DsAaR1mG0AQzTgdPI9JiXX1sSzcJ60aUg9z0fpj2es(ZWiHNzjDQNfP9KXJHnvlFSCMK6UwtirKnS071UAiZWfBSObJu1xWFl(e(TTmzzqj7QqMd9akO5Bulrv9Z0c9VQwM22gyGvvD18gqAeUk2zLM1SQvlxEYfTs3pozmt8IvxYfF(U60OWZguR)ZsMPkXYiLvCY3ZWgvMgPlwvOOIu1De7CuH405QMeLJ8H1vhHJ2HSnmsCAwvsT8BTQUqT9JjVygBty5LkcU0idxAMtImhG4C5kDafF8SVNDavjSiZby6If5pzZ3XUGASzK5eelhO0jW2U83HMVeQoYmCXslDMHvXeEHO6ylQ22qFb3jwWRZ8h68aTJhKNL1N3NtfJxv5y23YFh6lYQfvH7KmaiwKUZ0yxnIkDvH2sBsopzLxvW9RENWptRV6yr7jwPLmRS0CZ0HGDAANmLFEpDOVqoK18zbzW3fe1QgRAbR6Av2wRqftnnKQMmCQAXRD9GCXTnNFqVgoCYWOQJov96cSfMg4WYWIQvkQEXx2ILUG1NmOQ8OxBAvi2IylWK6cQVq0bTHk8JflYPA2NuwwwbWk(UYSHfPDnnszMKQ12YXR0k2ro0QWVutjyktJMUlOYx2ybaKqUXZN8PmaAAngfaulc5iGK5C6ugkVxvndEbxfxkeVmsBzeRT6m7RboRAfPvz(MZBH5TSHgzarvXOAfm1Y0vnShvd9r1WF0oGTR6P76RkI7qkVYcAk3F3QFrCvcF2Wf2xuYWYSaXI5TDgm5FIGntwjLZDOYmo(sWmZZImJgZMrMdx1EDRlLPZNp(s0QvmP1yh0BcdsA6NP9LQAFyBIAJAy5PEAp2iVhB253wpCBDWY9WQAt2Kb4Msd3ZIhU)FviYa24(Qz0wcDPzxMUKi1JFBTXOHTUmOz6IHQF6gDhrEBltEF5OY7lnxEPU(hm98v5i7RWskmNMVgXZxZj6R1m91ig0OWpz6Q9QWfyEpLQL8itzQwrxPL2KKTKEWmTkUKe(OSE6b)(HFWnS1)pO(4gFj5mSzN)YdIlaWUZLWEchBWjlOVUSHuoMzCQoBp5hpHAUiBlzKBlBKBMoY)zWhzMRuvFKvpD3gZnutu5UIPYm0Q6tts2zP0ioRWcrJMVxXtPIYKwXzs7inztSMSXoSSM2KcNsstrkX20YJuY)e1UeRoJyvl45CNs0zA8(lvT7)AoUUc3YlcdOVKK0EEqZIOkpB9MoawJuHQGPIuIQZ(a4lM1(C6b0p7clOTwxxyb9fwqZeWfwqN7kUWcAdmeXZUKzhHsjqCfZi8clOn20VWc6IxPB5917swqR67NrSzRSKsv)FLBMom9C4vUZK2RuwRAWyGnHrZM(D4TE(ENM3)BdJWhszIx8Sz)Vp]]
 )
 spec:RegisterPack(
     "Subtlety (wowsims.com)",
-    20261110000,
-    [[Hekili:TV1wVTTnu4Fl5fnBSa74K4U2GOaSHDRdBDdZDVkzAjkBollAqsLmdy4F7JI6Ijzi1n70fGf)qHIi558XVZHuNlOEt8(S3Sqad69PRV663nzYKR4)8MX2Tf6nBliynyj)HeWg()olDblgY2Dy(GNWprrBOJcWBgMnVDXyqyMSwKIIzFmXBHrXs3cd8M9N)(p9x)WD0cP5nBfkmeMVeinWQEU7WC2k4H5fVBCeMaFesompegbsJzhM)T)XVEyo)1hMljIu04m1shtWltHJd3shd2gthxSQr8)y0FtXjdVKlFciHgZXDi)zCM(q0dZbHH4KVI)WA4o6OdZ)EadCNbCm43(4N5czfJTLE34XlrSvPlYG(yTPoKltoCHtbFii8AW1HrbJ4SibhHI58miGHWj0rBjq(IxayUlIbHq)O4ucz3HF5zJ)1UJ5pVbgIyGSHUmLc9Xrr(ldcDNuTa3LacbZGxgHdsPUtUef5oitcy)TyucJtZCfaty3p15Iq4I0OOrflzu62HvYHRUhbji6kv9ie3GlYNu1cxNGFkzVbX5yzQWeiz5UrX4hC1gpatzdDSaygAd8b3jkOKtkBbKCkjdCLkmh9LqlaJJd5pv(AceeUtrolIX4q)OuYod74sHkBJke9aRd5iydL3ZPK2R060A1(rzS8DLt1YkfE(I008X1LRnlRYHtWpoAI07hUxczAt(8d6HsorDuMk7xiHcjRrjlRX8sJrbqFqsOFi)HcniSIAJODsHUcKSoNfhWaXCN1rlWyM)6eueCe)(M1p4oDVTrU16i3yDKRnmcmbSiggA50J7novN6U399xLzfFnawvqPqRGqoYbXOeOpjLFtugbln9Px50llNt5IGXPjqQFmA5kwH)Rnh7ECQvd96(R6dxCmW6XqRN5KpcunsU0okodB1b2PHJIuzSkH2hwVrl75(cO34Fv(pBHNjY5vWUr2BswSMUDFqTBA74UgCXDbpvUSNewp5RwF8ZGTT4aO8ishbn6m8gLpm)ex7yIx49B3GDxoA1x8TbGsO8q5NCRQ6sjW1adkQ0WjgVWl7Ojl)TIDTtdyQwZrEe76dXjLgwwJBuDOgMMNXstcokJ39lKY9nPgnBxwIT8eK9zqtm6a5qPMWtgSigTqiGTYFdGSUkgT9gPFPLF9u(Cu(7JMbj5LBbkYsu69cVohZzPEJzLlerXBEMtBn5jNT1TeESSeocoBlGhjS8ciPBzC0OK1Dv01IWcOBJbmgKuYQLXeVcUbtiRalBiaEEa2vjSxOn(o35IbQ(iUVByLPmkg8umKs9H)dminNeluHs2lk3bOSfmDhrLMUYcoNycukAmG7h7lOfdoMMeQRKdf8renaYp)yVycstjVEc1DZ)f5(sYd8SamQKxUH18(E6EZy)2YCB3WTbXv4EO5PZDS6Xf3YmTn5EJZZTk1DSxMbwUIZJX78PmcAnSUIkvHD1k(OvBOkmCRktxsrTsdY3i0QRjmpPlm(HeltEGzTBwe2G6P9zZ7DT(5eXpz(84TlVXO9MrDQcowXN2XSp9dUVF4(YJvQNBQoAPE)lkH)HAir(W1fgVYOQ8esF0OmcK3mSD3WYndEZEesO8xO1fJyUjHkACsEle4p(jrJukmHEFN3SacIB2qaVzDOc7LL(3BwXl9Mj(IBM4zCqOPdPVpMnJQfNxhBfmy5M3Uux(tTW8z7GB02bLiwQq9kWUejkfS3wf7ZuWTTKIowogJ6ZqXK7EX8ZWZ0tdp1cO6kVT1sMNbQ3zXkilhvyyrAMk)wRQ)2zB70qhaQvOzuX30w7tvlcm6VymwmBzrNP33BXei6wGk3xtH4RPs81uk(AQf)zOZb136GVOiwR9bz8(hSW7AFJqXc0L2kCw7RqgGNCvB9qB4geZFKS56ez9WSnyV)LOO3NuDITwolbbR)L724sC2Vq8nRtVAkrRjOxfBiH7wBdItwXQFZP(Qgxtb0RVIYnws5Mj7(YO9LqZzuBbv2MdWTTJgNuln(FLjPfn24l2MUJqx4n12miSF(S3GxQXhcO02KhYtFvbeLwD5CUnMCDt9ePVnf5LRRiN72IiOA9uISr1s9nrlk923XKw1YK23ZKo30KwvJNcEPT5hP0wfzMXswdcHBljOJ7KMKepVbHK0dRx2YuFNw(VTvlh3ZfYsRGp6b)lTVoJTFrk9tf5Pbg9aLT5lCSdonwgSA7DZP28gBDVrSz0ddR6U0knO6fzRToDTVo9TXon3zNZvRDe0JTyQuRzDJ2x798PUM(iqG(3HlrqjH2jDRu34wD)NLzzRi3DQk3DRm3nvN7gJOOPcDlOB9ynkP7J3l(gHFMi8E0YOg7zKWgARUUAnrYy0QVint6nd)ZoPXeXkLXIaJ9nQ0MPul(o07h1aXy5AeKYwHjEZ(z4Aum6W8b)yX)pued79V]]
+    20261114016,
+    [[Hekili:T3vxZTUTr7Fl(gfPPNkBzl7CYzoYZ0oVjnjtZhtu6BUtuqKqsSMIudbPDChn63Exacscccacsr7J9uDtJm)y3NDxGDxaWNtxmzXVVyUhkbV4NV(QRVBYKjtVAYDlMN88E8I57rUpG2a)ieTd(FNNUkjaN88XLdFk6jI)oYy3ODJOp3ZbripQSwL6hK8dHlwPuSK9y3fZ)TF5F8V(2pr4sBX8T(EE4SxbtC1QNpDCzYw8XL8RD56Oy8J44Jl9WRrPbjhx(3(1)5XLWLpUuqeP(xsvl5Y4OnP4l92tUeTpGCj)Tgd)X4)njkC0ha5hJcjbaU9GFhr1Np54sKNxu4xb)4b8ZKXhx()HsqFsbog(t)WVdczBsYEYNU8Yn(jBtxrH(Lsp6iqMaCX3I(gxVRrx7T2fe7Fe9hhx(D5cla(pb(HBGhneqtyuymYh(XV(43EC5(y)Oy)eFmHAVbbrpDC5p4cw7)p2pKay4jq3uzGIdXE)vW(dc4c6jmAFui8AOGGvq8LAq)o1Tssjji)qQPNPjp0oi4xOSNZvfHhh27hYEAa3ZbJ74sAS3de3Vg5tOQigVZp0dht4QgJCbqTf(n1zUpgVghJdDX0R9iMjvFWYJEcE3FJgSaqHtsaNafKZtWOaQvrdjK0nBWewCIfVJst8IO)yFAqaj3(rhxMsqRcabfThhIJhdJvJJw7haJMrUj(rHKXaoGq0kuYSN8dcCsICiPXp6)i(d(RNXgZ4S)rSJBuyc(ptgCbjdhyVXGhCq2dqssz(IFSMq)lZUKj2O1oW74aGLGEah2czN)kSNkokqTsGjoO9yhuCIpjPfsFx0J4D4WKCPpyv661JRiTXE0iIsTssIcXaa3zLghYKTNpB4inS4SNnszC6(d1Uf8BmIGH7nkdtf6YeE2IssWXoUPXe7IF10l7vbTYvQOanO4y0EFpNy8g6Ome9(FiLGHO(ANnUEZM8bQkcqp7ScdZGMD3vLGZff6qLemRptN1LLjfJrEob4NDGCfyjT8rMwsI2SjaWomBlKadRjd0OxQ624)FahJE1bzxsqWOLSaNKncoqCWSFcsICC53dZYPANp16QbxKPv68qycTd4wHKpdkJpjO4n4Kb7G32HMIymbGY9xLbTIR6a5lG)B2yY83MHfh6ZmBIAy7bEPGNFZI6R7kQ)L1R7oOPcRgMZVObidpIoeBXWJxlipSgMNCOUzmOOatHuYU9SVcLMe9vJ0L3JLdrYafniU9KvwYjR6tEcDFCGNtw1v50r03pIcHWeOPN0yO(yYNNoy4Wmum2Dlu(2HSnkz8dHLrgw9hA6RbdVqZtEWdZ8wcxN6Ngv(gp47fcjsQ)kI3i7DirbrJouGk0UvPKT8xIFnwVfjOvzxDKWuepeu7o3zScVf6raKf)12GIJJsWvSoV0yMTL9x8NyahC5VadyAcxRcqEGFpa8NpxM4TOHN8XzbiArChAle5dizXk1cf(9oSNFIQS9NGo6XUqEb7941SJJ3g9z8k3DXRCpfVkDsyxbIVOvINic2MR)(ffRx3oS(Av4TEr2woa41cO9DhcN7l4DqFbqq6bF3hkJj3Fv9brzxahUbIe5vU3HdWfc3frOJjOjYLcuspWJxp7QQ6UWL1FqqowlxoS1HEnXxXHeUpWLHBuua9Mzxd6jcINK7NjHs(1pu39mzKYb33xnTXwMbXknBSi4nxz2Tw11iRbAIL9rnwPDANvszFms1UVvJeZ7RGpGhfsNHOQjd9DTGFerm0HATXCQvcDMDz8FZ2iscuUHKe7)aFszwRvs3HnEQz0OYB0k4DrFHV1yyuyxNAMHcLD9U1FZwOlCOjRe5zWYbmRwyHuDqL1hQofklz8hwh5MsmiPHQl1Cq1LNnDWfjOa4xJ9d9t8be)ig6(JMfYRHu7IqRmbu7mWPFblZjIFETMxtFBlRakI28kWTZxFR9Ht8J(ex6YmWTsf3pBQOu2LM4hysg8zE8htdQRMIFxuC8wyABRWvvHqGObHUOTSmiNGKOTpYFATBFaKYjH)mvcHbrrEoRtJFw3BwTzYSRfJj4yipgTsTQgmzP74pRFiSECKlnleKKByLHBheY5b5bX78Xqf)Rpu0PCELl)W0OuItMShnGTSWNhhebrAEN5Lgs9HPyyrXXpac89Unwyi1RnhKgIjWkU3Sn5DUvkAk1TZ0y8dO3Pw43KBHmJOMTPn5FNnRQ52v02Iti0tyzN)gY73JLCSPxIoBYMmsJ1DEHmqcOVh6b7INgNknqiqLJT44kB6w6(eyyvp6jRo4H3BtzLp(cO5dv4QpBOIsp2TsBYuYwNDO4(Z1KduoGk1GTyIe47IDOBlJh8JE0r2h5roCHMaq(Enxb85Rs(ZZMyZAIDHfE7WkG27jwv72l7vUSdpERYcPlR)iUW06rn1GyxWAdJm6P5WYBPO4C64OODw0Qx1mB9aMuRs9PrRU9n8fHlUU48lvBbXQAAUlWUJDv3wvPBcNfyqrHC1fxUDWfsLAPhEeFyrXb(Xb7w6S081gWXQOwFerRkuFg8WYnZqCRppOs1AE06tkZVpBgPUbrj(7W3t3xojlsApk2J4hkffS5aiZAYHAXEdYVm9iME2OCnTWMcLiECUCvnu7TYxNHW1bxw3bHjuuyVvUh3QlETIv8WReyejvp46Hd1iLbqa5XXteU(Odciv6H7FJyKWGW2ktt2VH1awOpPIOcj1KUJIzPkRxmC4qExIRIIsCEi0FnuBgU59ZU9GU7mv7DUr7DUwXDk2HhLZoNDt5kt(8SpEfnk)waSvbv9KHY1qTm5iYdSA6(Ydj9Pl4GgCeu1TxnOBJckkekUO1S5g6M00dzmKSg55gY3Mp9q7uETZVfNUvCNmPvkofM(q9ULsrw5EfcTlrbJEuvr((o5354r14b9f7jNZBaRX0OlZ77gKs1OtqVDyaN0Jf)e9TD0b2r)xNNEQi2ZNGkEhHPOkhSCoemkBgPDEIxy7TDW(uM61v8Y)UdMmzQz1RzNOlg8MTjVzJcldPzxL5vg0agngUYwnI8TaNwdVwJgUmuPBBfvEnj4104Gt(gp1KAAi2sPlvsa2bAKtvFqITUn52ITIvyp)Y7N8GYWHWRF9TWZu5VldlcYllIuFVfZgLQE193Ow5IhbqJdYB4i811AVbjwDRxvV7Gt76EqOyxOlxceRLf6NNb9tvnpcLVwaHTzX4cxGfwuSPj5B6m9JNAy1XFZUBuXWI1bONcWeId(pXUPzbKQN(DRTt97v8qJBhR69Bds2OYamoWW0E2QC44jURRgRyDr9dURXgNQSZTdvcz6cpvBltZ3)G8dTVOoLUb0TVaKyKqNCVzGIOMH0rDD8w9T9v3gkwyNv3bpP96RaVtvSeBlXK4NvrJOrmdOvPfv)qxOSqQMhEOATRwe6G6P1gXNNPTCAwtzY((S)U4trXYqr1Tw)CWOtbJYVb6QFIWQN6C)Spo6q(mDPVfW8z7DEQLIdXOW2RMXRThtX5bbTDgz3dzTqs6IwAI5vZsC8hxm)rCm9u3K(xjHaase2)WmK9prbWp)z2)qnWhHU4VNZE9fZLyl2I5UX(G94JwmptDnYhloRXwKaOWKsKyrwh0KmBYOQ8gnQScFW6GUSLLzummvdgk(MQBL(nX(Swt)mk8Uvh8ezpwRGynu42aT0OW4ojyu5B2gU9v1HGT0qBXCHMHPJ1lSX6VafkFTzO8XReeGiR2eryhjZgv9Fus9Lcn785TNTsNidWahfJYulMxsen9(YQuVIAiFZBfd56wziv46g1oMCvVziYhufZoIuYFSkMbJRyfwrbf2AJriNI)vXiurcUUWcU2y61hiorUYJUxLNhtPZH7BEdrTUUq6GMixNg211r611x8RJfe1vlN(D6upI1oQ10fI3XaLUI7c(3(hBYdrSMrE9cL8AjN8AfP8y(u5osKQ)EZv25rR6v0pPxG8Fm13qNitFbuVFbZaziOHgqU72gAIubO6it)yWrUHeDwc)J8tDVIwWYolizNEw2XqQChhkCCDeB2WaqdGRrFgD5rYTzK)mmsdA3Go9zr6o5bzytU7bD2tLJMOU32gwmLLf4A5A2nikDFO(D4l13CvTsBnRcjeFOB0p1lqHTUQuLPCB0u00YWxYgdyMMCTUxXisl7yO0TZVQuqs3AEZBVPrBtZoZyEGdvZYfxkZdKFYhDs33pBkt8YvoYfF(Uc1OW5PmmZ6rMQKRkuwplFphBuzgKUCM8I6Dv3rTtqf3iNUvxknbIuwxDIuOKjvBtuw(TAvxOT9RsVOEGnmwthvtAdN10WVsMdW21Av(X3(E2buL8LmhGCfaTL(foz03XUGAmZK5eKRvO1jW2U93HMVcABYmC5sl9MHvTeOIwn7bAB2HsZnuQ9g5cE9M)WKhOBC68KSEvndEJUYXmUa0J(cETOk8aLba97LCVOX(JhOL(g(dl5j11pq5NtXlMX1kUJsb7u97x8jcS(jp2HEN3OcJSR8QvdItTT3OYpJPE03PoEz4ZFYIV)jMvP7ynn1sFxScnd20TGZ(ohJ8U(lMZXapvzyu3UKwn9Dpcw1yPBeyvbdwzgLUfrAAbqDXG04t1TsYgxHuBXql)ysyGtUWxjgEH48AdTHm129WmJkPvaSMpEU2qv2(MRSmtsxjrbYZwXoYHwfs0AllAPA8wBxXS612waafm480zyldG2wGrdanIqbwwzpXvvIsDfmefCvCPr8QyMMvutR3SVgiMBRyMlZ3y7INvV7bfyr53ZRTS2LbeTF1oYLvnsNxduK1ahznqs2EGsVM507RkI7rE9YcA6kjl9z)vj81gc)(IY4xMfixvVRzWu)Dq2mJS0M7qNzC4LG(PNeJnTMYMmhUULOBAitVNp(C0Qt0f2Ah0Bcds5WpB7lv3Mf3e)nnqLvZC7SrYD2SZVRE4U6Gv7H11MSntWTLRXNezJ)FQqKfuo(vZOBj0vn66oBxsK(5VD2ymqjzg0SDXq1pcM(JTYDLUYVC8v(LMWYmxVTNbQaJMLwsH9Cz2kYmBpBMBnDMTIMqA8t2UApTFvr6wYJkLPBfDQpcb170DR4antR6ppWM4a97hsq3WH3CN(Za8LKy02DOe3jVaG2DOeTNv1wCScMRlBjVQzgNUpsh1NnHEcx3wgx3vkx3mNR)sq6AMRuxFK6pdJgPCR0Me3t0XMI2Vw33sQQpeSgXzfQwAv(EnpLoEH2kIH2oMH2e1qBSdRwZn0S)2g2AZIu6OEP6Jr6CS6eIvDGm39kBUzXBD7(VHZTRWT8IqZ7Zds6ozVzruTNaFtNeRvQqxWuZqIQzFa8LWAFo7KXxCMQ3TwxNP69zQEZeWzQEN7kot1Blme5ZUKzhrkzjDfZi6mvVT20pt17IxPTm66DjvV19fYi3ofFyNU)FdDMoSLHcnWOX2OuwZyWO8TrXlM)94h8d8pUC43ffJHAeJy3EX)n]]
 )

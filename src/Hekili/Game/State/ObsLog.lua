@@ -1,5 +1,5 @@
 -- Game/State/ObsLog.lua
--- The observation log (spec §4.1): a preallocated ring of { kind, t, a, b, c } that sources write and only Drain
+-- The observation log (spec §4.1): a preallocated ring of observations that sources write and only Drain
 -- reads, oldest first. A full ring drops its oldest observation and counts it. Adding allocates nothing.
 -- Ported from Taco Dog Forever, src/TacoDogForever/Model/ObsLog.lua (New :26, Add :44, At :63, Shift :70, Clear :79).
 
@@ -18,13 +18,13 @@ function ObsLog.New(cap)
     end
     local log = { cap = cap, head = 1, n = 0, dropped = 0, obs = {} }
     for i = 1, cap do
-        log.obs[i] = { kind = 0, t = 0, a = 0, b = 0, c = 0 }
+        log.obs[i] = { kind = 0, t = 0, a = 0, b = 0, c = 0, guid = false }
     end
     return log
 end
 
 --- Records an observation (`a`, `b`, `c` default to 0).
-function ObsLog.Add(log, kind, t, a, b, c)
+function ObsLog.Add(log, kind, t, a, b, c, guid)
     local cap = log.cap
     local i
     if log.n == cap then
@@ -37,6 +37,7 @@ function ObsLog.Add(log, kind, t, a, b, c)
     end
     local o = log.obs[i]
     o.kind, o.t, o.a, o.b, o.c = kind, t, a or 0, b or 0, c or 0
+    o.guid = guid or false
 end
 
 --- The i-th oldest observation held (1..log.n). The record is reused: read it, don't keep it.

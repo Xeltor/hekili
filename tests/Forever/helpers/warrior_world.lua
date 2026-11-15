@@ -223,8 +223,9 @@ M.MAP = {
             end
         end,
     },
-    -- shortcut: the class file's own model restated (its `now`): four charges and their 20 rage at the cast; our swings do not
-    -- spend the charges (warrior-1). Upgrade with the belief's own-swing consumption.
+    -- Harness shortcut (CN15): four charges and their 20 rage at the cast; swings do not spend the charges.
+    -- The live kit no longer credits that unearned upfront gain. This world cannot validate proper Reckless
+    -- accounting until its gains move to landed white swings and the belief gains a matching bounded charge model.
     reckless_swings = {
         effect = function(W, e, _, X)
             aura(W, X, e, "reckless_swings", 4)
@@ -347,7 +348,7 @@ local function classData(H)
     local env = loadWarrior.env(w)
     env.talent, env.rage.current = H.Hekili.State.talent, 100
     env.swap_stance("battle_stance")
-    X.keep = 100 - (env.spent[1] or 0)
+    X.keep = env.rage.current - (env.spent[1] or 0)
     return X
 end
 

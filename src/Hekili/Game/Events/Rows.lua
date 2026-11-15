@@ -132,8 +132,8 @@ end
 -- ticket's anchor (the refund belongs there).
 local function avoided(i, t, act)
     local a = T.ab[i]
-    if (REFUSED[act] or REACTED[act]) and a > 0 then
-        S.Stage(Obs.Avoided, t, a, T.at[i], I.HitKind[act])
+    if (REFUSED[act] or REACTED[act] or I.IsDebuffRefusal(a, act)) and a > 0 then
+        S.Stage(Obs.Avoided, t, a, T.at[i], I.HitKind[act], T.guid[i])
     end
 end
 
@@ -550,6 +550,9 @@ end
 -- swing an on-next-swing strike replaced and pays nothing; a wound right after one that no ticket took is another
 -- player's strike frame.
 local function route(t, g, uid, act, flag, amount, school)
+    if act == "WOUND" and amount == 0 and flag == "RESIST" then
+        act = "RESIST"
+    end
     if act ~= "WOUND" and not MISSES[act] then
         return
     end
@@ -711,6 +714,12 @@ local function route(t, g, uid, act, flag, amount, school)
             if white and AVOIDS[act] then
                 avoidSeen(g, t)
             end
+            return
+        end
+        if
+            I.IsDebuffRefusal(T.ab[p], act)
+            and (n ~= 1 or T.Crowded(uid, X.ANY, t) or (T.school[p] > 0 and T.school[p] ~= school))
+        then
             return
         end
         if replacing > 0 and p == replacing then

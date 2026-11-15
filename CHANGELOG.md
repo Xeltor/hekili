@@ -4,12 +4,37 @@
 
 ### New
 
+- Protection shows Attack when autoattack is off on an eligible melee target, before spending opening Rage on routine buffs. It can start an outdoor pull or join an already engaged dungeon enemy.
+- Assassination, Combat, and Subtlety Rogues gain Icy Veins–based leveling priorities, short-pull finishers, weapon-aware builders, and cues for stealth openers, poisons, interrupts, and defensives.
+- Rogues can enable Continuous Combat for Slice and Dice between ordinary pulls and choose poison reminders independently for each hand.
+- Rogue racial cues cover learned damage boosts, observed control breaks and cleanses, Stoneform against physical pressure, and safe out-of-combat recovery. Tactical detection, movement and corpse-dependent abilities remain manual when their use cannot be established from the API.
+
 ### Changed
 
+- Hekili waits for tracked debuff attempts to resolve before recommending the same effect on that enemy again. Attributed misses preserve earlier applications, and verified NPC immunities apply to later spawns.
 - Arms Warrior prioritizes Hamstring when a non-boss PvE humanoid enters Execute range and is close enough to slow.
-- Protection Warrior waits a quarter second after an eligible enemy starts casting or channeling before suggesting Shield Bash, Pummel, or Concussion Blow.
+- Protection Warrior interrupts channels promptly; an active Shield Block gets a brief quarter-second window against a hard cast before Shield Bash, Pummel, or Concussion Blow.
+- Outside raids, Protection repeats Thunder Clap on nearby packs and limits routine Sunder Armor on normal and rare enemies to one stack. Immediate threat recovery can still use additional Sunders.
+- Protection can suggest spreading Rend to durable melee enemies and Sunder Armor in groups when Recommend Target Swaps is enabled.
+- Protection suggests a learned Reckless Swings only at low Rage, with readable health of at least 75%, an active autoattack and an elite or boss in melee range.
+- Rogue cleave cues require confirmed engaged enemies in melee range, and Evasion can recognize another enemy attacking while the selected target casts. Group Feint also covers taking full aggro.
+- Rogue stun suggestions use configurable spacing between your own attempts (30 seconds by default). Temporary stun immunity is retried after a bounded delay; this does not track other players' diminishing returns.
 
 ### Fixed
+
+- Protection uses the same target and engagement rules for Charge, Attack and damaging abilities. Dead, friendly or unreadable targets cannot fall through into its raid priorities.
+- Protection reserves Rage between casts only for enemies positively observed casting an interruptible spell, and Shield Block considers another confirmed nearby attacker while the selected target casts.
+- A temporary Concussion Blow immunity expires instead of suppressing the stun for the enemy's entire life.
+- Warrior stance changes cap each bound of uncertain Rage independently, preserving Rage already below the retention limit.
+- Rogues in Stealth with a melee target now receive an opener without requiring proof of their position, with a legal strike or finisher as fallback. Empty queues no longer add on-screen status text.
+- Protection Warrior keeps recommending attacks when Shield Bash's cooldown or the global cooldown runs past the expected end of the current cast.
+- Protection Warrior spends excess Rage before filler Rend and Sunder Armor recommendations, while keeping Rage for its main abilities and interrupts.
+- Warrior now counts Shield Specialization's Rage from partial blocks even when the game hides the damage amount.
+- Abilities such as Bloodrage no longer appear ready after a reload when the game still reports them on cooldown.
+- Hidden incoming damage no longer trains the estimate of Rage gained from outgoing swings.
+- Reckless Swings no longer assumes all 20 bonus Rage arrives immediately when cast. Its per-swing bonus remains unmodelled until the client reconciles the resource estimate.
+- Rogue forecasts include Initiative's guaranteed opener points. Ghostly Strike can lead into an eligible Ambush, and Shank can restore Energy at five combo points when it advances a finisher without wasting points.
+- Eureka now uses the learned spell ID for the player's class instead of the Warrior variant for every Gnome.
 
 ### Known issues
 

@@ -306,7 +306,14 @@ spec:RegisterAuras({
         tick_time = 3,
         max_stack = 1,
     },
-    devouring_plague = { id = 2944, copy = rest(DEVOURING_PLAGUE), duration = 24, tick_time = 3, max_stack = 1 },
+    devouring_plague = {
+        id = 2944,
+        copy = rest(DEVOURING_PLAGUE),
+        debuffMechanic = "disease",
+        duration = 24,
+        tick_time = 3,
+        max_stack = 1,
+    },
     holy_fire = { id = 14914, copy = rest(HOLY_FIRE), duration = 10, tick_time = 2, max_stack = 1 },
     vampiric_embrace = { id = 15286, duration = 30, max_stack = 1 },
     shadow_weaving = { id = 15258, duration = 15, max_stack = 5 },
@@ -321,6 +328,7 @@ spec:RegisterAuras({
 spec:RegisterAbilities({
     shadow_word_pain = {
         id = 589,
+        debuffApplication = "shadow_word_pain",
         copy = rest(SHADOW_WORD_PAIN),
         cast = 0,
         cooldown = 0,
@@ -402,6 +410,7 @@ spec:RegisterAbilities({
     -- Mental Agility.
     devouring_plague = {
         id = 2944,
+        debuffApplication = "devouring_plague",
         copy = rest(DEVOURING_PLAGUE),
         cast = 0,
         cooldown = 24,
@@ -441,6 +450,7 @@ spec:RegisterAbilities({
 
     vampiric_embrace = {
         id = 15286,
+        debuffApplication = "vampiric_embrace",
         cast = 0,
         cooldown = 30, -- DB2 70707 and wowsims (spells_auto_gen.go 15286)
         gcd = "spell",

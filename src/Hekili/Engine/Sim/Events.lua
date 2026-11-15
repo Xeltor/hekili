@@ -138,6 +138,33 @@ local function UnitSpecificOnEvent( self, event, unit, ... )
     end
 end
 
+local worldEntryPending = false
+
+local function updateSpecialization()
+    -- A pass may ask for another (SettleSpecChoice) or retry next frame while the client spec is unavailable.
+    Hekili.PendingSpecializationChange = false
+    if Hekili:SpecializationChanged() and worldEntryPending then
+        worldEntryPending = false
+        Hekili.PLAYER_ENTERING_WORLD = true
+        Hekili:RestoreDefaults()
+
+        ns.updateGear()
+
+        if state.combat == 0 and InCombatLockdown() then
+            state.combat = GetTime() - 0.01
+        end
+
+        local _, zone, _, _, _, _, _, instanceID = GetInstanceInfo()
+        state.bg = zone == "pvp"
+        state.arena = zone == "arena"
+        state.instance_id = instanceID or -1
+
+        Hekili:BuildUI()
+        Hekili:UpdateDisplayVisibility() -- Include the priorities RestoreDefaults just loaded.
+    end
+end
+
+
 function ns.StartEventHandler()
     events:SetScript( "OnEvent", GenericOnEvent )
 
@@ -147,9 +174,7 @@ function ns.StartEventHandler()
 
     events:SetScript( "OnUpdate", function( self, elapsed )
         if Hekili.PendingSpecializationChange then
-            -- Cleared first: a pass may ask for another (SettleSpecChoice) or retry next frame (no client spec yet).
-            Hekili.PendingSpecializationChange = false
-            Hekili:SpecializationChanged()
+            updateSpecialization()
             -- Spec updates are expensive; exit and do other work in the next frame.
             return
         end
@@ -360,24 +385,10 @@ end )
 
 
 
-RegisterEvent( "PLAYER_ENTERING_WORLD", function( event, login, reload )
-    if not Hekili.PLAYER_ENTERING_WORLD and ( login or reload ) then
-        Hekili.PLAYER_ENTERING_WORLD = true
-        Hekili:SpecializationChanged()
-        Hekili:RestoreDefaults()
-
-        ns.updateGear()
-
-        if state.combat == 0 and InCombatLockdown() then
-            state.combat = GetTime() - 0.01
-        end
-
-        local _, zone, _, _, _, _, _, instanceID = GetInstanceInfo()
-        state.bg = zone == "pvp"
-        state.arena = zone == "arena"
-        state.instance_id = instanceID or -1
-
-        Hekili:BuildUI()
+RegisterEvent( "PLAYER_ENTERING_WORLD", function()
+    if not Hekili.PLAYER_ENTERING_WORLD then
+        worldEntryPending = true
+        updateSpecialization()
     end
 end )
 

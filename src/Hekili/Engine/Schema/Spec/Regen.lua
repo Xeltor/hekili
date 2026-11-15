@@ -46,6 +46,9 @@ local mt_resource = ns.metatables.mt_resource
 --                                    both layers (ns.SpendPoints, Families/Casts.lua). The
 --                                    belief learns the player's own from a plain out-of-combat cost read (login,
 --                                    level-up, spell changes); without `base` a fraction is of the maximum (Hekili's).
+-- A main-hand swing entry's `taken(kind, amount, attackerLevel)` returns a gain and its uncertainty half-width.
+-- `amount` is -1 when a WOUND or BLOCKED hit's damage is hidden; the observed kind remains available. Content must
+-- exclude that sentinel from damage calculations, but may return gains that depend only on the hit's kind.
 
 -- The sim's two generated regen entries (border batch 2 Part C, E3; until it Game/State/Adapter.lua wrote them into
 -- the model): `__decay`, the stepped out-of-combat decay from the meta's `decay` and `decayInterval` (stepped-decay

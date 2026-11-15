@@ -41,13 +41,13 @@
 -- CK; L60 at its limit; the seeds 1-20 sweep behind the limits predates this export).
 local melee = "&target.within5&!target.outside5"
 local clapRange = "&target.within8&!target.outside8"
-local contextual = "prot_contextual&combat>0"
+local contextual = "prot_contextual&prot_attack_target&combat>0"
 local targetThreat = "prot_threat_spend"
 local packThreat = "(prot_threat_spend|prot_pack_threat_spend)"
 local groupedThreat = contextual .. "&" .. targetThreat
-local interruptWindow = "prot_pve_target&combat>0" .. melee .. "&debuff.casting.up"
+local interruptWindow = "prot_attack_target&combat>0" .. melee .. "&debuff.casting.up"
 local noMajorDefense = "(!action.last_stand.known|!buff.last_stand.up)&(!action.shield_wall.known|!buff.shield_wall.up)"
-local charge = "prot_contextual&combat=0&prot_charge_range"
+local charge = "prot_contextual&prot_attack_target&combat=0&prot_charge_range"
 
 local function rageBudget(spell, threat, followup)
     local cost = "action." .. spell .. ".cost"
@@ -108,11 +108,15 @@ return {
     notes = {
         "Cooldowns toggle hides: Retaliation, Death Wish, Sweeping Strikes and the racials (Blood Fury, Berserking, Eureka, Elune's Light).",
         "Classic Primary can show low-health defensives even when the client hides your health. Healing potions use the Defensives toggle.",
-        "Outdoor and dungeon pulls use Charge and Defensive Stance with a shield. Vanguard lets you Charge without swapping stances.",
+        "Outdoor pulls can use Charge or Attack. Dungeon attacks and Charge preparation require an enemy already fighting you or your party.",
+        "Attack starts or resumes melee swings before routine buffs when autoattack is off. Vanguard lets you Charge without swapping stances.",
         "Grouped pulls favor Thunder Clap on nearby packs and Shield Slam, Revenge or Sunder Armor for immediate threat.",
+        "Outside raids, Thunder Clap repeats on nearby packs. Normal and rare enemies need only one routine Sunder; bosses and elites build five.",
+        "Recommend Target Swaps can suggest spreading Sunder in groups and Rend across durable melee enemies already fighting you or your party.",
+        "Reckless Swings needs low Rage, readable health of at least 75%, an active autoattack and an elite or boss in melee range.",
         "Shield Block is reserved for incoming melee. Heroic Strike and Cleave spend Rage left over after upcoming threat, mitigation and interrupts.",
         "Shield Bash and Pummel cover your current target in PvE. Concussion Blow can stop a cast on a non-boss when you lack a ready interrupt.",
-        "Protection remembers NPC types that cast this session and saves Rage for Shield Bash. Grouped threat recovery can spend that reserve between casts.",
+        "Protection saves Rage between casts only for NPC types observed casting interruptible spells. Grouped threat recovery can spend that reserve between casts.",
         "Use Taunt for loose targets and tank swaps. Use Disarm against enemies with a disarmable weapon.",
         "Raids use the simulator's sustained priority. Enable Maintain Demoralizing Shout if you are assigned to keep it up.",
     },
@@ -146,25 +150,29 @@ return {
     },
     guard = {
         -- The simulator opens with a stance swap for Retaliation. Outdoor and dungeon pulls use the lines below.
-        battle_stance = "!prot_contextual",
-        defensive_stance = "!prot_contextual|equipped.shield",
-        retaliation = "!prot_contextual",
-        bloodrage = "(!prot_contextual|combat=0&prot_bloodrage_safe)",
-        reckless_swings = "!prot_contextual",
-        shield_block = "!prot_contextual&!prot_offtanking&" .. rageBudget("shield_block"),
-        shield_slam = "!prot_contextual&" .. rageBudget("shield_slam"),
-        revenge = "!prot_contextual&" .. rageBudget("revenge"),
-        thunder_clap = "!prot_contextual&" .. rageBudget("thunder_clap"),
-        demoralizing_shout = "!prot_contextual&" .. rageBudget("demoralizing_shout"),
-        rend = "!prot_contextual&" .. rageBudget("rend"),
-        sunder_armor = "!prot_contextual&" .. rageBudget("sunder_armor"),
-        heroic_strike = "!prot_contextual&(prot_dump_reserve=0|" .. dumpBudget("heroic_strike") .. ")",
-        cleave = "!prot_contextual&(prot_dump_reserve=0|" .. dumpBudget("cleave") .. ")",
-        battle_shout = "(!prot_contextual|combat=0)&" .. rageBudget("battle_shout"),
-        death_wish = "(!prot_contextual|!prot_threat_spend)&" .. rageBudget("death_wish"),
-        sweeping_strikes = rageBudget("sweeping_strikes"),
-        bloodthirst = rageBudget("bloodthirst", targetThreat),
-        mortal_strike = rageBudget("mortal_strike", targetThreat),
+        battle_stance = "prot_sustained",
+        defensive_stance = "prot_sustained|prot_contextual&equipped.shield",
+        retaliation = "prot_sustained",
+        bloodrage = "prot_attack_target&(prot_sustained|combat=0&prot_bloodrage_safe)",
+        reckless_swings = "prot_sustained",
+        shield_block = "prot_sustained&!prot_offtanking&" .. rageBudget("shield_block"),
+        shield_slam = "prot_sustained&" .. rageBudget("shield_slam"),
+        revenge = "prot_sustained&" .. rageBudget("revenge"),
+        thunder_clap = "prot_sustained&" .. rageBudget("thunder_clap"),
+        demoralizing_shout = "prot_sustained&" .. rageBudget("demoralizing_shout"),
+        rend = "prot_sustained&" .. rageBudget("rend"),
+        sunder_armor = "prot_sustained&" .. rageBudget("sunder_armor"),
+        heroic_strike = "prot_sustained&(prot_dump_reserve=0|" .. dumpBudget("heroic_strike") .. ")",
+        cleave = "prot_sustained&(prot_dump_reserve=0|" .. dumpBudget("cleave") .. ")",
+        battle_shout = "prot_attack_target&(prot_sustained|combat=0)&" .. rageBudget("battle_shout"),
+        death_wish = "prot_attack_target&(prot_sustained|!prot_threat_spend)&" .. rageBudget("death_wish"),
+        sweeping_strikes = "prot_attack_target&" .. rageBudget("sweeping_strikes"),
+        bloodthirst = "prot_attack_target&" .. rageBudget("bloodthirst", targetThreat),
+        mortal_strike = "prot_attack_target&" .. rageBudget("mortal_strike", targetThreat),
+        blood_fury = "prot_attack_target",
+        berserking = "prot_attack_target",
+        eureka = "prot_attack_target",
+        elunes_light = "prot_attack_target",
     },
     levelingFirst = {
         "defensive_stance,use_off_gcd=1,if="
@@ -175,6 +183,7 @@ return {
             .. charge
             .. "&prot_charge_ready&!buff.battle_stance.up&!talent.vanguard.enabled&rage.lo<=stance_rage_kept",
         "charge,use_off_gcd=1,if=" .. charge,
+        "auto_attack,use_off_gcd=1,if=combat=0&prot_start_attack",
     },
     extra = {
         {
@@ -199,21 +208,29 @@ return {
             before = "death_wish",
             line = "shield_wall,display_below=35,if=!buff.shield_wall.up&(!action.last_stand.known|!buff.last_stand.up)",
         },
-        { before = "death_wish", line = "stoneform,display_below=50,if=" .. noMajorDefense },
-        { before = "death_wish", line = "shatter_curse,display_below=50,if=" .. noMajorDefense },
-        { before = "death_wish", line = "healthstone,use_off_gcd=1,display_below=30" },
-        { before = "death_wish", line = "healing_potion,use_off_gcd=1,display_below=40,if=" .. contextual },
+        -- Preserve this pack's existing cleanse-only policy now that the shared racial also permits mitigation.
         {
             before = "death_wish",
-            line = "defensive_stance,use_off_gcd=1,if=" .. contextual .. "&equipped.shield&!buff.defensive_stance.up",
+            line = "stoneform,display_below=50,if="
+                .. noMajorDefense
+                .. "&(buff.dispellable_poison.up|buff.dispellable_disease.up)",
         },
+        { before = "death_wish", line = "shatter_curse,display_below=50,if=" .. noMajorDefense },
+        { before = "death_wish", line = "healthstone,use_off_gcd=1,display_below=30" },
+        { before = "death_wish", line = "healing_potion,use_off_gcd=1,display_below=40,if=prot_contextual&combat>0" },
+        {
+            before = "death_wish",
+            line = "defensive_stance,use_off_gcd=1,if=prot_contextual&combat>0&equipped.shield&!buff.defensive_stance.up",
+        },
+        { before = "death_wish", line = "auto_attack,use_off_gcd=1,if=combat>0&prot_start_attack" },
         {
             before = "death_wish",
             line = "bloodrage,use_off_gcd=1,if=" .. contextual .. "&prot_current_rage<=25&prot_bloodrage_safe",
         },
+        { before = "sweeping_strikes", line = "reckless_swings,if=prot_reckless_safe" },
         {
             before = "sweeping_strikes",
-            line = "thunder_clap,if=" .. contextual .. "&" .. packThreat .. "&prot_nearby_enemies>1&" .. rageBudget(
+            line = "thunder_clap,if=" .. contextual .. clapRange .. "&prot_nearby_enemies>1&" .. rageBudget(
                 "thunder_clap",
                 packThreat
             ),
@@ -258,9 +275,27 @@ return {
         {
             before = "sweeping_strikes",
             line = "shield_block,use_off_gcd=1,if="
-                .. contextual
+                .. "prot_contextual&combat>0"
                 .. "&toggle.defensives&prot_melee_target&buff.shield_block.down&"
                 .. rageBudget("shield_block"),
+        },
+        -- Leave room for incoming Rage before spending more GCDs on Rend/Sunder. The guide's main
+        -- abilities still lead, and the usual reserve and end-of-pull pooling rules still apply.
+        {
+            before = "sweeping_strikes",
+            line = "cleave,use_off_gcd=1,focus=2,if="
+                .. contextual
+                .. melee
+                .. "&prot_nearby_enemies>1&prot_current_rage>=80&"
+                .. dumpBudget("cleave"),
+        },
+        {
+            before = "sweeping_strikes",
+            line = "heroic_strike,use_off_gcd=1,focus=2,if="
+                .. contextual
+                .. melee
+                .. "&prot_nearby_enemies<=1&!(arms_open_world&arms_short_pull&execute_phase)&prot_current_rage>=80&"
+                .. dumpBudget("heroic_strike"),
         },
         {
             before = "sweeping_strikes",
@@ -275,11 +310,35 @@ return {
         },
         {
             before = "sweeping_strikes",
+            line = "rend,other_target=1,if="
+                .. contextual
+                .. melee
+                .. "&prot_rend_spread_targets>1&active_dot.rend<prot_rend_spread_targets&"
+                .. dumpBudget("rend"),
+        },
+        {
+            before = "sweeping_strikes",
             line = "sunder_armor,if="
                 .. contextual
                 .. melee
-                .. "&!execute_phase&((arms_open_world&arms_short_pull&debuff.sunder_armor.stack=0&prot_current_rage>=25)"
-                .. "|(!(arms_open_world&arms_short_pull)&(debuff.sunder_armor.stack<5|debuff.sunder_armor.remains<=3)))&"
+                .. "&!execute_phase&debuff.sunder_armor.stack=0&(!prot_short_pull|prot_current_rage>=25)&"
+                .. rageBudget("sunder_armor"),
+        },
+        {
+            before = "sweeping_strikes",
+            line = "sunder_armor,other_target=1,if="
+                .. contextual
+                .. melee
+                .. "&!solo&prot_spread_targets>1&active_dot.sunder_armor<prot_spread_targets&"
+                .. dumpBudget("sunder_armor"),
+        },
+        {
+            before = "sweeping_strikes",
+            line = "sunder_armor,if="
+                .. contextual
+                .. melee
+                .. "&!execute_phase&!prot_short_pull&debuff.sunder_armor.stack>0"
+                .. "&(debuff.sunder_armor.stack<5|debuff.sunder_armor.remains<=3)&"
                 .. rageBudget("sunder_armor"),
         },
         {
@@ -299,6 +358,6 @@ return {
                 .. dumpBudget("heroic_strike"),
         },
         -- The simulator has no kill window. Keep the original max-level placement before Bloodthirst.
-        { before = "bloodthirst", line = "victory_rush,focus=1,if=!prot_contextual" },
+        { before = "bloodthirst", line = "victory_rush,focus=1,if=prot_sustained" },
     },
 }

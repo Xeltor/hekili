@@ -121,20 +121,13 @@ describe("shared content", function()
                         return #controls
                     end,
                 },
-                -- the player's debuffs by index (name, count, dispel type, duration, expiration), unpacked in
-                -- AuraUtil.UnpackAuraData's order: name, icon, count, dispel type, duration, expiration
-                C_UnitAuras = {
-                    GetDebuffDataByIndex = function(unit, i)
-                        return unit == "player" and debuffs[i] or nil
-                    end,
-                },
-                AuraUtil = {
-                    UnpackAuraData = function(d)
-                        if d then
-                            return d[1], nil, d[2], d[3], d[4], d[5]
+                PlayerDebuffByDispel = function(kind, at)
+                    for _, d in ipairs(debuffs) do
+                        if d[3] == kind and d[5] > (at or 0) then
+                            return d[2] > 0 and d[2] or 1, d[5], d[5] - d[4]
                         end
-                    end,
-                },
+                    end
+                end,
             },
         }
         _G.Hekili.Client = ns.Facade
@@ -261,6 +254,22 @@ describe("shared content", function()
             all.auras.dispellable_magic.generate(t, kind)
             assert.are.same({ 1, 20, 10, "nobody" }, { t.count, t.expires, t.applied, t.caster }, kind)
         end
+    end)
+
+    it("uses the simulation query time without extending a dispellable effect beyond its observed expiry", function()
+        load({ "Auras" })
+        debuffs[1] = { "Effect", 1, "Poison", 10, 20 }
+        local generate = all.auras.dispellable_poison.generate
+        local env, t = { query_time = 19 }, {}
+        setfenv(generate, env)
+        generate(t)
+        assert.are.same({ 1, 20, 10 }, { t.count, t.expires, t.applied })
+        env.query_time = 20
+        generate(t)
+        assert.are.same({ 0, 0, 0 }, { t.count, t.expires, t.applied })
+        env.query_time = 19
+        generate(t)
+        assert.are.equal(1, t.count) -- forecasting did not clear live evidence
     end)
 
     it("registers the potion action and auras core reads, and Forever's healing consumables", function()

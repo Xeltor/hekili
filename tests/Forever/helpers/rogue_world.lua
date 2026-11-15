@@ -20,6 +20,17 @@ local world = require("Game.harness.world")
 
 local M = {}
 
+-- The pinned gates use their sustained damage priority even when the harness controls just one player.
+function M.sustained(content)
+    return setmetatable({
+        character = function()
+            local character = content.character()
+            character.instanceType = "raid"
+            return character
+        end,
+    }, { __index = content })
+end
+
 M.CLIENT_SPEC, M.CLASS_ID = 1488, 4 -- the client's Rogue pseudo-spec
 local ENERGY, POINTS = 3, 4 -- Enum.PowerType
 local TOKENS = { [ENERGY] = "ENERGY", [POINTS] = "COMBO_POINTS" }
@@ -336,6 +347,10 @@ local function content(name)
             talents = P.talents,
             power = { type = ENERGY, token = TOKENS[ENERGY], max = 100 },
             speed = { 2.6, 1.8 },
+            items = {
+                [16] = { 100, "Main Hand", "INVTYPE_WEAPON", 2, name == "Assassination" and 15 or 7 },
+                [17] = { 101, "Off Hand", "INVTYPE_WEAPON", 2, 15 },
+            },
         }
     end
 

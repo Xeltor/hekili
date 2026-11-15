@@ -57,6 +57,8 @@ I.nextInst = 0
 
 -- Per-target memory (spec §6.3): TARGET_CAP slots, each a copy of the target's arrays; slot 0 is "no target".
 local memExp, memApplied, memStacks, memInst = {}, {}, {}, {}
+-- The previous instance of each modeled debuff application, indexed by target memory slot and aura.
+local undo = {}
 I.curSlot = 0
 -- The serial of the swap folded last (Sources/Target.lua's I.targetSwapN, copied, never incremented: a swap the log
 -- dropped before its fold must not leave the target waiting for ever). Unequal: a swap waits to fold.
@@ -124,6 +126,23 @@ I.OnBuild(function(def, now)
             e[j], ap[j], st[j], ins[j] = 0, 0, 0, 0
         end
         memExp[s], memApplied[s], memStacks[s], memInst[s] = e, ap, st, ins
+    end
+    for s = 0, I.TARGET_CAP do
+        local saved = {}
+        for j = 1, U.nAura do
+            saved[j] = {
+                cast = 0,
+                ability = 0,
+                swap = 0,
+                applied = 0,
+                previous = 0,
+                expires = 0,
+                stacks = 0,
+                written = 0,
+                observed = -math.huge,
+            }
+        end
+        undo[s] = saved
     end
     I.curSlot = 0 -- the build cleared the log (Sources/Target.lua's hook resets I.curSwapN and logs its own swap)
     CONS.n = 0
@@ -268,7 +287,18 @@ I.On(Obs.Read, function(o, t)
         else
             applied = o.t
         end
-        set(u, j, expires, applied, stacks > 0 and stacks or 1, t, "observed", event)
+        local count = stacks > 0 and stacks or 1
+        if u == 2 and kind == ReadOf.Aura then
+            local entry = undo[I.curSlot][j]
+            if
+                expires > was + I.SAME_FRAME
+                or count > U.stacks[u][j]
+                or (entry.ability ~= 0 and expires > entry.expires + I.SAME_FRAME)
+            then
+                entry.observed = o.t
+            end
+        end
+        set(u, j, expires, applied, count, t, "observed", event)
         if kind == ReadOf.AuraOpen then
             U.openFold[u][j] = I.folds
         end
@@ -323,6 +353,109 @@ function I.AuraModel(u, j, applied, expires, stacks, t, event, harmful, closes)
         return
     end
     set(u, j, expires, applied, stacks > 0 and stacks or 1, t, "modelled", event, harmful)
+end
+
+-- A pinned GUID can name an earlier target. Slot 0 has no reusable identity, so its writes are local to this swap.
+local function debuffSlot(guid)
+    if not guid or guid == "" or I.targetKeys[I.curSlot] == guid then
+        return I.curSlot
+    end
+    if I.Units.Bound(1) == guid and (I.curSlot == 0 or I.targetKeys[I.curSlot] == "") then
+        return I.curSlot
+    end
+    for s = 1, I.TARGET_CAP do
+        if I.targetKeys[s] == guid then
+            return s
+        end
+    end
+end
+
+local function debuffWas(s, j, t)
+    if s == I.curSlot then
+        local expires = U.exp0[2][j]
+        if expires > t then
+            return expires, U.applied[2][j], U.stacks[2][j]
+        end
+    elseif memExp[s][j] > t then
+        return memExp[s][j], memApplied[s][j], memStacks[s][j]
+    end
+    return 0, 0, 0
+end
+
+function I.DebuffObserved(j, guid, cast)
+    local s = debuffSlot(guid)
+    return s and undo[s][j].observed >= cast
+end
+
+function I.DebuffBefore(guid, j, t)
+    local s = debuffSlot(guid)
+    if s ~= nil then
+        return debuffWas(s, j, t)
+    end
+    return 0, 0, 0
+end
+
+function I.DebuffApply(guid, j, ability, cast, expires, stacks, t)
+    local s = debuffSlot(guid)
+    if s == nil then
+        return
+    end
+    local entry = undo[s][j]
+    local swap = s == 0 and I.curSwapN or 0
+    local before, previous, count = debuffWas(s, j, t)
+    if s == I.curSlot then
+        local seen = U.rec[2][j].last.observed
+        if seen.event == Obs.Read and seen.v > 0 and seen.t >= t - I.SAME_FRAME then
+            I.auraReadsWon = I.auraReadsWon + 1
+            return true, before
+        end
+        set(2, j, expires, t, stacks, t, "modelled", Obs.CastSuccess, true)
+    else
+        if expires == 0 then
+            memInst[s][j] = 0
+        elseif memInst[s][j] == 0 then
+            I.nextInst = I.nextInst + 1
+            memInst[s][j] = I.nextInst
+        end
+        memExp[s][j], memApplied[s][j], memStacks[s][j] = expires, expires > 0 and t or 0, stacks
+    end
+    if entry.ability ~= ability or entry.cast ~= cast or entry.swap ~= swap then
+        entry.expires, entry.previous, entry.stacks = before, previous, count
+    end
+    entry.ability, entry.cast, entry.applied = ability, cast, expires > 0 and t or 0
+    entry.written = t
+    entry.swap = swap
+    return s == I.curSlot, before
+end
+
+function I.DebuffUndo(guid, ability, cast, t)
+    local s = debuffSlot(guid)
+    if s == nil or U.n < 2 then
+        return
+    end
+    for j = 1, U.nAura do
+        local entry = undo[s][j]
+        if entry.ability == ability and entry.cast == cast and (s ~= 0 or entry.swap == I.curSwapN) then
+            entry.ability = 0
+            local expires = entry.expires > t and entry.expires or 0
+            if s == I.curSlot then
+                local seen = U.rec[2][j].last.observed
+                if U.applied[2][j] == entry.applied and not (seen.t >= entry.written and seen.event == Obs.Read) then
+                    local was = U.exp0[2][j]
+                    set(2, j, expires, entry.previous, entry.stacks, t, "modelled", Obs.Avoided, true)
+                    I.Log.Aura(2, j, U.id[j], was, expires, t)
+                end
+            elseif memApplied[s][j] == entry.applied then
+                memExp[s][j], memApplied[s][j], memStacks[s][j] = expires, entry.previous, entry.stacks
+                if expires == 0 then
+                    memInst[s][j] = 0
+                elseif memInst[s][j] == 0 then
+                    I.nextInst = I.nextInst + 1
+                    memInst[s][j] = I.nextInst
+                end
+            end
+        end
+    end
 end
 
 -- A hit of a listed kind spends one stack of each `consumedBy` player aura believed up (a modelled sample at the hit),
@@ -389,6 +522,8 @@ I.On(Obs.TargetGone, function(o)
     if s > 0 then
         for j = 1, U.nAura do -- all four (review m2): a reused slot's load must bring no old mob's stacks
             memExp[s][j], memApplied[s][j], memStacks[s][j], memInst[s][j] = 0, 0, 0, 0
+            undo[s][j].ability = 0
+            undo[s][j].observed = -math.huge
         end
         if s == I.curSlot then
             load(0)

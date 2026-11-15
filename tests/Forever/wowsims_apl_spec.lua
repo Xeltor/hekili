@@ -1625,6 +1625,9 @@ describe("the wowsims APL translator", function()
             "\nactions%+=/blood_fury,use_off_gcd=1,if=([^\n]*)\nactions%+=/adrenaline_rush,if=([^\n]*)\n"
         )
         assert.is_truthy(bf and bf:find("cooldown.adrenaline_rush.ready", 1, true)) -- the sequence's condition
+        assert.is_truthy(bf:match("&rogue_sustained$"))
+        assert.is_truthy(ar:match("&rogue_sustained$"))
+        bf = bf:gsub("&rogue_sustained$", "")
         -- split at the first term's known end (the pin's sequence condition nests `))&` inside bf, re-pin e2842f0a78)
         local at = "((action.blood_fury.known&prev.1.blood_fury)|(!action.blood_fury.known&" .. bf .. "))"
         assert.are.equal(at .. "&", ar:sub(1, #at + 1))
@@ -1794,6 +1797,9 @@ describe("the wowsims APL translator", function()
             local out = {}
             for i, x in ipairs({ ... }) do
                 out[i] = (i == 1 and "actions=" or "actions+=/") .. x .. ",if=time>=5"
+                if x == "stoneform" then
+                    out[i] = out[i] .. "&(buff.dispellable_poison.up|buff.dispellable_disease.up)"
+                end
             end
             return table.concat(out, "\n")
         end

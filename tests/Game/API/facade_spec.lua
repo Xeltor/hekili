@@ -371,14 +371,61 @@ describe("ns.Facade", function()
         assert.is_nil(Facade.C_Spell.GetSpellCharges(fs.SPENDER_C))
     end)
 
-    it("answers a believed-ready tracked cooldown in the client's ready shape", function()
+    it("lets a live cooldown flag override a believed-ready tracked cooldown", function()
         I.CooldownModel(3, 15, 30, 5, VS.Obs.CastSuccess) -- learned length 30, ready since 15
         ctl.now = 20
         local c = Facade.C_Spell.GetSpellCooldown(fs.SPENDER_C)
         assert.are.same({ 0, 0, false }, { c.startTime, c.duration, c.isActive })
         ctl.cooldown[fs.SPENDER_C] = { isActive = true, isOnGCD = false }
         c = Facade.C_Spell.GetSpellCooldown(fs.SPENDER_C)
-        assert.are.same({ 0, 0, true }, { c.startTime, c.duration, c.isActive })
+        assert.are.same({ 20, I.CD_PROBE, true }, { c.startTime, c.duration, c.isActive })
+    end)
+
+    it("keeps an active cooldown unavailable before its first observed cast or cooldown event", function()
+        for _, spell in ipairs({ fs.SPENDER_C, 999999 }) do
+            ctl.cooldown[spell] = {
+                startTime = fake.SECRET,
+                duration = fake.SECRET,
+                isActive = true,
+                isOnGCD = false,
+            }
+            for _, t in ipairs({ 10, 10.4, 20 }) do
+                ctl.now = t
+                local c = Facade.C_Spell.GetSpellCooldown(spell)
+                assert.are.same({ t, I.CD_PROBE, true, false }, { c.startTime, c.duration, c.isActive, c.isOnGCD })
+            end
+            ctl.cooldown[spell].isActive = false
+            local c = Facade.C_Spell.GetSpellCooldown(spell)
+            assert.are.same({ 0, 0, false }, { c.startTime, c.duration, c.isActive })
+        end
+    end)
+
+    it("keeps a probed cooldown's start positive when its registered length exceeds uptime", function()
+        ctl.now = 10
+        ctl.cooldown[fs.SPENDER_C] = { isActive = true, isOnGCD = false }
+        I.ab.cdLen[3] = 60
+        I.Sources.Direct(VS.Obs.Cooldown, 10, 3, 0)
+        I.Fold(10, false)
+        I.Settle(10)
+        local c = Facade.C_Spell.GetSpellCooldown(fs.SPENDER_C)
+        assert.is_true(c.startTime > 0)
+        assert.are.equal(10 + I.CD_PROBE, c.startTime + c.duration)
+    end)
+
+    it("keeps the observed cooldown end's queue tolerance without trusting an expired probe", function()
+        I.CooldownModel(3, 40, 30, 10, VS.Obs.CastSuccess)
+        ctl.cooldown[fs.SPENDER_C] = { isActive = true, isOnGCD = false }
+        for _, t in ipairs({ 40, 40.005 }) do
+            ctl.now = t
+            local c = Facade.C_Spell.GetSpellCooldown(fs.SPENDER_C)
+            assert.are.same({ 0, 0 }, { c.startTime, c.duration })
+        end
+        I.Sources.Direct(VS.Obs.Cooldown, 40.2, 3, 0)
+        I.Fold(40.2, false)
+        I.Settle(40.2)
+        ctl.now = 40.2 + I.CD_PROBE
+        local c = Facade.C_Spell.GetSpellCooldown(fs.SPENDER_C)
+        assert.are.same({ ctl.now, I.CD_PROBE }, { c.startTime, c.duration })
     end)
 
     it("answers the ready shape when the plain flag says ready though the belief still runs", function()

@@ -159,7 +159,10 @@
 --    takes every racial major cooldown of the request's class (M.RACIALS by M.CLASS_RACES, the defensive ones only for a
 --    tank, none the APL casts itself), as one block in racials.go's order where the log first used one, else first
 --    (racials register first, sim/core/character.go:304, all at priority 0); each other race's line is inert, its
---    racial unknown (Engine/Schema/Races.lua). The player's cooldown timings or `hpPercentForDefensives`, which
+--    racial unknown (Engine/Schema/Races.lua).
+--    Automatic Stoneform retains the fork's existing readable poison/disease cleanse condition, now on the line
+--    instead of on the shared spell (so class recipes can deliberately use its physical mitigation).
+--    The player's cooldown timings or `hpPercentForDefensives`, which
 --    change when wowsims autocasts a racial, are an error (none at the pin). `castAllStatBuffCooldowns` (every instant major cooldown
 --    whose buff raises one of its stat types, out of the autocast list) is one line per instant cast (Effective Time 0s: off
 --    the GCD, as wowsims's EffectiveTime() == 0) in the log whose
@@ -2081,6 +2084,12 @@ local function entryBody(c, e)
             local off = c.offGcd[x]
             local line = x .. (off and ",use_off_gcd=1" or "")
             local cx = guarded(c, x, required(c, x, cond))
+            -- Preserve the existing automatic tank policy after moving this condition out of the shared spell.
+            -- Class recipes may explicitly choose Stoneform's physical mitigation without a removable debuff.
+            if x == "stoneform" then
+                local cleanse = "(buff.dispellable_poison.up|buff.dispellable_disease.up)"
+                cx = cx and (paren(cx) .. "&" .. cleanse) or cleanse
+            end
             out[i] = cx and (line .. ",if=" .. cx) or line
         end
         return out

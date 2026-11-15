@@ -32,6 +32,7 @@ describe("state.changes, the memoised cost's key", function()
         { "reduceCooldown", "heroic_strike", 1 },
         { "gain", 1, "rage" },
         { "spend", 1, "rage" },
+        { "capResource", "rage", 25 },
         { "summonPet", "pet_a", 10 },
         { "dismissPet", "pet_a" },
         { "summonTotem", "totem_a", nil, 10 },

@@ -442,6 +442,17 @@ function T.Commit(t, a, spellID, g, castGUID)
     return i
 end
 
+function T.CommittedTarget(castGUID)
+    if castGUID == nil then
+        return
+    end
+    for i = 1, CAP do
+        if state[i] == COMMITTED and cast[i] == castGUID then
+            return guid[i]
+        end
+    end
+end
+
 --- Arms the committed ticket of `castGUID` at its success t; its index, or 0 when none claims it.
 function T.Arm(castGUID, t)
     if castGUID == nil then

@@ -607,9 +607,10 @@ describe("Forever Paladin priorities", function()
 
     it("names only registered abilities, auras, talents and state expressions", function()
         local cls = ld.load(nil, FILE, "PALADIN")
+        local merged = require("Forever.helpers.engine").abilitySet("PALADIN", "Dwarf")
         local kinds = {
-            buff = cls.auras,
-            debuff = cls.auras,
+            buff = merged.auras,
+            debuff = merged.auras,
             talent = cls.talents,
             cooldown = cls.abilities,
             settings = cls.settings,
@@ -666,6 +667,15 @@ describe("Forever Paladin priorities", function()
         local _, sof = line("Protection (wowsims.com)", "default", "seal_of_fury")
         local _, hs = line("Protection (wowsims.com)", "default", "holy_shield")
         assert.are.same({ 2, 2 }, { sof.focus, hs.focus })
+    end)
+
+    it("Protection (wowsims.com): retains Stoneform's existing cleanse-only policy", function()
+        line(
+            "Protection (wowsims.com)",
+            "default",
+            "stoneform",
+            "(buff.dispellable_poison.up||buff.dispellable_disease.up)"
+        )
     end)
 
     it("Protection (wowsims.com): Holy Shock reads the Consecrated Ground talent (talentIsKnown 1310905)", function()

@@ -35,7 +35,7 @@ describe("the headless Rogue gates, 3 fights a pack #slow", function()
         it(
             name .. " solo, level 60, one mob, 3 fights of up to 3 minutes: the first icon against the oracle's",
             function()
-                local r, line = pack_gate.solo(name, rw[name], 3, nil, "seeds 1-3")
+                local r, line = pack_gate.solo(name, rw.sustained(rw[name]), 3, nil, "seeds 1-3")
                 assert.is_true(r.focus > 0, "no flagged line ran: " .. line)
             end
         )

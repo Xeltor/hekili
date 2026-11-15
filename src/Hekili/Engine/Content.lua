@@ -1,11 +1,11 @@
 -- Engine/Content.lua
 -- The class content loader (restructure plan, Task 8). The Forever content lives in separate addons, all
 -- load-on-demand: Hekili_Shared (the shared and race content, a dependency of every pack) and one pack per class,
--- Hekili_<Class>. At OnInitialize, before InitializeProfile, ns.LoadContent loads Hekili_Shared itself first
+-- Hekili_<Class>. Before InitializeProfile, ns.LoadContent loads Hekili_Shared itself first
 -- (a class with no pack still gets the shared and race content), then the player's class pack when its TOC's
 -- X-Hekili-ContentAPI is this core's CONTENT_API: the version of the content surface (the Register* API,
 -- Hekili.Client, the belief's environment names), bumped only when that surface changes. So the profile's defaults
--- (GetDefaults) see the class's spec and packs, as when the class files were in the core's TOC. Missing pack, mismatch or failed load: one notice, shown by ns.ContentNotice at OnEnable (Hekili:Notify
+-- (GetDefaults) see the class's spec and packs. Missing pack, mismatch or failed load: one notice, shown by ns.ContentNotice at OnEnable (Hekili:Notify
 -- reads the profile, which does not exist yet), and the core runs with no class spec.
 -- Pattern after Taco Dog Forever's Boot.lua class-pack loader (its shared data addon is load-on-demand and loaded
 -- explicitly before the class pack; a pcall'd LoadAddOn; a notice for a class without a pack).
@@ -57,23 +57,9 @@ local function load(name)
     end
 end
 
---- Loads Hekili_Shared, then the player's class pack, once per session (OnInitialize, its only caller; a later call
---- does nothing). Keeps a notice when the shared content fails to load (then no pack is tried: it depends on it), the
---- class cannot be read, or the pack is not installed, declares another content API (then it is not loaded) or fails
---- to load.
-function ns.LoadContent()
-    if done then
-        return
-    end
-    done = true
-    notice = load("Hekili_Shared")
-    if notice then
-        return
-    end
-    local token = select(2, UnitClass("player"))
-    if type(token) ~= "string" or token == "" then
-        notice = L["could not read your class at load; /reload"] -- OnInitialize runs once, so nothing retries
-        return
+local function loadPack(token)
+    if not token then
+        return L["could not read your class at load; /reload"]
     end
     local class = token:sub(1, 1) .. token:sub(2):lower() -- WARRIOR -> Warrior
     local name = "Hekili_" .. class
@@ -81,23 +67,38 @@ function ns.LoadContent()
     -- an addon that is not installed answers nil, or raises on some clients
     local ok, api = pcall(C_AddOns.GetAddOnMetadata, name, "X-Hekili-ContentAPI")
     if not ok or api == nil then
-        notice = format(L["no Forever pack for %s; install %s"], class, name)
-        return
+        return format(L["no Forever pack for %s; install %s"], class, name)
     end
     if tonumber(api) ~= CONTENT_API then
-        notice = format(
+        return format(
             L["%s is for content API %s, this Hekili Forever for %s; update the older one"],
             name,
             tostring(api),
             CONTENT_API
         )
-        return
     end
 
-    notice = load(name)
-    if not notice then
-        ns.PackAddon = name -- its string table labels its built-in priorities (Registry.PackLabel)
+    local failure = load(name)
+    if failure then
+        return failure
     end
+    ns.PackAddon = name -- its string table labels its built-in priorities (Registry.PackLabel)
+end
+
+--- Loads the shared content and the class pack once. During OnInitialize, wait until OnEnable if the class is
+--- still unavailable. A completed attempt leaves a notice for missing or incompatible content.
+function ns.LoadContent(deferIfUnavailable)
+    if done then
+        return true
+    end
+    local _, token, classID = UnitClass("player")
+    local hasClass = type(token) == "string" and token ~= "" and type(classID) == "number" and classID > 0
+    if deferIfUnavailable and not hasClass then
+        return false
+    end
+    done = true
+    notice = load("Hekili_Shared") or loadPack(hasClass and token)
+    return true
 end
 
 --- Shows LoadContent's notice, once (OnEnable: the profile and the notice frame exist by then).

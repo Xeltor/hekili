@@ -9,6 +9,7 @@ local LUA = io.open(".lua/bin/lua") and ".lua/bin/lua" or "lua5.1"
 -- column / 10; the cooldown is the larger of RecoveryTime and CategoryRecoveryTime; gcd "off" where StartRecoveryTime
 -- is 0).
 local KIT = {
+    auto_attack = { { 6603 }, 0, 0, "off" },
     battle_shout = { { 6673, 5242, 6192, 11549, 11550, 11551, 25289 }, 10, 0, "spell" },
     battle_stance = { { 2457 }, 0, 1, "off" },
     berserker_rage = { { 18499 }, 0, 30, "spell" },
@@ -159,7 +160,7 @@ describe("Forever Warrior", function()
                 )
                 assert.are.equal("function", type(a.known), key)
             end
-            assert.are.equal(42, n)
+            assert.are.equal(43, n)
             assert.are.equal(1.5, lw.run(w.abilities.slam.cast, e))
             assert.is_true(w.abilities.heroic_strike.onNextSwing and w.abilities.cleave.onNextSwing)
             -- Sweeping Strikes under the native Cooldowns toggle (APL usability audit A): off, the engine skips its line
@@ -350,7 +351,8 @@ describe("Forever Warrior", function()
             e.rage.current = 60
             w.game.known[1310185] = true -- Tactical Mastery: 10 kept
             lw.run(w.abilities.battle_stance.now, e)
-            assert.are.same({ 50 }, e.spent)
+            assert.are.same({ { "rage", 10 } }, e.capped)
+            assert.are.same({}, e.spent)
             assert.are.same({ "battle_stance" }, e.applied)
             assert.are.same({ "defensive_stance", "berserker_stance" }, e.removed)
         end
@@ -756,6 +758,20 @@ describe("Forever Warrior", function()
             near(0.15 * hit + 4, wd)
         end)
 
+        it("keeps partial-block talent rage without inventing hidden damage", function()
+            w.game.stat.GetShieldBlock = { 20 }
+            assert.are.same({ 0, 0 }, { run("WOUND", -1, 20) })
+            assert.are.same({ 0, 0 }, { run("BLOCKED", -1, 20) })
+            ctx({}, { shield_specialization = 1 })
+            assert.are.same({ 1, 4 }, { run("BLOCKED", -1, 20) })
+            ctx({}, { shield_specialization = 5 })
+            assert.are.same({ 5, 0 }, { run("BLOCKED", -1, 20) })
+            assert.are.same({ 0, 0 }, { run("WOUND", -1, 20) })
+            -- Unknown hits must not train the unblocked damage average used for full blocks.
+            ctx({}, {})
+            assert.are.same({ 0, 0 }, { run("BLOCK", 0, 20) })
+        end)
+
         it("allocates nothing over every kind", function()
             w.game.stat.GetShieldBlock = { 20 }
             w.state.equipped.shield = true
@@ -951,13 +967,15 @@ describe("Forever Warrior", function()
             local e = lw.env(w)
             e.talent = rank(talentRank)
             e.swap_stance("berserker_stance")
-            assert.are.same({ 50 - kept }, e.spent)
+            assert.are.same({ { "rage", kept } }, e.capped)
+            assert.are.same({}, e.spent)
             assert.are.same({ "berserker_stance" }, e.applied)
             assert.are.equal(kept, lw.run(w.exprs.stance_rage_kept, e))
             for _, stance in ipairs({ "battle_stance", "defensive_stance", "berserker_stance" }) do
-                e.spent = {}
+                e.capped, e.rage.current = {}, 50
                 lw.run(w.abilities[stance].now, e)
-                assert.are.same({ 50 - kept }, e.spent, stance)
+                assert.are.same({ { "rage", kept } }, e.capped, stance)
+                assert.are.equal(kept, e.rage.current, stance)
             end
         end
         local e = lw.env(w)
@@ -1049,8 +1067,8 @@ describe("Forever Warrior", function()
             ["Fury (wowsims.com) battle_stance"] = { 1, 1 },
             ["Fury (wowsims.com) victory_rush"] = { 1 },
             ["Protection (wowsims.com) revenge"] = { 1, 1 },
-            ["Protection (wowsims.com) heroic_strike"] = { 2, 2 },
-            ["Protection (wowsims.com) cleave"] = { 2, 2 },
+            ["Protection (wowsims.com) heroic_strike"] = { 2, 2, 2 }, -- excess, ordinary and raid dumps
+            ["Protection (wowsims.com) cleave"] = { 2, 2, 2 },
             ["Protection (wowsims.com) victory_rush"] = { 1, 1 },
         }, focus) -- the user's tiers (2026-10-21; Heroic Strike and Cleave always 2, Victory Rush 1: 2026-10-22): the main strikes (Mortal Strike, Slam, Execute, Bloodthirst, Whirlwind,
         -- Shield Slam) are rotational, untiered, and so is Protection's Sunder Armor
@@ -1137,9 +1155,9 @@ describe("Forever Warrior", function()
                     local c = e.criteria or ""
                     for kind, key in c:gmatch("(%a+)%.([%w_]+)") do
                         if kinds[kind] then
-                            -- a racial's aura (multipleCdUsages's buff.<racial>.duration, R42): the race pack's
-                            local racialAura = (kind == "buff" and racial[key]) and set.auras[key]
-                            assert.is_not_nil(kinds[kind][key] or racialAura, where .. ": no " .. kind .. " " .. key)
+                            -- The active registry also includes shared auras and the racial kit.
+                            local sharedAura = (kind == "buff" or kind == "debuff") and set.auras[key]
+                            assert.is_not_nil(kinds[kind][key] or sharedAura, where .. ": no " .. kind .. " " .. key)
                         end
                     end
                     assert.is_nil(secretToken(c), where) -- no health or time to die: secret on Forever (Task 9b)

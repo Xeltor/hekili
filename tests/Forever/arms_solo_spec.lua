@@ -120,6 +120,31 @@ describe("the shipped Arms leveling and PvE priority", function()
         assert.are.equal(1, H.Hekili.State.debuff.sunder_armor.stack)
     end)
 
+    it("honors the same NPC immunity on another spawn and resumes after readable temporary protection", function()
+        local H = warrior(14, 30, { target = HARVEST_WATCHER })
+        local VS, ctl = H.ns.VirtualState, H.ctl
+        assert.are.equal("immune NPC", VS.DebuffBlocked("rend", ctl.now))
+        ctl.guid.target = "Creature-0-0-0-0-114-000002"
+        H.Fire("PLAYER_TARGET_CHANGED")
+        read(H)
+        assert.are.equal("immune NPC", VS.DebuffBlocked("rend", ctl.now))
+        ctl.guid.target = "Creature-0-0-0-0-999-000001"
+        ctl.auras.target.HELPFUL[1] = { spellId = 20594, expirationTime = ctl.now + 8 }
+        H.Fire("PLAYER_TARGET_CHANGED")
+        read(H)
+        assert.are.equal("temporary immunity", VS.DebuffBlocked("rend", ctl.now))
+        assert.is_nil(VS.DebuffBlocked("sunder_armor", ctl.now))
+        ctl.auraError.target = true
+        H.Fire("UNIT_AURA", "target")
+        read(H)
+        assert.are.equal("temporary immunity", VS.DebuffBlocked("rend", ctl.now))
+        ctl.auraError.target = false
+        ctl.auras.target.HELPFUL[1] = nil
+        H.Fire("UNIT_AURA", "target")
+        read(H)
+        assert.is_nil(VS.DebuffBlocked("rend", ctl.now))
+    end)
+
     it("backs off Rend for the immune unit without treating an ordinary miss as immunity", function()
         for _, outcome in ipairs({ "IMMUNE", "MISS" }) do
             local H = warrior(13, 25)
@@ -139,7 +164,7 @@ describe("the shipped Arms leveling and PvE priority", function()
                 read(H)
                 assert.is_true(H.Hekili.State.arms_skip_rend)
                 read(H, 30)
-                assert.is_false(H.Hekili.State.arms_skip_rend)
+                assert.is_true(H.Hekili.State.arms_skip_rend)
             else
                 assert.are.equal("rend", nextAction)
             end

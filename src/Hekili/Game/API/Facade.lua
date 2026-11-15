@@ -1014,6 +1014,15 @@ local function cooldownPolicy(spellID)
     end
     local rec = VS.Cooldown(spellID, t)
     CD.isOnGCD = false
+    -- Reloads have no observed cast yet, and a live flag can lead the belief by an event. Never turn an active
+    -- cooldown with no trustworthy end into 0/0 (the simulator treats that shape as ready). Retain the tiny
+    -- queue tolerance at an observed cast's end, as the cooldown family's constrain step does (gap CQ).
+    local observed = rec and rec.last.modelled
+    local atEnd = observed and observed.t > 0 and observed.v == rec.est and rec.est >= t - I.EPS
+    if active == true and (not rec or (rec.est <= t and not atEnd)) then
+        CD.startTime, CD.duration, CD.isActive = t, I.CD_PROBE, true
+        return CD
+    end
     if not rec then
         CD.startTime, CD.duration = 0, 0
         CD.isActive = active == true
@@ -1027,7 +1036,13 @@ local function cooldownPolicy(spellID)
         return CD
     end
     local len = VS.CooldownLength(spellID)
-    CD.startTime, CD.duration = rec.est - len, len
+    if len <= 0 or rec.est - len <= 0 then
+        -- An unknown end is only a short probe; subtracting a long registered cooldown near login can make
+        -- startTime negative, which the simulator also interprets as ready.
+        CD.startTime, CD.duration = t, rec.est - t
+    else
+        CD.startTime, CD.duration = rec.est - len, len
+    end
     if active ~= nil then
         CD.isActive = active
     else
@@ -1393,6 +1408,17 @@ function Facade.DebuffCount(spellID, now)
         return nil
     end
     return VS.Count.WithAura(spellID, now)
+end
+
+-- The shared policy uses already observed casts, target identities and aura reads.
+Facade.DebuffImmunity = VS.DebuffImmunity
+Facade.DebuffRepeatBlocked = VS.DebuffRepeatBlocked
+Facade.DebuffBlocked = VS.DebuffBlocked
+Facade.DebuffCycleBlocked = VS.DebuffCycleBlocked
+
+-- Scalar evidence from the existing event-driven player aura walk, including untracked harmful effects.
+function Facade.PlayerDebuffByDispel(kind, t)
+    return VS.PlayerDebuffByDispel(kind, t or now())
 end
 
 Facade.Display = {}

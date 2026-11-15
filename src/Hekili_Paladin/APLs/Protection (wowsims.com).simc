@@ -9,7 +9,7 @@
 actions.precombat=righteous_fury,if=!buff.righteous_fury.up
 actions.precombat+=/retribution_aura,if=!buff.retribution_aura.up
 actions.precombat+=/seal_of_the_crusader,if=!buff.seal_of_the_crusader.up
-actions=stoneform
+actions=stoneform,if=(buff.dispellable_poison.up|buff.dispellable_disease.up)
 actions+=/templars_bulwark,use_off_gcd=1
 actions+=/judgement,use_off_gcd=1
 actions+=/swift_judgement,use_off_gcd=1,if=(!action.judgement.known|cooldown.judgement.remains<=(cooldown.judgement.duration-0))

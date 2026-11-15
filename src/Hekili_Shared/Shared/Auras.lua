@@ -9,12 +9,7 @@ local Client = Hekili.Client
 local C_LossOfControl = Client.C_LossOfControl
 local GetActiveLossOfControlData, GetActiveLossOfControlDataCount =
     C_LossOfControl.GetActiveLossOfControlData, C_LossOfControl.GetActiveLossOfControlDataCount
-local GetDebuffDataByIndex, UnpackAuraData = Client.C_UnitAuras.GetDebuffDataByIndex, Client.AuraUtil.UnpackAuraData
-
--- The classic UnitDebuff over the client's aura rows (Engine/Sim/Utils.lua's, which content does not reach).
-local function UnitDebuff(unit, index, filter)
-    return UnpackAuraData(GetDebuffDataByIndex(unit, index, filter))
-end
+local PlayerDebuffByDispel = Client.PlayerDebuffByDispel
 
 local shared = Hekili:NewShared()
 
@@ -37,25 +32,13 @@ for school, mask in pairs(SCHOOLS) do
     end)
 end
 
--- The player's first debuff of one dispel type (the RAID filter: ones the player could dispel), as an aura.
+-- The player's first positively observed harmful effect of one dispel type, including NPC effects outside the
+-- tracked class kit. The facade caches only plain evidence on aura events; the priority decides which spell removes it.
 local function dispellable(dispelType)
     return function(t)
-        local i = 1
-        local name, _, count, debuffType, duration, expirationTime = UnitDebuff("player", i, "RAID")
-
-        while name do
-            if debuffType == dispelType then
-                break
-            end
-
-            i = i + 1
-            name, _, count, debuffType, duration, expirationTime = UnitDebuff("player", i, "RAID")
-        end
-
-        if name then
-            t.count = count > 0 and count or 1
-            t.expires = expirationTime > 0 and expirationTime or query_time + 5
-            t.applied = expirationTime > 0 and (expirationTime - duration) or query_time
+        local count, expires, applied = PlayerDebuffByDispel(dispelType, query_time)
+        if count then
+            t.count, t.expires, t.applied = count, expires, applied
             t.caster = "nobody"
             return
         end

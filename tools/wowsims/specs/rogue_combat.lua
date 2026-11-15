@@ -26,7 +26,7 @@
 -- Disagreements (P7; floor 0.95 -> 0.97, decisions on-GCD 0.973, n 73): sinister_strike -> slice_and_dice 13.86
 -- (Slice and Dice 0.19 s from its end, the old header's class); eviscerate -> sinister_strike 176.62 (the fight's last
 -- 6 s, gap AN). Regen/pool not refreshed (as Assassination).
-return {
+return require("tools.wowsims.rogue_pve")({
     class = "ROGUE",
     pack = "Combat (wowsims.com)",
     spec = "combat",
@@ -51,7 +51,6 @@ return {
     -- by role (docs/dev/wowsims-packs.md): Garrote a stealth-window cast; Slice and Dice and Rupture both at 1, so they
     -- sort by soonest; Venom none (the user, 2026-10-21)
     focus = { garrote = 1, slice_and_dice = 1, rupture = 1 },
-    leveling = {},
     -- Riposte (owner ruling R70, 2026-11-06: "add it to the apl and make it focus=1"): not from wowsims, which never plays it
     -- (its fight has no parry on us; at 4b0030a44b the Combat SS build does not even take the talent). Off the global
     -- cooldown, so it leads the list (anchored on Garrote, the first line left once upstream dropped its Ambush opener:
@@ -61,7 +60,7 @@ return {
     extra = {
         {
             before = "garrote",
-            line = "riposte,use_off_gcd=1,focus=1,if=energy.lo>=action.riposte.cost",
+            line = "riposte,use_off_gcd=1,focus=1,if=energy.lo>=action.riposte.cost&(!rogue_field|rogue_field_damage&!rogue_reserve_kick&!stealthed.all)",
         },
     },
-}
+})

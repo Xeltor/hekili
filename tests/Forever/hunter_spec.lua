@@ -37,6 +37,34 @@ local KIT = {
     immolation_trap = { { 13795, 14302, 14303, 14304, 14305 }, 245, 30, "spell" },
 }
 
+describe("Serpent Sting application", function()
+    it(
+        "holds the real ability while its projectile is pending and allows a retry after an attributed resist",
+        function()
+            local headless = require("Game.harness.headless")
+            local hunter = require("Forever.helpers.hunter_world").BeastMastery
+            local H = headless.new({ character = hunter.character(), pack = hunter.PACK })
+            local ctl, state = H.ctl, H.Hekili.State
+            ctl.distance.target = 30
+            H.Fire("PLAYER_TARGET_CHANGED")
+            assert(headless.cycle(H, ctl.now + 0.2))
+            local cast = ctl.now + 1
+            ctl.now = cast
+            H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-sting", 25295)
+            H.ns.VirtualState.Drain(cast)
+            rawset(state, "now", cast)
+            assert.is_false(state:IsUsable("serpent_sting"))
+            ctl.now = cast + 0.75
+            H.Fire("UNIT_COMBAT", "target", "RESIST", "", 0, 8)
+            H.ns.VirtualState.Drain(ctl.now)
+            rawset(state, "now", ctl.now)
+            assert.is_true(state:IsUsable("serpent_sting"))
+            assert.is_nil(H.ns.VirtualState.Aura("target", 25295, ctl.now))
+            assert.are.same({}, H.errors)
+        end
+    )
+end)
+
 local function idsOf(a)
     local out = { a.id }
     for _, id in ipairs(type(a.copy) == "table" and a.copy or { a.copy }) do

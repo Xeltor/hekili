@@ -12,7 +12,7 @@
 -- costs (Snapshot cost= / read=).
 -- Credits: Hekili (registration API and pack format); the abilities, auras and stance swap are ported
 -- from Hekili's Classic profile (origin/classic:Classic/Warrior.lua); call shapes from
--- archive/TheWarWithin/WarriorArms.lua; the priorities are translated from wowsims/forever's APLs (MIT,
+-- upstream Hekili's TheWarWithin/WarriorArms.lua; the priorities are translated from wowsims/forever's APLs (MIT,
 -- https://github.com/wowsims/forever; tools/wowsims/specs/warrior_*.lua).
 -- The one- and two-hander rage rates as in Taco Dog Forever's Warrior pack
 -- (src/TacoDogForever_Warrior/Warrior.lua:21-24).
@@ -74,6 +74,7 @@ local DEMORALIZING_SHOUT = { 1160, 6190, 11554, 11555, 11556 }
 local EXECUTE = { 5308, 20658, 20660, 20661, 20662 }
 local HAMSTRING = { 1715, 7372, 7373 }
 local INTERCEPT = { 20252, 20616, 20617 }
+local IMPROVED_DISARM = { [0] = 0, 7, 13, 20 } -- the cooldown cut by Improved Disarm's rank
 local MOCKING_BLOW = { 694, 7400, 7402, 20559, 20560 }
 local MORTAL_STRIKE = { 12294, 21551, 21552, 21553 }
 local OVERPOWER = { 7384, 7887, 11584, 11585 }
@@ -379,9 +380,10 @@ spec:RegisterResource(
             end,
 
             interval = 1,
-            -- shortcut: Improved Bloodrage's +25% (12301) is unmodelled here, the belief's entries take a number fixed at
-            -- build; the handler's instant gain carries it. Upgrade if the regen entries learn talent-scaled values.
-            value = 1,
+            -- Improved Bloodrage (12301): +25% a rank on each tick too (wowsims bloodrage.go:21-23)
+            value = function()
+                return 1 + 0.25 * talent.improved_bloodrage.rank
+            end,
         },
     },
     nil,
@@ -534,6 +536,7 @@ spec:RegisterAuras({
     },
     concussion_blow = {
         id = 12809,
+        copy = { 1324556 }, -- the CDM item's spell
         duration = 5,
         max_stack = 1,
         debuffRetryDelay = 30, -- A refused stun can be temporary; never blacklist this target for the session.
@@ -562,6 +565,7 @@ spec:RegisterAuras({
     },
     disarm = {
         id = 676,
+        copy = { 1324558 }, -- the CDM item's spell
         duration = 10,
         max_stack = 1,
     },
@@ -650,6 +654,14 @@ spec:RegisterAuras({
         duration = 5,
         max_stack = 1,
     },
+    -- Bloodthrill's own aura (1289681), the buff the CDM links; its proc opens the overpower_ready window above, which
+    -- the plain usability read observes. Declared for the CDM mapping only: never applied. The 5 s is unsourced:
+    -- it matches the Overpower window 1282733 (1289681 is not in the pin's spell data).
+    bloodthrill = {
+        id = 1289681,
+        duration = 5,
+        max_stack = 1,
+    },
     piercing_howl = {
         id = 12323,
         duration = 6,
@@ -696,6 +708,7 @@ spec:RegisterAuras({
     },
     shield_bash_silenced = {
         id = 18498,
+        copy = { 1324551 }, -- the CDM item's spell (Improved Shield Bash, "Silenced")
         duration = 3,
         max_stack = 1,
     },
@@ -1008,7 +1021,7 @@ spec:RegisterAbilities({
                 applyBuff("gore_drinker", nil, 3)
             end
             if talent.improved_berserker_rage.enabled then
-                gain(10 * talent.improved_berserker_rage.rank, "rage")
+                gain(5 * talent.improved_berserker_rage.rank, "rage")
             end
         end,
 
@@ -1017,9 +1030,9 @@ spec:RegisterAbilities({
             if talent.gore_drinker.rank > 0 then
                 applyBuff("gore_drinker", nil, 3)
             end
-            -- DB2 20500: energize 100 (10 rage) a rank.
+            -- wowsims spell data curve {50, 100} tenths: 5 / 10 rage (the DB2's 100 on rank 1 is not it; wowsims wins)
             if talent.improved_berserker_rage.enabled then
-                gain(10 * talent.improved_berserker_rage.rank, "rage")
+                gain(5 * talent.improved_berserker_rage.rank, "rage")
             end
         end,
     },
@@ -1310,7 +1323,10 @@ spec:RegisterAbilities({
         expects = "debuff", -- no damage (DB2, wowsims): its ticket takes its own avoid only
         missable = true,
         cast = 0,
-        cooldown = 60,
+        -- Improved Disarm (12313): -7 / -13 / -20 s (the pin's spell data curve)
+        cooldown = function()
+            return 60 - IMPROVED_DISARM[talent.improved_disarm.rank]
+        end,
         gcd = "spell",
 
         spend = function()
@@ -1432,7 +1448,10 @@ spec:RegisterAbilities({
         id = 20252,
         copy = rest(INTERCEPT),
         cast = 0,
-        cooldown = 30,
+        -- Improved Intercept (20504): -5 s a rank
+        cooldown = function()
+            return 30 - 5 * talent.improved_intercept.rank
+        end,
         gcd = "off",
 
         spend = function()
@@ -1849,7 +1868,10 @@ spec:RegisterAbilities({
     shield_wall = {
         id = 871,
         cast = 0,
-        cooldown = 900,
+        -- Improved Shield Wall (12312): -330 s a rank (the pin's curve, 900 -> 570 / 240; the 240 is unmeasured in game)
+        cooldown = function()
+            return 900 - 330 * talent.improved_shield_wall.rank
+        end,
         gcd = "spell", -- the DB2's (start recovery 1500 ms); Classic had it off the GCD (checkpoint question)
 
         startsCombat = false,

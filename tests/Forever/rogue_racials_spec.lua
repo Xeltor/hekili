@@ -132,7 +132,7 @@ describe("Rogue racial actives", function()
     it("keeps offensive racials out of Stealth approaches, idle dungeon targets and ordinary short pulls", function()
         for _, racial in ipairs(OFFENSIVE) do
             local H = damage(racial, nil, { prepull = true, stealthed = true })
-            assert.is_nil(pick(H).actionName, racial.race .. " stealth approach")
+            assert.is_not_equal(racial.key, pick(H).actionName, racial.race .. " stealth approach")
             H = damage(racial, nil, { prepull = true, idleTarget = true, threat = false })
             assert.is_nil(pick(H).actionName, racial.race .. " idle pull")
             H = damage(racial, nil, { kind = "normal" })

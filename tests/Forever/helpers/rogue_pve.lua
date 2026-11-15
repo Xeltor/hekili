@@ -102,8 +102,8 @@ local function rogue(spec, level, o)
         H.Fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
     end
     for index, plate in ipairs(o.plates or {}) do
-        local unit = "nameplate" .. index
         ctl.cvars.nameplateShowAll, ctl.cvars.nameplateShowEnemies = "1", "1"
+        local unit = "nameplate" .. index
         ctl.exists[unit] = plate.exists == nil and true or plate.exists
         ctl.guid[unit] = plate.guid or ("Creature-0-0-0-0-347-" .. string.format("%06d", index + 10))
         ctl.distance[unit] = plate.distance or 3

@@ -917,6 +917,9 @@ function M.new(o)
     if c then -- the character, before login: VirtualState builds its spellbook at SpecializationChanged
         ctl.class, ctl.classID, ctl.specID, ctl.race = c.class, c.classID or 0, c.specID, c.race
         ctl.instanceType = c.instanceType or ctl.instanceType
+        if c.instanceType and c.instanceType ~= "none" then
+            ctl.cvars.nameplateShowAll, ctl.cvars.nameplateShowEnemies = "1", "1"
+        end
         ctl.level.player = c.level
         for _, id in ipairs(c.known or {}) do
             ctl.known[id] = true

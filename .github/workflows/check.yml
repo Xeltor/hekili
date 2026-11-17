@@ -22,18 +22,7 @@ jobs:
       - run: make bootstrap
       - run: make lint
       - run: make fmt-check
-      - name: Record fork Warrior fixtures
-        run: |
-          ARMS_RECS=record .lua/bin/busted tests/Forever/arms_recs_spec.lua
-          TIMING=record .lua/bin/busted --filter='Fury.*follows wowsims' tests/Forever/wowsims_warrior_spec.lua
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: warrior-regression-fixtures
-          retention-days: 1
-          path: |
-            tests/Forever/fixtures/arms_recs_seeds1-3.lua
-            tests/Forever/fixtures/timing_warrior_fury.lua
+      - run: make test
       - run: make syntax
       - run: make api-check
       - run: make packs-check

@@ -4,6 +4,7 @@
 local addon, ns = ...
 local Facade = ns.Facade
 local C_Item, C_Spell, GetTime = Facade.C_Item, Facade.C_Spell, Facade.GetTime
+local abs = math.abs
 local Hekili = _G[ addon ]
 local class = Hekili.Class
 local state = Hekili.State
@@ -31,15 +32,15 @@ local function trackMisses( spec, key, data )
     if not missedAt then
         missedAt, auraOf = {}, {}
         spec.missedAt, spec.missAura = missedAt, auraOf
-        local function onRow( _, subtype, _, sourceGUID, _, _, _, _, _, _, _, spellID )
+        local function onRow( timestamp, subtype, _, sourceGUID, _, _, _, _, _, _, _, spellID )
             local aura = subtype == "SPELL_MISSED" and sourceGUID == state.GUID and auraOf[ spellID ]
-            if aura then missedAt[ aura ] = GetTime() end
+            if aura then missedAt[ aura ] = timestamp end
         end
         spec:RegisterHook( "COMBAT_LOG_EVENT_UNFILTERED", onRow )
         spec:RegisterHook( "reset_precast", function()
             if now == query_time then
                 for aura, t in pairs( missedAt ) do
-                    if t > 0 and debuff[ aura ].up and t >= debuff[ aura ].applied then
+                    if t > 0 and debuff[ aura ].up and abs( debuff[ aura ].applied - t ) < 0.01 then
                         removeDebuff( "target", aura )
                     end
                 end
@@ -68,8 +69,12 @@ local methods = {
     -- `now`: what a critical hit of the cast gives, written with the same verbs when the target's row shows our cast's
     -- own crit (Primal Fury's `gain( 5, "rage" )`); the belief's only, the sim does not predict crits. `onLand`, the
     -- same way: what only a landed hit gives (a mana return), run once the cast's hit is settled as landed, never on an
-    -- avoid (aura audit C10). `now_finish`: a channel's `finish` twin in the belief, run when the channel ran to its
-    -- end (aura audit C11). `spendBase = true`:
+    -- avoid (aura audit C10). `onAvoid`, its mirror: what a dodged, parried or missed cast takes back (a buff only the
+    -- landing gives, granted by its `now`), run at the latest cast's own avoid after its target undo (L1239).
+    -- `now_finish`: a channel's `finish` twin in the belief, run when the channel ran to its
+    -- end (aura audit C11). `startsAtLanding = true`, beside a `velocity`: the belief starts the auras its `now` puts on
+    -- the target at the cast's landing, the target's believed distance over the velocity after the cast (a projectile
+    -- DoT, L482); the sim's `handler` still applies at the cast. `spendBase = true`:
     -- its `spend` (scalar or function) is a fraction of its pool's base power at any magnitude, floored, in both layers
     -- (a percent-of-base cost a stacking aura raises past 100%); without it only a cost between 0 and 1 is a fraction.
     -- Hekili's `form = key` (or a function returning one): the form or stance aura the ability needs (state:IsUsable);

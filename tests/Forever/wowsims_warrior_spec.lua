@@ -71,6 +71,10 @@ local ARMS_CHAR = setmetatable({
 -- Fury: the same Overpower window (its Overpower Weaving group reads 1282733); Berserker Rage is a trained ability the
 -- loop kit lacks. The base is the dual-wield world (ww.Fury), the log's own weapon speeds.
 local FURY = { kit = { "berserker_rage", "reckless_swings" }, requires = ARMS.requires }
+-- A live loop (no replay) keeps the world's own Overpower rule, as fury_gate.lua's loops do: `requires` reads aura
+-- 1282733, which only a replay's log writes. With it, a dodge opened the belief's window out of Battle Stance, the
+-- client then refused Overpower in it, and Fury swapped stances every ~1.2 s until the dodge aged out (L1077).
+local ARMS_LIVE_KIT, FURY_LIVE_KIT = { kit = ARMS.kit }, { kit = FURY.kit }
 -- Whirlwind's off-hand hit (1680 Tag 15, the off hand's item slot) is logged as its own Casting line: a hit of the one cast, not a decision.
 -- wowsims logs the Heroic Strike queue (25286 Tag 1) as an aura the client never shows (the client sees
 -- IsCurrentSpell): hidden.
@@ -146,8 +150,9 @@ describe("the Warrior wowsims.com packs #slow #wowsims", function()
     -- Re-pin e2842f0a78 (lane 14): 7.4 / 8.6 / 5.6 measured; L40 12.8 -> 8.6 (R6, R41: 37.4-45.4 s, Slam 8.5 s and
     -- Spearing Strike cooling, Rend up 8.1 s, five Sunders up, rage 12-28 pooling to the off-GCD Heroic Strike: nothing
     -- useful to cast). L40 uses the leveling talent build with Improved Slam and Mortal Strike.
+    -- The updated live world accepts Overpower, extending rage-starved gaps at L60.
     -- L60 runs the long-fight priority in a raid context.
-    local ARMS_LIVE = { [10] = 7.4, [40] = 8.6, [60] = 6 }
+    local ARMS_LIVE = { [10] = 7.4, [40] = 8.6, [60] = 9.6 }
     for _, level in ipairs({ 10, 40, 60 }) do
         it("Arms (wowsims.com) stays live at level " .. level, function()
             local base = level == 60 and ww.Raid or ww
@@ -190,7 +195,7 @@ describe("the Warrior wowsims.com packs #slow #wowsims", function()
         it("Fury (wowsims.com) stays live at level " .. level, function()
             ws.live(
                 "Fury (wowsims.com)",
-                content("warrior_fury", ww.Fury, "Fury (wowsims.com)", level, FURY),
+                content("warrior_fury", ww.Fury, "Fury (wowsims.com)", level, FURY_LIVE_KIT),
                 FURY_LIVE[level]
             )
         end)
@@ -200,8 +205,8 @@ describe("the Warrior wowsims.com packs #slow #wowsims", function()
     -- icon is never Sunder while the target's true 5 stacks have more than 15 s left (past any wait the queue shows)
     -- and the fifth is older than one tick (the cast's frame, before its success folds in).
     for _, case in ipairs({
-        { "warrior_arms", ww.Raid, "Arms (wowsims.com)", ARMS },
-        { "warrior_fury", ww.Fury, "Fury (wowsims.com)", FURY },
+        { "warrior_arms", ww.Raid, "Arms (wowsims.com)", ARMS_LIVE_KIT },
+        { "warrior_fury", ww.Fury, "Fury (wowsims.com)", FURY_LIVE_KIT },
     }) do
         it(case[3] .. " stops Sunder Armor at 5 stacks at level 30", function()
             local L = loop.new(content(case[1], case[2], case[3], 30, case[4]))
@@ -337,7 +342,12 @@ describe("the Warrior wowsims.com packs #slow #wowsims", function()
     -- seeds 1-20 stretch the cause names is rage-starved (gap CK: rage 0.9-9, only Shield Wall usable), not re-swept here
     -- Release fix (batch review B S5): 21.8 -> 10.2 (L40) / 14.6 (L60), the worst idle this check measures (seed 1) at the new pin; the older
     -- 21.8 was the re-timed fight under CN8 D2 and no longer happens, so the limit follows the measurement (a larger idle fails)
-    local PROT_LIVE = { [10] = 6, [40] = 10.2, [60] = 14.6 }
+    -- 0.8.5 accuracy-timing (controller L1077): L10 6.0 -> 10.4 (49.6-60.0 s), L40 10.2 -> 21.8 and L60 14.6 -> 21.8
+    -- (90.6-112.6 s), rage-starved (R41): truth 1-9 rage, only the racial defensive (Shatter Curse), Shield Wall or the
+    -- Shield Bash interrupt usable (L10's last two ticks Rend, not a Protection line). The fights are re-timed by the
+    -- loop world's Bloodrage paid by talent rank (dc913a80e: 12.5 + 1.25 a tick at Improved Bloodrage 1, as the class
+    -- file and wowsims pay; it was a flat 10 + 1)
+    local PROT_LIVE = { [10] = 10.4, [40] = 21.8, [60] = 21.8 }
     -- Count upkeep when its aura needs refreshing. This mob only swings, and Shield Wall is a low-health cue.
     local liveRequires = {
         rend = function(_, e)

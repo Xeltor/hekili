@@ -53,8 +53,10 @@ end
 -- function or table, which State.lua's mt_state answers the same way.
 local function newState(class, race)
     -- an aura, talent, cooldown or action entry: the fields the loaded functions read (strict, like the state)
-    local leaf =
-        strict({ up = false, down = true, remains = 0, stack = 0, rank = 0, enabled = false, in_range = true }, "leaf")
+    local leaf = strict(
+        { up = false, down = true, remains = 0, applied = 0, stack = 0, rank = 0, enabled = false, in_range = true },
+        "leaf"
+    )
     local resource = strict({ current = 0, lo = 0, hi = 0, max = 100 }, "resource") -- lo, hi: the sim's streams (border batch 2)
     local s = {
         table = table,
@@ -100,6 +102,8 @@ local function newState(class, race)
         }),
         equipped = every(false), -- State.lua's equipped[itemID] / equipped.shield: no gear headless
         weapon = strict({ size = 0 }, "weapon"),
+        main_hand = strict({ size = 0 }, "main hand"),
+        off_hand = strict({ size = 0 }, "off hand"),
         set_bonus = every(0), -- State.lua's set_bonus: no gear headless
         boss = false,
         history = { casts = {}, units = {} },
@@ -111,6 +115,7 @@ local function newState(class, race)
         combo_points = resource,
         gcd = strict({ remains = 0 }, "gcd"),
         combat = 0,
+        moving = false,
         time = 0,
         now = 0,
         offset = 0,
@@ -319,6 +324,12 @@ function M.load(classToken, race)
         end,
         GetTime = function()
             return client.now or 0
+        end,
+        IsInInstance = function()
+            return false, "none"
+        end,
+        IsInRaid = function()
+            return false
         end,
         UnitClassBase = function()
             return classToken

@@ -639,6 +639,8 @@ describe("the legacy profile and shares (headless Warrior)", function()
         saved.profiles.Default.packs[rw.Combat.PACK].spec = rw.CLIENT_SPEC -- the pack as the pseudo-spec release stored it
         local H = headless.new({ character = rw.Combat.character(), saved = saved, pack = rw.Combat.PACK })
         assert.are.same({}, H.loadErrors)
+        H.ctl.distance.target, H.ctl.unitCombat.target = 3, true
+        H.Fire("PLAYER_TARGET_CHANGED")
         settle(H)
         assert.are.equal(100042, H.Hekili.State.spec.id)
         assert.are.equal(100042, H.Hekili.DB.profile.packs[rw.Combat.PACK].spec)

@@ -42,6 +42,8 @@ local U = {
     haste = {}, -- by aura: its RegisterAura `swingHaste` (the swing speed's multiplier while up), 0 none
     hasteOn = {}, -- by aura: its `swingHaste` gain was applied and its fall not yet (pairs every gain with one fall)
     firstWalk = {}, -- by unit: the time of its first clean walk (Sources/Auras.lua), 0 none yet
+    sid = {}, -- by player aura: the spell ID the last player walk found it under (its rank: a `stats` by ID), 0 none;
+    -- cleared only at a build, so it outlives the aura's fall
     openFold = {}, -- by unit and aura: the I.folds of its last Cooldown Manager open (I.CastAura), 0 none
     -- by unit and aura: its last fall (I.AuraAsOf): when, and the fallen application's applied time, expiry and stacks
     fellAt = {},
@@ -63,6 +65,7 @@ I.curSlot = 0
 -- The serial of the swap folded last (Sources/Target.lua's I.targetSwapN, copied, never incremented: a swap the log
 -- dropped before its fold must not leave the target waiting for ever). Unequal: a swap waits to fold.
 I.curSwapN = 0
+I.curSwapT = -1 -- and that swap's time (Families/Now.lua: a cast whose staged write folds after it was on the old target)
 
 -- The player auras with a `consumedBy` (a set of I.HitKind names): their indices, and each one's kinds by I.HitKind;
 -- each one's `consumeIcd` (seconds, 0 none) and its last spend's time.
@@ -88,6 +91,7 @@ I.OnBuild(function(def, now)
         local haste = rawget(auras[j], "swingHaste")
         U.haste[j] = type(haste) == "number" and haste > 0 and haste or 0
         U.hasteOn[j] = false
+        U.sid[j] = 0
         if auras[j].key ~= nil then
             U.byKey[auras[j].key] = j
         end
@@ -259,7 +263,7 @@ I.On(Obs.Read, function(o, t)
         -- (Fable 5.2 review M1; F3's pattern). Only a close that happened is counted (Sources/Auras.lua).
         if U.exp0[u][j] > 0 and U.applied[u][j] == o.b then
             set(u, j, 0, 0, 0, t, "observed", Obs.Read)
-            I.AuraVerdictClosed(o.a, o.t)
+            I.AuraVerdictClosed(o.a, o.t, o.b)
         end
         return
     end
@@ -269,8 +273,10 @@ I.On(Obs.Read, function(o, t)
     local event = kind == ReadOf.Aura and Obs.Read or kind == ReadOf.AuraOpen and CDM_OPEN or 0
     if o.b == 0 then
         set(u, j, 0, 0, 0, t, "observed", event)
-    elseif kind == ReadOf.AuraOpen and U.exp0[u][j] > o.t then
-        return -- a CDM UP staged while the record was down; our cast's write, folded first in this drain, stands (F3)
+    elseif kind == ReadOf.AuraOpen and (U.exp0[u][j] > o.t or I.AuraLateMember(u, j, o.t)) then
+        -- a CDM UP staged while the record was down; our cast's write, folded first in this drain, stands (F3), also
+        -- a write of another member of its family inside its late window (Sources/Auras.lua)
+        return
     else
         local expires = o.b < 0 and HUGE or o.t + o.b
         local was, icd = U.exp0[u][j], U.icd[j]
@@ -299,6 +305,9 @@ I.On(Obs.Read, function(o, t)
             end
         end
         set(u, j, expires, applied, count, t, "observed", event)
+        if u <= 2 then
+            I.AuraClaimFolded(o.a, o.t, applied)
+        end
         if kind == ReadOf.AuraOpen then
             U.openFold[u][j] = I.folds
         end
@@ -395,7 +404,7 @@ function I.DebuffBefore(guid, j, t)
     return 0, 0, 0
 end
 
-function I.DebuffApply(guid, j, ability, cast, expires, stacks, t)
+function I.DebuffApply(guid, j, ability, cast, expires, stacks, t, applied)
     local s = debuffSlot(guid)
     if s == nil then
         return
@@ -409,7 +418,7 @@ function I.DebuffApply(guid, j, ability, cast, expires, stacks, t)
             I.auraReadsWon = I.auraReadsWon + 1
             return true, before
         end
-        set(2, j, expires, t, stacks, t, "modelled", Obs.CastSuccess, true)
+        set(2, j, expires, applied, stacks, t, "modelled", Obs.CastSuccess, true)
     else
         if expires == 0 then
             memInst[s][j] = 0
@@ -417,12 +426,12 @@ function I.DebuffApply(guid, j, ability, cast, expires, stacks, t)
             I.nextInst = I.nextInst + 1
             memInst[s][j] = I.nextInst
         end
-        memExp[s][j], memApplied[s][j], memStacks[s][j] = expires, expires > 0 and t or 0, stacks
+        memExp[s][j], memApplied[s][j], memStacks[s][j] = expires, expires > 0 and applied or 0, stacks
     end
     if entry.ability ~= ability or entry.cast ~= cast or entry.swap ~= swap then
         entry.expires, entry.previous, entry.stacks = before, previous, count
     end
-    entry.ability, entry.cast, entry.applied = ability, cast, expires > 0 and t or 0
+    entry.ability, entry.cast, entry.applied = ability, cast, expires > 0 and applied or 0
     entry.written = t
     entry.swap = swap
     return s == I.curSlot, before
@@ -443,6 +452,9 @@ function I.DebuffUndo(guid, ability, cast, t)
                 if U.applied[2][j] == entry.applied and not (seen.t >= entry.written and seen.event == Obs.Read) then
                     local was = U.exp0[2][j]
                     set(2, j, expires, entry.previous, entry.stacks, t, "modelled", Obs.Avoided, true)
+                    if expires == 0 then
+                        I.AuraUndone(j, cast, entry.expires, t)
+                    end
                     I.Log.Aura(2, j, U.id[j], was, expires, t)
                 end
             elseif memApplied[s][j] == entry.applied then
@@ -513,7 +525,7 @@ end
 -- TargetSwap: a is the new target's memory slot (0: none). TargetGone: forget slot a.
 I.On(Obs.TargetSwap, function(o)
     save(I.curSlot)
-    I.curSlot, I.curSwapN = o.a, I.targetSwapN
+    I.curSlot, I.curSwapN, I.curSwapT = o.a, I.targetSwapN, o.t
     load(o.a)
 end)
 

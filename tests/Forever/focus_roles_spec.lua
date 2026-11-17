@@ -14,8 +14,16 @@ local function flagged(path)
 end
 
 -- Outdoor and dungeon windows, then the three sustained WoWSims lines.
-local ROGUE =
-    { "slice_and_dice=1", "rupture=1", "garrote=1", "garrote=1", "garrote=1", "rupture=1", "slice_and_dice=1" }
+local ROGUE = {
+    "garrote=1",
+    "garrote=1",
+    "ambush=1",
+    "slice_and_dice=1",
+    "rupture=1",
+    "garrote=1",
+    "rupture=1",
+    "slice_and_dice=1",
+}
 -- the melee-weave strikes (Mongoose Bite, Strider Kick, Immolation Trap, Wing Clip) rotational (the user)
 -- (R51: each move arm is its own line where its move is called, at its source line's tier: the re-pin's Hunter's Mark
 -- leads, Raptor Strike's and Serpent Sting's in-range lines, then the arms: Beast Mastery and Survival walk in (walk_in
@@ -70,10 +78,11 @@ local PACKS = {
     ["Rogue/APLs/Combat"] = { "riposte=1", unpack(ROGUE) }, -- Riposte leads (owner R70)
     ["Rogue/APLs/Subtlety"] = {
         "ambush=1",
+        "garrote=1",
+        "garrote=1",
+        "ambush=1",
         "rupture=1",
         "slice_and_dice=1",
-        "garrote=1",
-        "garrote=1",
         "garrote=1",
         "rupture=1",
         "slice_and_dice=1",

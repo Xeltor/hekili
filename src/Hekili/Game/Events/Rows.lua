@@ -82,8 +82,11 @@ local MISSES = {
     RESIST = true,
     ABSORB = true,
 }
-local REFUSED = { DODGE = true, PARRY = true, MISS = true } -- the avoids that refuse the whole ability (Obs.Avoided)
-local REACTED = { DEFLECT = true, EVADE = true } -- staged as Obs.Avoided for reactions only (Families/Now.lua: no undo)
+-- the outcomes that refuse the whole ability (Obs.Avoided): a full resist or immunity too, as the ability did not apply
+-- (c I.UNLANDED: no I.HitKind, no reaction; Families/Now.lua undoes its target write only). Not Kinds.lua's REFUSED:
+-- there a RESIST stays inside the cast window (a later one is most likely another's)
+local REFUSED = { DODGE = true, PARRY = true, MISS = true, RESIST = true, IMMUNE = true }
+local REACTED = { DEFLECT = true, EVADE = true } -- target rollback and reactions, without a resource refund
 
 -- One row from an own action of kind `k` and its outcome at `t` (school mask `sch` for a spell), through CombatLog's
 -- builders (Task 5b). None without a destination: Hekili's handler would count a "" GUID as an enemy
@@ -133,7 +136,7 @@ end
 local function avoided(i, t, act)
     local a = T.ab[i]
     if (REFUSED[act] or REACTED[act] or I.IsDebuffRefusal(a, act)) and a > 0 then
-        S.Stage(Obs.Avoided, t, a, T.at[i], I.HitKind[act], T.guid[i])
+        S.Stage(Obs.Avoided, t, a, T.at[i], I.HitKind[act] or I.UNLANDED, T.guid[i])
     end
 end
 

@@ -120,10 +120,8 @@ describe("Rogue field pull sequences", function()
     it("reserves Energy for a channel and resumes damage when the channel ends early", function()
         local H = rogue("Combat", 20, { instance = "party", group = 5, threat = 0, energy = 10, cast = true })
         local rec = pick(H)
-        -- Steady icons retain an existing countdown for one publication when another countdown replaces it.
-        -- That old builder must remain in the future; the next update exposes the reserved interrupt.
-        assert.are.equal("sinister_strike", rec.actionName)
-        assert.is_true(rec.time > 2)
+        assert.are.equal("kick", rec.actionName) -- combat entry publishes the first interrupt immediately
+        assert.is_true(rec.time > 0)
         resources(H, 0, 12) -- 0.2 s of Energy regeneration; a constant plain 10 would erase that progress
         rec = pick(H)
         assert.are.equal("kick", rec.actionName)

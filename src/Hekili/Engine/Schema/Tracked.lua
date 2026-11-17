@@ -340,6 +340,9 @@ local function buildDef()
                 insert(def.abilities, rec)
                 def.abilityIds[#def.abilities] = ids
                 local slot = rec.spend ~= nil and slotByKey[rec.spendType or class.primaryResource] or 0
+                if slot == 0 then
+                    rec.usable = nil -- only resource-ladder predicates run in the belief
+                end
                 def.abilitySlot[#def.abilities] = slot
             end
         end

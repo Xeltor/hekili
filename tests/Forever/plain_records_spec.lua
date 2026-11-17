@@ -156,12 +156,9 @@ end
 
 -- The globals a belief-run function reads that the belief's context lacks, today: each a deferral candidate of gear
 -- Task 5 (gear-task-5-report.md). A new one fails; a fixed one must leave this list.
--- Hekili_Shared Races/NightElf.lua: Shadowmeld's gate reads the core's boss / solo / moving; nil in the belief, which
--- answers "requires boss fight" there (deferral D1).
-local SHADOWMELD = { "shadowmeld.usable reads boss", "shadowmeld.usable reads moving", "shadowmeld.usable reads solo" }
 local function with(...)
     local out = {}
-    for _, list in ipairs({ SHADOWMELD, ... }) do
+    for _, list in ipairs({ ... }) do
         for _, v in ipairs(list) do
             out[#out + 1] = v
         end
@@ -209,7 +206,6 @@ local KNOWN_MISSING = {
             { "blizzard", "frost" },
             { "cone_of_cold", "frost" },
             { "counterspell", "arcane" },
-            { "evocation", "arcane" },
             { "fire_blast", "fire" },
             { "fireball", "fire" },
             { "frost_nova", "frost" },
@@ -223,12 +219,10 @@ local KNOWN_MISSING = {
             { "scorch", "fire" }
         )
     ),
-    -- seal_up: a RegisterStateExpr of the core's. Judgement is `ladder = false` (the belief never runs it); Swift
-    -- Judgement's runs and answers nil, so the belief never reads its short answer as mana (D4)
-    ["paladin_world Retribution"] = with({ "judgement.usable reads seal_up", "swift_judgement.usable reads seal_up" }),
+    -- seal_up: a RegisterStateExpr of the core's. Judgement is `ladder = false` (the belief never runs it).
+    ["paladin_world Retribution"] = with({ "judgement.usable reads seal_up" }),
     ["priest_world Smite"] = with(
         locked(
-            { "dark_sacrifice", "shadow" },
             { "devouring_plague", "shadow" },
             { "holy_fire", "holy" },
             { "holy_nova", "holy" },
@@ -246,8 +240,6 @@ local KNOWN_MISSING = {
     ["warlock_world Affliction"] = with(
         {
             "demonic_sacrifice.now reads pet",
-            "demonic_sacrifice.usable reads pet",
-            "health_funnel.usable reads pet",
             "summon_felhunter.now reads pet",
             "summon_imp.now reads pet",
             "summon_incubus.now reads pet",
@@ -276,11 +268,9 @@ local KNOWN_MISSING = {
             { "drain_life", "shadow" },
             { "drain_mana", "shadow" },
             { "drain_soul", "shadow" },
-            { "health_funnel", "shadow" },
             { "hellfire", "fire" },
             { "immolate", "fire" },
             { "incinerate", "fire" },
-            { "life_tap", "shadow" },
             { "rain_of_fire", "fire" },
             { "searing_pain", "fire" },
             { "shadow_bolt", "shadow" },
@@ -345,6 +335,11 @@ describe("the build's plain records at every pack #slow", function()
             metatabled(def, "def", {}, hits)
             assert.are.same({}, hits)
             assert.is_true(#def.abilities > 0 and #def.auras > 0 and #def.resources > 0)
+            for a, rec in ipairs(def.abilities) do
+                if def.abilitySlot[a] == 0 then
+                    assert.is_nil(rec.usable, rec.key)
+                end
+            end
         end)
 
         it(name .. ": every function field runs in the belief's context", function()

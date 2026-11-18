@@ -92,59 +92,48 @@ local methods = {
         if a.id then
             if a.id > 0 then
                 a.onLoad = function( a )
-                    local d = GetSpellInfo( a.id )
-                    a.name = d and d.name
+                    -- Keep the numeric spell identity while a cold client's metadata is still loading.
+                    Hekili:ContinueOnSpellLoad( a.id, function( success )
+                        if not success then return end
+                        local d = GetSpellInfo( a.id )
+                        local texture = a.texture or GetSpellTexture( a.id ) or ( d and d.iconID )
+                        if not d or not d.name or not texture then return false end
 
-                    if not a.name then
-                        for k, v in pairs( class.auraList ) do
-                            if v == a then class.auraList[ k ] = nil end
+                        a.name, a.desc = d.name, GetSpellDescription( a.id )
+                        if not a.funcs.texture then a.texture = texture end
+                        if self.id > 0 then
+                            class.auraList[ a.key ] = "|T" .. texture .. ":0|t " .. a.name
                         end
 
-                        Hekili.InvalidSpellIDs = Hekili.InvalidSpellIDs or {}
-                        Hekili.InvalidSpellIDs[ a.id ] = a.name or a.key
+                        self.auras[ a.name ] = a
+                        if state.spec.id == self.id or state.spec.kitID == self.id then
+                            -- Copy to class table as well.
+                            class.auras[ a.name ] = a
+                        end
 
-                        a.id = a.key
-                        a.name = a.name or a.key
+                        if self.pendingItemSpells[ a.name ] then
+                            local items = self.pendingItemSpells[ a.name ]
 
-                        return
-                    end
+                            if type( items ) == "table" then
+                                for i, item in ipairs( items ) do
+                                    local ability = self.abilities[ item ]
+                                    ability.itemSpellKey = a.key .. "_" .. ability.itemSpellID
 
-                    a.desc = GetSpellDescription( a.id )
-
-                    local texture = a.texture or GetSpellTexture( a.id )
-
-                    if self.id > 0 then
-                        class.auraList[ a.key ] = "|T" .. texture .. ":0|t " .. a.name
-                    end
-
-                    self.auras[ a.name ] = a
-                    if state.spec.id == self.id or state.spec.kitID == self.id then
-                        -- Copy to class table as well.
-                        class.auras[ a.name ] = a
-                    end
-
-                    if self.pendingItemSpells[ a.name ] then
-                        local items = self.pendingItemSpells[ a.name ]
-
-                        if type( items ) == "table" then
-                            for i, item in ipairs( items ) do
-                                local ability = self.abilities[ item ]
+                                    self.abilities[ ability.itemSpellKey ] = a
+                                    class.abilities[ ability.itemSpellKey ] = a
+                                end
+                            else
+                                local ability = self.abilities[ items ]
                                 ability.itemSpellKey = a.key .. "_" .. ability.itemSpellID
 
                                 self.abilities[ ability.itemSpellKey ] = a
                                 class.abilities[ ability.itemSpellKey ] = a
                             end
-                        else
-                            local ability = self.abilities[ items ]
-                            ability.itemSpellKey = a.key .. "_" .. ability.itemSpellID
 
-                            self.abilities[ ability.itemSpellKey ] = a
-                            class.abilities[ ability.itemSpellKey ] = a
+                            self.pendingItemSpells[ a.name ] = nil
+                            self.itemPended = nil
                         end
-
-                        self.pendingItemSpells[ a.name ] = nil
-                        self.itemPended = nil
-                    end
+                    end )
                 end
             end
             self.auras[ a.id ] = a

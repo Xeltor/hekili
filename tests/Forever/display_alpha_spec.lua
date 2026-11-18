@@ -3,9 +3,43 @@
 -- Arms fight with a combat-only Primary display: hidden before the pull, shown through combat, hidden after, and no
 -- other alpha change (the check agrees with the status subscriber's UpdateAlpha at each combat edge).
 local loop = require("Game.harness.loop")
+local headless = require("Game.harness.headless")
 local ww = require("Forever.helpers.warrior_world")
 
 describe("the per-frame alpha check of a combat-only display", function()
+    it("shows recommendations on the first pull after an idle combat-end event at login", function()
+        local H = headless.new({ character = ww.Raid.character(), pack = ww.PACK })
+        local hekili, ctl = H.Hekili, H.ctl
+        local vis = hekili.DB.profile.displays.Primary.visibility
+        vis.advanced = true
+        vis.pve.always, vis.pve.target, vis.pve.combat, vis.pve.combatTarget = 0, 0, 0, 1
+        hekili:UpdateDisplayVisibility()
+        local display = H.env.HekiliDisplayPrimary
+        assert.are.equal(0, display.alpha)
+
+        H.Fire("PLAYER_REGEN_ENABLED") -- Already idle, with no earlier fight to resume.
+        ctl.inRange.target, ctl.level.target = true, 60
+        H.Fire("PLAYER_TARGET_CHANGED")
+        ctl.now, ctl.combat = ctl.now + 1, true
+        H.Fire("PLAYER_REGEN_DISABLED")
+        assert(headless.cycle(H, ctl.now + 0.2))
+        assert.is_true(hekili.Engine.Output.status.combat)
+        assert.are.equal(1, display.alpha)
+        assert.is_string(hekili.Engine.Output.Primary.recs[1].actionName)
+
+        local started = hekili.Engine.Output.status.combatStart
+        ctl.combat = false
+        H.Fire("PLAYER_REGEN_ENABLED")
+        assert(headless.cycle(H, ctl.now + 0.2))
+        assert.are.equal(0, display.alpha)
+
+        ctl.now, ctl.combat = ctl.now + 1, true
+        H.Fire("PLAYER_REGEN_DISABLED")
+        assert(headless.cycle(H, ctl.now + 0.2))
+        assert.are.equal(started, hekili.Engine.Output.status.combatStart)
+        assert.are.equal(1, display.alpha)
+    end)
+
     it("shows the display only in combat over a fight, changing alpha only at the combat edges", function()
         local L = loop.new(ww)
         local H = L.us

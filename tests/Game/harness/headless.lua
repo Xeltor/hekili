@@ -249,7 +249,8 @@ end
 --- priority to select; `o.now` the clock [1000]; `o.raw` facade rows answered by the raw client (names: the oracle's
 --- secret-free client, §4), replaced as Facade.lua loads; `o.saved` the HekiliDB saved variables (default nil: a fresh
 --- profile); `o.scenario` Hekili.Engine.scenario ("sim": the settings' harness defaults; default nil: in game);
---- `o.beforeLogin(core, H)` runs before ADDON_LOADED. `o.beforePlayerLogin(H)` runs after it, before PLAYER_LOGIN.
+--- `o.beforeLoad(H)` configures the raw client before the core loads. `o.beforeLogin(core, H)` runs before
+--- ADDON_LOADED. `o.beforePlayerLogin(H)` runs after it, before PLAYER_LOGIN.
 --- Returns `H = { env, api, ctl, ns, Hekili, frames, timers, misses, errors, loadErrors, prints }`.
 function M.new(o)
     o = o or {}
@@ -989,6 +990,9 @@ function M.new(o)
         return true
     end
     env.HekiliDB = o.saved -- saved variables, as the client sets them before the addon's ADDON_LOADED (nil: fresh)
+    if o.beforeLoad then
+        o.beforeLoad(H)
+    end
     loadAddon(addons.CORE)
     -- the vendored LibRangeCheck-3.0 answers from this client's world (fake_api's spellbook, interact and item checks)
     -- with fake_api's knobs on its GetRange; H.realGetRange is the library's own, unwrapped

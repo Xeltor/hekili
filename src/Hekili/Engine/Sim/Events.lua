@@ -322,18 +322,17 @@ Hekili.FeignEvent = ns.FeignEvent
 
 
 do
-    local isUnregistered = false
+    local isUnregistered = true
     local next = _G.next
 
     local requeued = {}
 
-    local HandleSpellData = function( event, spellID, success )
+    local function HandleSpellData( event, spellID, success )
         local callbacks = spellCallbacks[ spellID ]
 
         if callbacks then
             for i = #callbacks, 1, -1 do
-                callbacks[i]( event, spellID, success )
-                remove( callbacks, i )
+                if callbacks[i]( success ) ~= false then remove( callbacks, i ) end
             end
 
             if #callbacks == 0 then
@@ -348,8 +347,7 @@ do
     end
 
     function Hekili:ContinueOnSpellLoad( spellID, func )
-        if C_Spell.IsSpellDataCached( spellID ) then
-            func( true )
+        if C_Spell.IsSpellDataCached( spellID ) and func( true ) ~= false then
             return
         end
 
@@ -367,8 +365,10 @@ do
 
     function Hekili:RunSpellCallbacks()
         for spell, callbacks in pairs( spellCallbacks ) do
-            for i = #callbacks, 1, -1 do
-                if not callbacks[ i ]( true ) == false then remove( callbacks, i ) end
+            if C_Spell.IsSpellDataCached( spell ) then
+                for i = #callbacks, 1, -1 do
+                    if callbacks[ i ]( true ) ~= false then remove( callbacks, i ) end
+                end
             end
 
             if #callbacks == 0 then
@@ -884,10 +884,11 @@ local COMBAT_RESUME_TIME = 5
 RegisterEvent( "PLAYER_REGEN_DISABLED", function( event )
     local t = GetTime()
 
-    if t - combat_ended <= COMBAT_RESUME_TIME then
+    -- An idle regen event can arrive at login, before there is a combat start to resume.
+    if last_combat > 0 and t - combat_ended <= COMBAT_RESUME_TIME then
         state.combat = last_combat
     else
-        state.combat = GetTime() - 0.01
+        state.combat = t - 0.01
     end
 
     if Hekili.Config and not LibStub( "AceConfigDialog-3.0" ).OpenFrames[ "Hekili" ] then

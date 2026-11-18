@@ -8,7 +8,7 @@ local abs = math.abs
 local Hekili = _G[ addon ]
 local class = Hekili.Class
 local state = Hekili.State
-local CommitKey, GetItemInfo = ns.commitKey, ns.CachedGetItemInfo
+local CommitKey = ns.commitKey
 local GetSpellDescription = C_Spell.GetSpellDescription
 local GetSpellTexture = C_Spell.GetSpellTexture
 local GetItemSpell = C_Item.GetItemSpell
@@ -321,62 +321,43 @@ local methods = {
 
         if a.id and a.id > 0 then
             a.onLoad = function()
-                local spellInfo = GetSpellInfo( a.id )
+                -- A cold client can know the spell before its name or artwork is cached. Finish the class's
+                -- registrations now, and fill the display metadata when the spell data arrives.
+                Hekili:ContinueOnSpellLoad( a.id, function( success )
+                    if not success then return end
+                    local info = GetSpellInfo( a.id )
+                    local texture = a.texture or GetSpellTexture( a.id ) or ( info and info.iconID )
+                    if not info or not info.name or not texture then return false end
 
-                if spellInfo == nil then
-                    spellInfo = GetItemInfo( a.id )
-                end
-                if spellInfo then
-                    a.name = spellInfo.name
-                else
-                    a.name = nil
-                end
-
-                if not a.name then
-                    for k, v in pairs( class.abilityList ) do
-                        if v == a then class.abilityList[ k ] = nil end
+                    a.name, a.desc = info.name, GetSpellDescription( a.id )
+                    if not a.funcs.texture then a.texture = texture end
+                    if a.suffix then
+                        a.actualName = a.name
+                        a.name = a.name .. " " .. a.suffix
                     end
-                    Hekili.InvalidSpellIDs = Hekili.InvalidSpellIDs or {}
-                    table.insert( Hekili.InvalidSpellIDs, a.id )
-                    Hekili:Error( "Name info not available for " .. a.id .. "." )
-                    return
-                end
 
-                if not a.name then Hekili:Error( "Name info not available for " .. a.id .. "." ); return false end
+                    self.abilities[ a.name ] = self.abilities[ a.name ] or a
+                    class.abilities[ a.name ] = class.abilities[ a.name ] or a
 
-                a.desc = GetSpellDescription( a.id ) -- was returning raw tooltip data.
+                    if not a.unlisted then
+                        class.abilityList[ ability ] = a.listName or ( "|T" .. texture .. ":0|t " .. a.name )
+                        class.abilityByName[ a.name ] = class.abilities[ a.name ] or a
+                    end
 
-                if a.suffix then
-                    a.actualName = a.name
-                    a.name = a.name .. " " .. a.suffix
-                end
-
-                local texture = a.texture or GetSpellTexture( a.id )
-
-                self.abilities[ a.name ] = self.abilities[ a.name ] or a
-                class.abilities[ a.name ] = class.abilities[ a.name ] or a
-
-                if not a.unlisted then
-                    class.abilityList[ ability ] = a.listName or ( "|T" .. texture .. ":0|t " .. a.name )
-                    class.abilityByName[ a.name ] = class.abilities[ a.name ] or a
-                end
-
-                if a.rangeSpell and type( a.rangeSpell ) == "number" then
-                    Hekili:ContinueOnSpellLoad( a.rangeSpell, function( success )
-                        if success then
-                            local info = GetSpellInfo( a.rangeSpell )
-                            if info then
-                                a.rangeSpell = info.name
+                    if a.rangeSpell and type( a.rangeSpell ) == "number" then
+                        Hekili:ContinueOnSpellLoad( a.rangeSpell, function( loaded )
+                            if loaded then
+                                local rangeInfo = GetSpellInfo( a.rangeSpell )
+                                if not rangeInfo or not rangeInfo.name then return false end
+                                a.rangeSpell = rangeInfo.name
                             else
                                 a.rangeSpell = nil
                             end
-                        else
-                            a.rangeSpell = nil
-                        end
-                    end )
-                end
+                        end )
+                    end
 
-                Hekili.OptionsReady = false
+                    Hekili.OptionsReady = false
+                end )
             end
         end
 

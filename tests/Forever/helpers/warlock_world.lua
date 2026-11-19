@@ -914,4 +914,15 @@ M.Destruction = content("Destruction")
 M.SMRuin = content("SMRuin")
 M.ShadowBrand = content("ShadowBrand")
 
+-- The long-form damage gates run the same one-player world in a raid instance.
+function M.raid(C)
+    return setmetatable({
+        character = function()
+            local character = C.character()
+            character.instanceType = "raid"
+            return character
+        end,
+    }, { __index = C })
+end
+
 return M

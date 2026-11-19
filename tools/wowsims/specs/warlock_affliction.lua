@@ -38,9 +38,7 @@
 -- that last Life Tap, and `guard` "default #12" shows the Life Tap only under Shadow Bolt's cost. In wowsims's build
 -- Wrack (200 mana) is cheaper than Shadow Bolt and always castable above its cost, so neither line moves the replay or
 -- the loops (docs/dev/wowsims-packs.md, Deviations by ruling).
--- Leveling (owner ruling 2026-10-21: no low-level filler): each list ends in Shadow Bolt then Life Tap under its cost,
--- so no bracket idles (worst 0.2 s at 10, 40 and 60; LIVE60 0.2).
-return {
+return require("tools.wowsims.warlock_pve")({
     class = "WARLOCK",
     pack = "Affliction (wowsims.com)",
     spec = "affliction",
@@ -83,5 +81,4 @@ return {
     guard = {
         ["default #12"] = { expect = "life_tap", cond = "!action.shadow_bolt.known|mana.lo<action.shadow_bolt.cost" },
     }, -- the final Life Tap (header)
-    leveling = {},
-}
+})

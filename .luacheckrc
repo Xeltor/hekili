@@ -171,6 +171,7 @@ files["src/Hekili_Priest/Priest.lua"] = { globals = priestEnv }
 local warlockEnv = {
     "mana", "instant", "victim_channel",
     "min", "max", "level", "pet", "summonPet", "dismissPet", "soul_shards", "locked_out_shadow", "locked_out_fire",
+    "active_enemies", "combat", "ranged", "warlock_forecast",
 }
 for _, k in ipairs(stateEnv) do
     warlockEnv[#warlockEnv + 1] = k

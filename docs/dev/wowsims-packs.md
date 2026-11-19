@@ -208,8 +208,9 @@ Translation:
   Form), which a trailing line would never reach; silent while the form is up. They lead a non-empty precombat list
   too, so a pre-pull cast never shows before the form.
 - `extra` (`{ { before = "<action>", line = "<simc line>" } }`): a line put just before the first `actions` line of
-  `before`, or its last with `last = true` (the translator errors when there is none). Only for content wowsims cannot model, never to tune a
-  wowsims line, and each use names its reason in the recipe comment. The user's ruling (2026-10-21), for Warrior's
+  `before`, or its last with `last = true` (the translator errors when there is none). Set `translated = true` to find
+  the anchor in the translated rotation when a recipe also adds an earlier line for the same action. Use extras for
+  content wowsims cannot model and give the reason in the recipe comment. The user's ruling (2026-10-21), for Warrior's
   Victory Rush: "This isn't something from wowsims, but needs to be added since it won't affect wowsims accuracy
   (wowsims never goes mob to mob so VR isn't ever a thing). Should be used just above bloodthirst (since it's a mini
   bloodthirst)."

@@ -37,9 +37,7 @@
 -- (action.shadow_bolt.known&debuff.immolate.remains<action.shadow_bolt.cast)` (rule 6's `(K&t)` guard form): without
 -- Incinerate Immolate shows only inside the filler's cast of falling off, as wowsims's line refreshes inside
 -- Incinerate's (controller ruling, "follow wowsims"); with Incinerate the term is true, so the lines are wowsims's.
--- Leveling (owner ruling 2026-10-21: no low-level filler): each list ends in Shadow Bolt then Life Tap under its cost,
--- so no bracket idles (worst 0.2 s at 10, 40 and 60; LIVE60 0.2).
-return {
+return require("tools.wowsims.warlock_pve")({
     class = "WARLOCK",
     pack = "Destruction (wowsims.com)",
     spec = "destruction",
@@ -92,5 +90,4 @@ return {
         },
         ["default #18"] = { expect = "life_tap", cond = "!action.shadow_bolt.known|mana.lo<action.shadow_bolt.cost" },
     }, -- the final Life Tap (header)
-    leveling = {},
-}
+})

@@ -15,7 +15,9 @@ local function content(spec, base, pack, level, extra)
     for k, v in pairs(extra or {}) do
         o[k] = v
     end
-    return ws.content(base, o)
+    local C = ws.content(base, o)
+    -- The pinned profiles are sustained boss fights. Lower brackets exercise the outdoor leveling rules instead.
+    return level == 60 and W.raid(C) or C
 end
 
 -- recipe, world content, pack, the replay floor (the first clean run's; lowered only with its cause beside it),

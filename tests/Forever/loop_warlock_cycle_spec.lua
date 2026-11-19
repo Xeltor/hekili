@@ -9,12 +9,13 @@ local w = require("Forever.helpers.warlock_world")
 
 describe("Recommend Target Swaps in a three-mob world #warlock", function()
     it("Destruction swaps to spread its DoTs and curse to the other mobs, as steady as with the toggle off", function()
-        local L = loop.new(w.Destruction)
+        local content = w.raid(w.Destruction)
+        local L = loop.new(content)
         local a = loop.fight(L, 1, { arm = "cycle-follow" })
-        local mOn = loop.tally(loop.new(w.Destruction), 3, { arm = "cycle-follow" })
+        local mOn = loop.tally(loop.new(content), 3, { arm = "cycle-follow" })
         local on = loop.summary(mOn)
         pack_gate.health(mOn, on, loop.line(mOn)) -- the toggle-on path: no error, raise, self-check miss or secret
-        local off = loop.summary(loop.tally(loop.new(w.Destruction), 3, { arm = "cycle-follow-off" }))
+        local off = loop.summary(loop.tally(loop.new(content), 3, { arm = "cycle-follow-off" }))
         print(
             ("\ncycle-follow Destruction: cycle presses %d, landed on another mob %d; flicker %.2f/min (off %.2f)"):format(
                 a.cyclePresses,

@@ -34,9 +34,7 @@
 -- `guard` "default #15" shows that Life Tap only under Shadow Bolt's cost, so never at full mana. In wowsims's build it
 -- fires only when Shadow Bolt cannot be paid, so the guard moves neither the replay nor the loops
 -- (docs/dev/wowsims-packs.md, Deviations by ruling).
--- Leveling (owner ruling 2026-10-21: no low-level filler): each list ends in Shadow Bolt then Life Tap under its cost,
--- so no bracket idles (worst 0.2 s at 10, 40 and 60; LIVE60 0.2).
-return {
+return require("tools.wowsims.warlock_pve")({
     class = "WARLOCK",
     pack = "Shadow Brand (wowsims.com)",
     spec = "demonology",
@@ -76,12 +74,7 @@ return {
         curse_of_recklessness = 2,
         curse_of_weakness = 2,
     },
-    -- the low-level behaviour (owner ruling 2026-10-21: no low-level filler), in the pack's description
-    notes = {
-        "Before the Demonic Brand talent, Searing Pain leads the list (its brand is never up), as wowsims's own list would.",
-    },
     guard = {
         ["default #15"] = { expect = "life_tap", cond = "!action.shadow_bolt.known|mana.lo<action.shadow_bolt.cost" },
     }, -- the final Life Tap (header)
-    leveling = {},
-}
+})

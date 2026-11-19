@@ -15,6 +15,8 @@ local FILE = "src/Hekili_Warlock/Warlock.lua"
 -- fraction the class file declares.
 local KIT = {
     shadow_bolt = { { 686, 695, 705, 1088, 1106, 7641, 11659, 11660, 11661, 25307 }, 380, 0, "spell" },
+    shoot = { { 5019 }, 0, 0, "off" },
+    auto_attack = { { 6603 }, 0, 0, "off" },
     immolate = { { 348, 707, 1094, 2941, 11665, 11667, 11668, 25309 }, 380, 0, "spell" },
     corruption = { { 172, 6222, 6223, 7648, 11671, 11672, 25311 }, 340, 0, "spell" },
     bane_of_agony = { { 980, 1014, 6217, 11711, 11712, 11713 }, 215, 0, "spell" },
@@ -95,6 +97,7 @@ describe("Forever Warlock", function()
     local function env(ranks, spirit)
         local e = ld.env(w)
         e.min, e.max, e.haste = math.min, math.max, 1
+        e.warlock_forecast = { healthSpent = 0, shardsSpent = 0 }
         for k, r in pairs(ranks or {}) do
             e.talent[k] = { rank = r, enabled = r > 0 }
         end
@@ -137,7 +140,7 @@ describe("Forever Warlock", function()
             )
             assert.are.equal("function", type(a.known), key)
         end
-        assert.are.equal(43, n)
+        assert.are.equal(45, n)
         assert.are.equal("cooldowns", w.abilities.amplify_curse.toggle)
         for _, key in ipairs({
             "summon_imp",
@@ -1010,7 +1013,9 @@ describe("Forever Warlock through the engine", function()
     -- count: shown only with Recommend Target Swaps on and two enemies, with the cycle icon; once it lands on mob A, a
     -- tab to mob B finds it remembered there (one Havoc at a time), so it is not shown again.
     it("shows Bane of Havoc for another target only, with Recommend Target Swaps on, one at a time", function()
-        local H = headless.new({ character = character(), pack = "Destruction (wowsims.com)" })
+        local raid = character()
+        raid.instanceType = "raid"
+        local H = headless.new({ character = raid, pack = "Destruction (wowsims.com)" })
         assert.are.same({}, H.loadErrors)
         H.ctl.inRange.target, H.ctl.level.target = true, 60
         H.Fire("PLAYER_TARGET_CHANGED")
@@ -1134,7 +1139,7 @@ describe("Forever Warlock priorities", function()
     it("names only registered abilities and auras", function()
         local cls = ld.load(nil, FILE, "WARLOCK")
         local kinds = { buff = cls.auras, debuff = cls.auras, cooldown = cls.abilities, action = cls.abilities }
-        -- Hekili's `all`: Hekili_Shared's use_items, the racials, Demonic Rune and the Major Mana Potion
+        -- The core's call_action_list and Hekili_Shared's item and racial actions.
         local shared = {
             use_items = true,
             call_action_list = true,
@@ -1143,6 +1148,8 @@ describe("Forever Warlock priorities", function()
             eureka = true,
             demonic_rune = true,
             major_mana_potion = true,
+            healthstone = true,
+            healing_potion = true,
         }
         for _, p in ipairs(assert(loadfile("tools/make_pack.lua"))("lists", "warlock")) do
             for list, entries in pairs(p.lists) do
@@ -1181,7 +1188,7 @@ describe("Forever Warlock Movement (R8)", function()
     end
 
     local function world(C, yd)
-        local H = headless.new({ character = C.character(), pack = C.PACK })
+        local H = headless.new({ character = ww.raid(C).character(), pack = C.PACK })
         assert.are.same({}, H.loadErrors)
         H.ctl.level.target, H.ctl.distance.target = 60, yd
         H.Fire("PLAYER_TARGET_CHANGED")
@@ -1231,19 +1238,20 @@ describe("Forever Warlock without the endgame filler", function()
     local ww = require("Forever.helpers.warlock_world")
     local ws = require("Forever.helpers.wowsims")
 
-    -- The pack's `actions` lines (`list`: its `actions.<list>` lines, as `actions` ones) from the last line that is
-    -- `filler` alone (a `filler` ending in "," its prefix).
+    -- The pack's `actions` lines (`list`: its `actions.<list>` lines, as `actions` ones) from the last `filler` line.
+    -- A filler ending in "," names a prefix with additional modifiers.
     local function tail(pack, filler, list)
         local f = assert(io.open("src/Hekili_Warlock/APLs/" .. pack .. ".simc"))
         local s = f:read("*a")
         f:close()
         local lines, from = {}, nil
         local at = list and "actions%." .. list .. "%+=/" or "actions%+=/"
+        local head = "actions+=/" .. filler
+        local prefix = filler:sub(-1) == "," and head or head .. ","
         for l in s:gmatch("\n(" .. at .. "[^\n]+)") do
             l = l:gsub("^" .. at, "actions+=/")
             lines[#lines + 1] = l
-            local head = "actions+=/" .. filler
-            if l == head or (filler:sub(-1) == "," and l:sub(1, #head) == head) then
+            if l == head or l:sub(1, #prefix) == prefix then
                 from = #lines
             end
         end
@@ -1265,7 +1273,7 @@ describe("Forever Warlock without the endgame filler", function()
                 race = ws.race(o.spec),
             })
         end
-        local ch = C.character()
+        local ch = ww.raid(C).character()
         local w = ld.load(nil, FILE, "WARLOCK")
         local drop, talents = {}, {}
         for _, id in ipairs(unknown and idsOf(w.abilities[unknown]) or {}) do

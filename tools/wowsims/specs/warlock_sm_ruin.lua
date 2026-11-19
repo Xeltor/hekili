@@ -30,9 +30,7 @@
 -- `guard` "default #13" shows that Life Tap only under Shadow Bolt's cost, so never at full mana. In wowsims's build it
 -- fires only when Shadow Bolt cannot be paid, so the guard moves neither the replay nor the loops
 -- (docs/dev/wowsims-packs.md, Deviations by ruling).
--- Leveling (owner ruling 2026-10-21: no low-level filler): each list ends in Shadow Bolt then Life Tap under its cost,
--- so no bracket idles (worst 0.2 s at 10, 40 and 60; LIVE60 0.2).
-return {
+return require("tools.wowsims.warlock_pve")({
     class = "WARLOCK",
     pack = "SM Ruin (wowsims.com)",
     spec = "affliction",
@@ -73,12 +71,23 @@ return {
     -- so these stand-ins cast each DoT when it is down or about to expire (the entries' own strictMultidot overlap,
     -- `maxOverlap = spellCastTime`): not wowsims; need-based (R41), before the APL's #11 Life Tap as #8-#10 sit
     extra = {
-        { before = "life_tap", line = "corruption,focus=2,if=debuff.corruption.remains<=action.corruption.cast" },
-        { before = "life_tap", line = "siphon_life,focus=2,if=debuff.siphon_life.remains<=action.siphon_life.cast" },
-        { before = "life_tap", line = "immolate,focus=2,if=debuff.immolate.remains<=action.immolate.cast" },
+        {
+            before = "life_tap",
+            translated = true,
+            line = "corruption,focus=2,if=debuff.corruption.remains<=action.corruption.cast",
+        },
+        {
+            before = "life_tap",
+            translated = true,
+            line = "siphon_life,focus=2,if=debuff.siphon_life.remains<=action.siphon_life.cast",
+        },
+        {
+            before = "life_tap",
+            translated = true,
+            line = "immolate,focus=2,if=debuff.immolate.remains<=action.immolate.cast",
+        },
     },
     guard = {
         ["default #13"] = { expect = "life_tap", cond = "!action.shadow_bolt.known|mana.lo<action.shadow_bolt.cost" },
     }, -- the final Life Tap (header)
-    leveling = {},
-}
+})

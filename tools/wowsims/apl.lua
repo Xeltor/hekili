@@ -2991,7 +2991,7 @@ function M.translate(rotation, c)
     for _, x in ipairs(c.extra) do
         local at
         for i, body in ipairs(byName.default) do
-            if body:match("^[%w_]+") == x.before then
+            if body:match("^[%w_]+") == x.before and (not x.translated or origin.default[i] ~= false) then
                 at = i
                 if not x.last then
                     break

@@ -414,16 +414,29 @@ end, "target secret always [W PR14]; Health()")
 -- without a call. Allocates nothing.
 local realUnitHealth, realUnitHealthMax = resolve("UnitHealth"), resolve("UnitHealthMax")
 
--- A health-cost check uses current readings. Nil means there is no readable health fraction.
-function Facade.PlayerHealthFraction()
-    local health = realUnitHealth and realUnitHealth("player")
+-- Health-cost checks use current readings. Nil means there is no readable health fraction.
+local function healthFraction(unit)
+    local health = realUnitHealth and realUnitHealth(unit)
     if issecretvalue(health) or type(health) ~= "number" then
         return nil
     end
-    local maximum = realUnitHealthMax and realUnitHealthMax("player")
+    local maximum = realUnitHealthMax and realUnitHealthMax(unit)
     if not issecretvalue(maximum) and type(maximum) == "number" and maximum > 0 then
         return health / maximum
     end
+end
+
+function Facade.PlayerHealthFraction()
+    return healthFraction("player")
+end
+
+function Facade.PetHealthFraction()
+    return healthFraction("pet")
+end
+
+-- A hidden target may have a tighter health bound from observed execute windows and damage.
+function Facade.TargetHealthUpperFraction()
+    return healthFraction("target") or VS.Health("target", now()).hi
 end
 
 kept("UnitHealthMax", realUnitHealthMax and "hybrid" or "virtual", function(unit)
@@ -946,6 +959,22 @@ hybrid(
 )
 
 local realUnitExists = resolve("UnitExists")
+
+-- A pet-care recommendation needs the actual pet unit. Nil means its presence or death is unreadable.
+function Facade.PetAlive()
+    local exists = realUnitExists and realUnitExists("pet")
+    if not issecretvalue(exists) then
+        if exists == false then
+            return false
+        elseif exists == true then
+            local dead = realUnitIsDead and realUnitIsDead("pet")
+            if not issecretvalue(dead) and type(dead) == "boolean" then
+                return not dead
+            end
+        end
+    end
+end
+
 kept("UnitExists", "hybrid", function(unit)
     if unit == "pet" then
         local exists, _, model = VS.Pet(now())

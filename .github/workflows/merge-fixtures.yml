@@ -7,6 +7,21 @@ permissions:
   contents: read
 
 jobs:
+  loops:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: [loop, party, druid, rogue, paladin, shaman, hunter, mage, priest, warlock]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - uses: actions/cache@v4
+        with:
+          path: .lua
+          key: lua-${{ runner.os }}-${{ hashFiles('scripts/bootstrap.sh') }}
+      - run: make bootstrap
+      - run: BUSTED_JOBS=1 make test-${{ matrix.tag }}
   record:
     runs-on: ubuntu-latest
     steps:

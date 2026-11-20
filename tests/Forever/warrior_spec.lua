@@ -417,10 +417,10 @@ describe("Forever Warrior", function()
         assert.is_nil(w.resource[2].reckless_swings)
     end)
 
-    -- A landed Heroic Strike or Cleave rolls Unbridled Wrath (ab0f00e4fc, EV-0148).
-    -- Keep Reckless Swings conservative until its charge timing is reconciled (CN15).
+    -- wowsims talents_fury.go at ab0f00e4fc (EV-0148, EV-0138): a landed Heroic Strike or Cleave rolls Unbridled Wrath and
+    -- spends one Reckless Swings charge (5 rage) a cast; its avoid takes both back and gives the charge back
     it(
-        "pays a strike's Unbridled Wrath at its cast and takes it back on avoid, without assuming Reckless rage",
+        "pays a strike's Unbridled Wrath and one Reckless Swings charge at its cast, and takes both back on its avoid",
         function()
             for _, key in ipairs({ "heroic_strike", "cleave" }) do
                 local a = w.abilities[key]
@@ -442,12 +442,12 @@ describe("Forever Warrior", function()
                 lw.run(a.now, e)
                 assert.is_true(math.abs(e.gained[1] - 0.595) < 1e-9, key .. " " .. tostring(e.gained[1]))
                 assert.are.same(e.gained[1], spreads[1]) -- the floor gains none: no proc is seen
-                assert.is_nil(e.gained[2])
-                assert.are.same({}, e.stackRemoved)
+                assert.are.same({ 5 }, { e.gained[2] })
+                assert.are.same({ "reckless_swings" }, e.stackRemoved)
                 lw.run(a.onAvoid, e)
                 assert.is_true(math.abs(e.spent[1] - 0.595) < 1e-9, key .. " " .. tostring(e.spent[1]))
-                assert.is_nil(e.spent[2])
-                assert.are.same({}, stacks) -- no unobserved charge was consumed
+                assert.are.same({ 5 }, { e.spent[2] })
+                assert.are.same({ { "reckless_swings", 7 } }, stacks) -- back to the aura's own expiry
                 e.spent = {}
                 lw.run(a.onAvoid, e) -- a second avoid: nothing more
                 assert.are.same({}, e.spent)
@@ -1446,8 +1446,8 @@ describe("the belief's rage after an avoided Execute", function()
     end)
 end)
 
--- A Heroic Strike pays Unbridled Wrath once, whichever event arrives first, and no white rage.
--- Reckless Swings remains unmodelled until resource reconciliation (CN15).
+-- wowsims talents_fury.go at ab0f00e4fc (EV-0148, EV-0138): a Heroic Strike's swing pays its Unbridled Wrath and one
+-- Reckless Swings charge once, whichever of its success and its swing the client sends first, and no white rage
 describe(
     "the belief's rage at a Heroic Strike's swing (the Fury build: Unbridled Wrath 5/5, Reckless Swings)",
     function()
@@ -1492,20 +1492,20 @@ describe(
             return R, VS.Power(1, t + 0.7).est, stacks or 0, I.CostOf(I.ab.bySpell[HEROIC_STRIKE])
         end
 
-        it("pays Unbridled Wrath's 0.595 once, in either order, and leaves Reckless charges alone", function()
+        it("pays Unbridled Wrath's 0.595 and one charge's 5 once, in either order", function()
             for _, first in ipairs({ true, false }) do
                 local R, after, stacks, cost = strike(first)
                 assert.is_true(cost > 0, tostring(cost))
-                local want = R - cost + 0.595
+                local want = R - cost + 0.595 + 5
                 assert.is_true(
                     math.abs(after - want) < 1e-6,
                     ("%s: %s -> %s, want %s"):format(tostring(first), R, after, want)
                 )
-                assert.are.equal(4, stacks, tostring(first))
+                assert.are.equal(3, stacks, tostring(first))
             end
         end)
 
-        it("takes Unbridled Wrath back when the strike is dodged", function()
+        it("takes both back and gives the charge back when the strike is dodged", function()
             local R, after, stacks, cost = strike(true, "DODGE")
             local want = R - cost + 0.8 * cost -- Heroic Strike's 80% refund (refundOnAvoid)
             assert.is_true(math.abs(after - want) < 1e-6, ("%s -> %s, want %s"):format(R, after, want))

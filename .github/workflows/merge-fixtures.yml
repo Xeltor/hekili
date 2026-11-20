@@ -2,6 +2,10 @@ name: merge fixtures
 
 on:
   workflow_dispatch:
+    inputs:
+      trace_only:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -27,6 +31,7 @@ jobs:
         run: git show ad298381a:src/Hekili_Warrior/Warrior.lua > src/Hekili_Warrior/Warrior.lua
       - run: REPLAY_TRACE=1 TIMING=record .lua/bin/busted --filter='Fury.*follows' tests/Forever/wowsims_warrior_spec.lua
   loops:
+    if: ${{ !inputs.trace_only }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -42,6 +47,7 @@ jobs:
       - run: make bootstrap
       - run: BUSTED_JOBS=1 make test-${{ matrix.tag }}
   record:
+    if: ${{ !inputs.trace_only }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

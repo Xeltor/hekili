@@ -670,6 +670,11 @@ function M.run(L, seed, o, drivers)
                     run.dec.ours[n], run.dec.theirs[n] = firstGcd(steps[1].H), d.key
                     if os.getenv("REPLAY_TRACE") and run.dec.ours[n] ~= d.key then
                         print(("replay %.3f: %s -> %s"):format(d.t, d.key, tostring(run.dec.ours[n])))
+                        if d.key == "rend" then
+                            local H = steps[1].H
+                            local p = H.ns.VirtualState.Power(1, H.ctl.now)
+                            print(("rage est %.3f lo %.3f hi %.3f at %.3f"):format(p.est, p.lo, p.hi, H.ctl.now))
+                        end
                     end
                     -- a flip at a decision point: the icon changed since the tick's poll, no cast, spend, avoid or
                     -- aura change between

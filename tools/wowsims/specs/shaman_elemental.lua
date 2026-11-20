@@ -1,6 +1,6 @@
 -- tools/wowsims/specs/shaman_elemental.lua (wowsims packs plan, Task 14): Elemental (wowsims.com)'s wowsims/forever
 -- request and translation.
--- Values from wowsims/forever (MIT, https://github.com/wowsims/forever) ui/specs/shaman/elemental/builds/testing.build.json
+-- Values from wowsims/forever (MIT, https://github.com/wowsims/forever) ui/specs/shaman/elemental/builds/default.build.json
 -- at the pin: the player (Troll before the re-pin, Windshaper Skyborne at e2842f0a78; talents
 -- 5500331023001351-053002001-053, gear, options) and the rotation, wowsims's Auto list for the build.
 -- Disagreements (P7; floor 0.93: decisions on-GCD 0.937 of 95 on the first clean run, 0.853 before the translator's
@@ -27,9 +27,9 @@
 --   lo-truth -388.7; the poll's lo was not dumped: plausibly the rank-8 Lightning Bolts, 144 in wowsims, read at the top
 --   rank's 198), so Flame Shock (170.8) reads unaffordable. Without the three travel-time misses 93 of 97 (0.959, the base).
 -- Deviation: multidot (Flame Shock) keeps the DoT on the current target only (the header's `# Deviation:` line).
--- Worked: the shaman world's Elemental distance 20 yd (the build's), its mana and regen from the re-pin log (5650; 31.13
--- a second casting, 45.25 outside the five-second rule; was 5590 / 29.75 / 42.5 as a Troll; the kit's seeds likewise:
--- no decision moved), the Troll's Berserking in the world's MAP (unused since). Windshaper Skyborne has no race file:
+-- Worked: the shaman world's Elemental distance 20 yd (the build's), its mana and regen from the 0.9 log (5950; 31.31
+-- a second casting with Mana Spring Totem's buff, 45.62 outside the five-second rule; the kit's seeds likewise: no
+-- decision moved), the Troll's Berserking in the world's MAP (unused since). Windshaper Skyborne has no race file:
 -- its Skysight is movement only (no regen mod, unlike the High Order's Read Ley Line); the shared Wind Blessed is
 -- +2% cast speed in wowsims (Lightning Bolt 2.0 s -> 1.961 s in the log). The Blood Fury and Berserking lines stay
 -- silent (other races'). The Weakness Analyzer (item 272438) is `use_items` (rule 13; as Shadow and Affliction).
@@ -43,16 +43,31 @@
 -- Levels (P8; learn_shaman.lua regenerated with the Elemental kit's ranks): L10 0.0, L40 0.0, L60 5.0 s, no leveling
 -- line needed. The spells the DB2 lacks (Lava Burst rank 4, 1326047; Elemental Mastery, 16166) still count as learned
 -- at level 1, so the lower brackets can press them early (the check's limit, docs/dev/wowsims-packs.md).
+-- Re-pin 0.9 (e4ef929e54, lane repin-shaman-09): the request and the pack's lines are unchanged; the log moves with
+-- upstream's Searing Totem cadence (an attack every 2.425 s, the first at 2.2 s: 91a36310d6, its Tag 1 rows are no
+-- choice), the spell resistance constant 8L + 19 (dffbd4b05a) and the Weakness Analyzer's on-use cooldown (90 s -> 6
+-- min in the item db: one use a fight, the ~91 s one gone). The shaman world's Elemental mana and regen follow this
+-- log (5950; 26.31 a second casting without Mana Spring Totem's buff, 31.31 with it, 45.62 outside the five-second
+-- rule; the kit's seeds likewise, spirit 14.31 and mp5 26.31): no replay decision moved.
 return {
     class = "SHAMAN",
     pack = "Elemental (wowsims.com)",
     spec = "elemental",
     name = "Elemental",
     talentTree = "shaman",
-    build = "ui/specs/shaman/elemental/builds/testing.build.json",
+    -- Re-pin ab0f00e4fc (lane repin-ab0f-shaman): default.build.json (renamed from testing.build.json): new gear,
+    -- main-hand imbue 20750 (was 20749), an extra elixir 250335, distance 20, Eye of the Beast 13968 as the on-use
+    -- trinket; the list's variables inlined (Fire Nova above Elemental Mastery; Chain Lightning only at mana.pct_lo >
+    -- 40 without Elemental Mastery up, no multi-target branch; Earth Shock on Revelation at any target count).
+    -- Elemental Focus also rolls once per Lightning Overload launch (sim/shaman/talents_elemental.go): the world does.
+    build = "ui/specs/shaman/elemental/builds/default.build.json",
     -- the build's resourcePotId 13444, Major Mana Potion; the Weakness Analyzer (ItemSparse 272438: a trinket) as
     -- Shadow and Affliction map it
-    map = { OtherActionResourcePotion = "major_mana_potion", ["item:272438"] = "use_items" },
+    map = {
+        OtherActionResourcePotion = "major_mana_potion",
+        ["item:272438"] = "use_items",
+        ["item:13968"] = "use_items",
+    },
     -- by role (docs/dev/wowsims-packs.md): Flame Shock upkeep, Earth Shock on Revelation; Chain Lightning, Lightning
     -- Bolt and the AoE lines rotational; the totems none (the user, 2026-10-21)
     focus = { flame_shock = 2, earth_shock = 1 },

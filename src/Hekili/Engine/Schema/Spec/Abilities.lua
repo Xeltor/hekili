@@ -23,7 +23,15 @@ local protectedFunctions = {
     -- Casts
     handler = true, -- Cast finish.
     impact = true,  -- Projectile impact.
+
+    sequence_ready = true, -- (windows design v6 §3.6) called by the strict start test, never read as a value
 }
+
+-- (ruling 36) the gates `sequence_ignore` may name: the ability fields the usable test and the time to ready read
+local SEQUENCE_GATES = { form = true, noform = true, buff = true, nobuff = true }
+
+-- `ranks` and `effect` (Spec/Ranks.lua) read the spellbook through the facade, as the packs' own rank helpers do.
+local KnownRank = Facade.KnownRank
 
 
 -- Compatibility for saved content without a `now` handler. Modeled debuffs are rolled back by the aura family.
@@ -65,7 +73,10 @@ local methods = {
     -- combo points pins no energy). `missable = true` or
     -- an aura key: a miss leaves that debuff off the target (trackMisses, above). `refundOnAvoid = true` (its resource
     -- meta's share) or a share 0-1: a dodged, parried or missed cast gives back that much of its cost (the belief's
-    -- only, Game/State/Families/Now.lua; the sim does not predict avoidance). `onCrit = function() ... end`, beside
+    -- only, Game/State/Families/Now.lua; the sim does not predict avoidance). `refundNowOnAvoid = true`: that avoid
+    -- also gives back what the cast's `now` spent from the ability's own resource (a strike whose `now` takes the
+    -- rest of the pool past its cost, an avoid costing the cost alone: L1237); the belief's only, the sim never reads
+    -- it (Engine/Schema/Tracked.lua copies it as a raw field). `onCrit = function() ... end`, beside
     -- `now`: what a critical hit of the cast gives, written with the same verbs when the target's row shows our cast's
     -- own crit (Primal Fury's `gain( 5, "rage" )`); the belief's only, the sim does not predict crits. `onLand`, the
     -- same way: what only a landed hit gives (a mana return), run once the cast's hit is settled as landed, never on an
@@ -75,18 +86,33 @@ local methods = {
     -- end (aura audit C11). `startsAtLanding = true`, beside a `velocity`: the belief starts the auras its `now` puts on
     -- the target at the cast's landing, the target's believed distance over the velocity after the cast (a projectile
     -- DoT, L482); the sim's `handler` still applies at the cast. `spendBase = true`:
-    -- its `spend` (scalar or function) is a fraction of its pool's base power at any magnitude, floored, in both layers
+    -- its `spend` (scalar or function) is a fraction of its pool's base power at any magnitude, to the nearest whole, in
+    -- both layers
     -- (a percent-of-base cost a stacking aura raises past 100%); without it only a cost between 0 and 1 is a fraction.
     -- Hekili's `form = key` (or a function returning one): the form or stance aura the ability needs (state:IsUsable);
     -- a kit declares that here, never through `buff` or a `usable` body (tests/Forever/forms_spec.lua); `nobuff` stays
-    -- upstream's "not while this is up".
+    -- upstream's "not while this is up". `ranks` (rank-ordered spell IDs) and `effect` (one factory for `handler` and
+    -- `now`) are derived first: Spec/Ranks.lua.
     RegisterAbility = function( self, ability, data )
+        ns.DeriveAbility( ability, data, KnownRank ) -- `ranks` and `effect` into their fields, before anything reads them
+
         -- A passive (a spell the spellbook knows, never cast): the belief tracks its known rank; the sim never sees it.
         if data.passive then
             assert( type( data.id ) == "number", "RegisterAbility: passive " .. tostring( ability ) .. " needs a numeric id" )
             ns.TrackPassive( data.id )
             return
         end
+
+        local ig = data.sequence_ignore
+        if ig ~= nil then
+            assert( type( ig ) == "table", "RegisterAbility: " .. tostring( ability ) .. "'s sequence_ignore must be a list" )
+            for _, g in ipairs( ig ) do
+                assert( SEQUENCE_GATES[ g ], "RegisterAbility: " .. tostring( ability ) .. "'s sequence_ignore names '" .. tostring( g )
+                    .. "' (form, noform, buff or nobuff)" )
+            end
+        end
+        assert( data.sequence_ready == nil or type( data.sequence_ready ) == "function",
+            "RegisterAbility: " .. tostring( ability ) .. "'s sequence_ready must be a function" )
 
         CommitKey( ability )
 
@@ -344,7 +370,7 @@ local methods = {
                         class.abilityByName[ a.name ] = class.abilities[ a.name ] or a
                     end
 
-                    if a.rangeSpell and type( a.rangeSpell ) == "number" then
+                    if type( rawget( a, "rangeSpell" ) ) == "number" then
                         Hekili:ContinueOnSpellLoad( a.rangeSpell, function( loaded )
                             if loaded then
                                 local rangeInfo = GetSpellInfo( a.rangeSpell )

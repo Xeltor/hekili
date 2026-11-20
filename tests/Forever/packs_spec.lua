@@ -4,8 +4,22 @@
 -- without it until the GCD ends), while no on-GCD ability does.
 
 local BARE = { up = true, down = true, remains = true, ticking = true, refreshable = true, react = true, stack = true }
+local flat = require("Forever.helpers.pack_entries").flat
 
 describe("Forever priorities", function()
+    -- the entry walk every pack check below uses: a sequence line, then its members, as make_pack builds them
+    it("walk a sequence line's members right after it", function()
+        local lists = assert(loadfile("tools/make_pack.lua"))("lib").parse(
+            "actions=slam\nactions+=/strict_sequence,name=a_b,start_on_first=1,hold_off_gcd=1:a,use_off_gcd=1:b\n"
+                .. "actions+=/rend\n"
+        )
+        local got = {}
+        for _, e in ipairs(flat(lists.default)) do
+            got[#got + 1] = e.action .. (e.use_off_gcd and "+" or "")
+        end
+        assert.are.same({ "slam", "strict_sequence", "a+", "b", "rend" }, got)
+    end)
+
     it("use no bare aura alias (up, down, remains, ticking, refreshable, react, stack) in a condition", function()
         local hits = {}
         local pipe = assert(io.popen("ls src/Hekili_*/APLs/*.simc"))
@@ -73,7 +87,7 @@ describe("Forever priorities", function()
             local hits = {}
             for _, p in ipairs(assert(loadfile("tools/make_pack.lua"))("lists", class)) do
                 for list, entries in pairs(p.lists) do
-                    for i, e in ipairs(entries) do
+                    for i, e in ipairs(flat(entries)) do -- a sequence's members too
                         local a = abilities[e.action] -- nil for call_action_list, use_items and the like
                         if a and (a.gcd == "off") ~= (e.use_off_gcd == 1) then
                             hits[#hits + 1] = p.name .. " " .. list .. "[" .. i .. "]: " .. e.action
@@ -103,6 +117,26 @@ describe("Forever priorities", function()
                 end
             end
             table.sort(hits)
+            assert.are.same({}, hits)
+        end)
+    end
+    -- mana-09 re-review: a talent-gated cost modifier whose `talent` key the class does not register is silently rank 0
+    -- in both layers (Races.lua rankOf reads it raw), so every key a class file's RegisterCostMod names is a talent of it
+    for _, class in ipairs({ "druid", "hunter", "mage", "paladin", "priest", "rogue", "shaman", "warlock", "warrior" }) do
+        it("names only its own talents in its talent-gated cost modifiers (" .. class .. ")", function()
+            local Class = class:sub(1, 1):upper() .. class:sub(2)
+            local w = LOADS[class] and LOADS[class]()
+                or require("Forever.helpers.load_druid").load(
+                    nil,
+                    "src/Hekili_" .. Class .. "/" .. Class .. ".lua",
+                    class:upper()
+                )
+            local hits = {}
+            for i, m in ipairs(w.costMods or {}) do
+                if m.talent ~= nil and not (w.talents and w.talents[m.talent]) then
+                    hits[#hits + 1] = "costMods[" .. i .. "] talent " .. tostring(m.talent)
+                end
+            end
             assert.are.same({}, hits)
         end)
     end

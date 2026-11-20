@@ -104,6 +104,7 @@ local function newState(class, race)
         weapon = strict({ size = 0 }, "weapon"),
         main_hand = strict({ size = 0 }, "main hand"),
         off_hand = strict({ size = 0 }, "off hand"),
+        ranged = strict({ wand = false }, "ranged"),
         set_bonus = every(0), -- State.lua's set_bonus: no gear headless
         boss = false,
         history = { casts = {}, units = {} },
@@ -151,6 +152,7 @@ local function newState(class, race)
         return 0
     end
     s.instant, s.cast_start = false, 0 -- and the cast-start pair (Families/Now.lua): a hard or instant cast is the test's to set
+    s.cast_id = 0 -- and the cast ID (Families/Now.lua): 0 outside a cast success
     s.stat = function()
         return 0
     end
@@ -367,6 +369,9 @@ function M.load(classToken, race)
         end,
         UnitExists = function(u)
             return client.exists[u]
+        end,
+        UnitIsDeadOrGhost = function()
+            return false
         end,
         UnitCanAttack = function()
             return client.canAttack

@@ -42,7 +42,7 @@ S.On("UNIT_SPELLCAST_SUCCEEDED", "player", function(api, t, unit, castGUID, spel
     -- priced now, on the last fold's belief: a cost-cutting aura the cast consumes (its UNIT_AURA read, Direct, can
     -- reach the log before this staged success) still prices it (I.CastCost)
     local target = I.Tickets.CommittedTarget(castGUID) or I.Units.Sent(castGUID) or I.Units.Pin(api, t)
-    Stage(Obs.CastSuccess, t, a, I.CostOf(a), 1, target)
+    Stage(Obs.CastSuccess, t, a, I.CostOf(a), I.ab.idPos[spellID] or 1, target)
     I.Log.Cast("SPELL_CAST_SUCCESS", t, spellID, target)
 end)
 

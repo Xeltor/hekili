@@ -40,4 +40,53 @@ describe("the loop's truth instance", function()
         assert.is_true(run.presses > 0)
         assert.are.same({ [L.oracle] = true }, seen.resolve)
     end)
+
+    -- a press is priced with the world's current auras (L1233): a cost-reducing stack aura on the world's us, up at
+    -- every press (the stopped last tick's shape: loop_shaman_spec)
+    it("prices each press with the world's us at that tick", function()
+        local STACK = 999001
+        local P = setmetatable({
+            resolve = function(key, H, e)
+                local p = ww.resolve(key, H)
+                local a = e and e.auras[STACK]
+                p.cost = (a and a.stacks >= 5) and 0 or 1e9 -- free at 5 stacks, else past any pool
+                return p
+            end,
+        }, { __index = ww })
+        local LP = loop.new(P)
+        local run = loop.run(LP, 1, {
+            duration = 15,
+            on = function(r) -- after the tick's press: up from the next tick's on
+                r.us.auras[STACK] = { stacks = 5, expires = 1e9 }
+            end,
+        }, { { H = LP.us }, { H = LP.oracle, plain = true } })
+        assert.is_true(run.presses > 0)
+        assert.are.same({}, run.refused)
+        assert.are.equal(0, run.readyShort)
+    end)
+
+    -- a world event one float step after a poll (a swing chain's sum: 170.0000000000002 for the poll at 170, L1281 a)
+    -- is that poll's: the world pays it before the poll's press and the instances are fed it at that poll (the plain
+    -- oracle's power self-check would see a world paid ahead of its feed)
+    it("runs and feeds an event due one float step after a poll at that poll", function()
+        local at, fired, seen = nil, false, nil
+        local run = loop.run(L, 1, {
+            duration = 15,
+            on = function(r, _, t)
+                if not at and t >= 5 then
+                    local nxt = (math.floor(t / loop.TICK + 0.5) + 1) * loop.TICK -- the next poll, as the loop indexes it
+                    at = nxt + nxt * 2 ^ -52
+                    assert(at > nxt and at - nxt < 1e-12)
+                    r.W.at(at, function(W)
+                        fired = true
+                        W.gain(r.us, 10)
+                    end)
+                elseif at and seen == nil and t > at - 1e-6 then
+                    seen = fired -- this poll's press came after the world ran it
+                end
+            end,
+        }, { { H = L.us }, { H = L.oracle, plain = true } })
+        assert.is_true(seen)
+        assert.are.same({}, run.selfCheck)
+    end)
 end)

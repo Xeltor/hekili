@@ -26,6 +26,14 @@
 -- Disagreements (P7; floor 0.96 -> 0.96, decisions on-GCD 0.964, n 83): hemorrhage -> rupture 156.49 (wowsims casts on
 -- the unseen 27788's instant: lo 12.8, truth 33); eviscerate -> rupture 174.25 and hemorrhage -> slice_and_dice 178.15
 -- (the fight's last 6 s: Rupture and SnD skipped, gap AN). Regen/pool not refreshed (as Assassination).
+-- Re-pin e5a9cd2a2d -> e4ef929e54 (0.9): two APL lines change (Eviscerate: no 4-point Slice and Dice branch, waits for Rupture >= 3 s
+-- under Serrated Blades; Hemorrhage: + energy >= 75), four gear slots (the gear wears the Darkmantle reissue pieces; see the ab0f00e4fc note before `return`),
+-- Poised's attribute word; no recipe key changes. Strict sequences (prev.1 chains) as before: no rule 14 in this build.
+-- For this build only the Hemorrhage term acts: Death Mark shuts Eviscerate (no cast in either log).
+-- Re-pin e4ef929e54 -> ab0f00e4fc (wowsims #1067 gear sets, #1086 PPM sweep): the build's gear (muti / sinister / hemo) wears four Darkmantle
+-- reissue pieces again, so the 4-piece Rogue Armor Energize (27788, +20 energy, 0.8 PPM on landed white swings) fires in the log (the oracle set has no
+-- Darkmantle set-ID patch: the reissue pieces carry their own set ID), and Stormshroud's 3-piece 23863 (+30 energy) too. Both are random
+-- resource procs and are NOT modelled (owner L1396/L1397); energy is secret in combat, so the belief sees each gain at its next read.
 return require("tools.wowsims.rogue_pve")({
     class = "ROGUE",
     pack = "Subtlety (wowsims.com)",
@@ -36,7 +44,7 @@ return require("tools.wowsims.rogue_pve")({
     player = {
         race = "RaceHuman",
         class = "ClassRogue",
-        gear = "ui/specs/rogue/dps/gear_sets/p1_bssub.gear.json",
+        gear = "ui/specs/rogue/dps/gear_sets/hemo.gear.json", -- renamed upstream at ab0f00e4fc (wowsims #1067)
         talentsString = "00530301-320003-305230031321001151",
         specKey = "rogue",
         options = { classOptions = setmetatable({}, { __jsontype = "object" }) }, -- an empty message (dkjson: {} is [])

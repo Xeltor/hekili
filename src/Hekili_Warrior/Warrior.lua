@@ -166,19 +166,24 @@ end
 -- one-hander, 4.5 with a two-hander, 1.73 off hand. Misses, dodges and parries give none, glancing blows full rage, a
 -- white crit doubles the swing's rage, the two-hand rate too (owner ruling W1 2026-11-02, wowsims 7c28cfa731 from
 -- Forever combat logs; supersedes the compendium's 3.46 for two-handers; yellow crits none): the swing entries' `crit`. Dual Wield Specialization: the tooltip's +10% off-hand rage a rank (unverified on
--- Forever). Unbridled Wrath: 1 rage a proc (2 with a two-hander) at a measured ~7.5% a rank (36% at 5/5; the tooltip
--- says 60%). The two-hander flag is Hekili's gear scan (main_hand.size from C_Item.GetItemInfo's equip location on
+-- Forever). Unbridled Wrath: 1 rage a proc with any weapon (owner L1419, wowsims ab0f00e4fc: the Arms log's two-hander procs
+-- all give 1.000) at 11.9% a rank: 59.5% at 5/5, measured in game over
+-- 5,252 landed swings, strikes, Heroic Strikes and Cleave hits (wowsims EV-0148, build 1.60.1.70938; owner ruling L1397
+-- (3); wowsims's own ladder is the tooltip's 12% a rank); the belief cannot see a proc, so its floor counts none: the
+-- swing entries pass the expected rage as their value's `width`, a strike's `now` as its gain's spread. The two-hander flag is Hekili's gear scan (main_hand.size from C_Item.GetItemInfo's equip location on
 -- PLAYER_EQUIPMENT_CHANGED, and the belief's own read of the same answers; the Forever API data marks neither it nor
 -- GetInventoryItemID secret). The helpers below run in the file's environment: the entry functions, which run in the sim's
 -- `state` and the belief's context both, read those names and pass them in.
-local function wrathRage(rank, twoHand)
-    return 0.075 * rank * (twoHand and 2 or 1)
+local WRATH_CHANCE = 0.119 -- a rank
+local function wrathRage(rank)
+    return WRATH_CHANCE * rank
 end
 
 -- Rage from damage taken: wowsims/forever's rule (MIT, sim/core/rage.go:11-49 and 91-103; owner ruling 2026-10-25,
 -- "stick with wowsims": armor does not change it): 2.5 x (1 - A) x the hit before every mitigation / c, A and c by the
 -- attacker's level only (our health, level and armor play no part), x 2 under Berserker Rage
--- (sim/warrior/berserker_rage.go). A blocked hit lands, so it gives the rage of its unblocked amount. The client
+-- (sim/warrior/berserker_rage.go). A partly blocked hit gives the rage of its unblocked amount; a hit blocked in full
+-- gives none (rage.go:112-115; 6 of 6 in wowsims's in-game logs, 144ca5865f). The client
 -- reports the hit after armor, so the pre-armor amount is rebuilt as post / (1 - armor / (armor + 400 + 85 x attacker
 -- level)), the armor the belief's out-of-combat cached armor times the armor buffs it sees on us (ARMOR_BUFFS), the
 -- block value the cached one. Defensive Stance's 10% and Shield Wall's reduction stay off: rage is from the hit after
@@ -186,9 +191,10 @@ end
 -- Specialization (a 20% chance a rank to gain 5 on a block) and Master of Defense (50% a rank on a dodge or parry with a shield) as their
 -- expected values, the band carrying the spread (tooltips read in game 2026-10-16).
 local TAKEN_RAGE_FACTOR = 2.5
--- A by the attacker's level: wowsims's measured rows (20% up to 42, 40% from 63), interpolated between two rows.
-local ASSUMED_LEVEL = { 42, 44, 46, 50, 63 }
-local ASSUMED_REDUCTION = { 0.20, 0.30, 0.36, 0.38, 0.40 }
+-- A by the attacker's level: wowsims's measured rows at e4ef929e54 (rage.go:34-46: 21.8% up to 38, 40% from 63),
+-- interpolated between two rows.
+local ASSUMED_LEVEL = { 38, 42, 44, 46, 47, 50, 55, 59, 63 }
+local ASSUMED_REDUCTION = { 0.218, 0.239, 0.31, 0.36, 0.377, 0.38, 0.381, 0.38, 0.40 }
 local BERSERKER_RAGE_TAKEN = 2
 local TAKEN_SPREAD = 0.15 -- a stale cached armor or block value, and an unseen armor buff or debuff
 -- The armor buffs on us the rebuild multiplies the cached armor by (aura key, multiplier): Inspiration (14893, the
@@ -267,7 +273,12 @@ spec:RegisterResource(
             value = function()
                 local speed, twoHand = swingBase(1), weapon.size == 2 -- speed 0: no plain base read yet
                 speed = speed > 0 and speed or mainhand_speed
-                return (twoHand and 4.5 or 3.46) * speed + wrathRage(talent.unbridled_wrath.rank, twoHand)
+                return (twoHand and 4.5 or 3.46) * speed + wrathRage(talent.unbridled_wrath.rank)
+            end,
+            -- Unbridled Wrath's part is a roll the belief cannot see: its expected rage is the value's half-width, so a
+            -- swing's floor counts no proc and its top a whole one (5/5; L1456 i, no optimistic proc modelling)
+            width = function()
+                return wrathRage(talent.unbridled_wrath.rank)
             end,
             crit = function()
                 local speed = swingBase(1)
@@ -297,12 +308,8 @@ spec:RegisterResource(
                     if kind == "BLOCKED" then
                         post = post + stat("GetShieldBlock") -- the unblocked amount
                     end
-                    unblockedAvg = unblockedAvg + UNBLOCKED_WEIGHT * (post - unblockedAvg)
                     gain = rageTaken(post, attacker, level, reduced, armor)
                     width = TAKEN_SPREAD * gain
-                elseif kind == "BLOCK" then
-                    gain = rageTaken(min(stat("GetShieldBlock"), unblockedAvg), attacker, level, reduced, armor)
-                    width = gain
                 end
                 local rank = talent.shield_specialization.rank
                 if (kind == "BLOCK" or kind == "BLOCKED") and rank > 0 then
@@ -338,7 +345,10 @@ spec:RegisterResource(
                 local speed = swingBase(2)
                 speed = speed > 0 and speed or offhand_speed
                 return 1.73 * speed * (1 + 0.1 * talent.dual_wield_specialization.rank)
-                    + wrathRage(talent.unbridled_wrath.rank, weapon.size == 2)
+                    + wrathRage(talent.unbridled_wrath.rank)
+            end,
+            width = function() -- Unbridled Wrath's roll, as the main hand's
+                return wrathRage(talent.unbridled_wrath.rank)
             end,
             -- A crit doubles the off hand's rage, Dual Wield Specialization included (W1, wowsims core/rage.go).
             crit = function()
@@ -750,18 +760,23 @@ spec:RegisterAuras({
         max_stack = 1,
         shared = "target", -- any warrior's Thunder Clap slows the target (read from the target since GAP AJ)
     },
+    -- A shaman's Windfury Totem raid aura on us (its three ranks). Its proc is a weapon strike (10610, wowsims
+    -- core/buffs/drivers.go): main-hand weapon damage on the special's table, no extra swing and no swing reset; a landed
+    -- strike pays rage as a main-hand swing does (rage.go:155, SpellFlagSwingRage). The belief does not pay that rage:
+    -- the strike is a target row, secret live (shortcut: upgrade if a strike row turns plain).
     windfury = {
         id = 8515,
         copy = { 10609, 10612 },
         duration = 300,
         max_stack = 1,
     },
-    -- Weaponmaster's three branches (talent 1290261; wowsims talents_arms.go:276-383 registers one aura each, tags 1/2/3 of
+    -- Weaponmaster's three branches (talent 1290261; wowsims talents_arms.go:276-384 registers one aura each, tags 1/2/3 of
     -- the one spell id, so ours are id-less): up while the talent is known and either hand holds the branch's weapon kind
     -- (the gear scan's main_hand.sword and kin), applied at reset_precast. Display and custom priorities only; the sim-only
     -- auras are not tracked by the belief. Axe/polearm crit and mace/staff armor ignore are damage-only effects no
     -- priority consumes. The sword branch's extra attack (a chance roll on a landed melee hit, Whirlwind/Cleave once a
-    -- cast, none from Sweeping Strikes or a Windfury Totem swing) stays unmodelled: the roll is unseen, and an observed
+    -- cast, none from Sweeping Strikes; Windfury Totem's strike rolls it as a white swing does) stays unmodelled: the roll
+    -- is unseen, and an observed
     -- extra swing already pays its rage through the swing rows. Needs in-game check: whether PLAYER_SWING fires for it.
     weaponmaster_axe_polearm = { duration = 3600, max_stack = 1 },
     weaponmaster_mace_staff = { duration = 3600, max_stack = 1 },
@@ -823,7 +838,7 @@ for _, id in ipairs(SUNDER_ARMOR) do
 end
 
 spec:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED", function()
-    local _, subtype, _, sourceGUID, _, _, _, destGUID, _, _, _, actionType, _, _, spellMissType, blocked =
+    local rowT, subtype, _, sourceGUID, _, _, _, destGUID, _, _, _, actionType, _, _, spellMissType, blocked =
         CombatLogGetCurrentEventInfo()
 
     if destGUID == state.GUID and (subtype == "SWING_DAMAGE" or subtype == "SWING_MISSED") then
@@ -834,7 +849,7 @@ spec:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED", function()
         and subtype:match("_MISSED$")
         and (actionType == "DODGE" or spellMissType == "DODGE")
     then
-        enemy_dodged = GetTime()
+        enemy_dodged = rowT -- the row's own time: a held avoid's row arrives late (R46), its dodge is still this old
         enemy_dodged_target = destGUID
     elseif
         destGUID == state.GUID
@@ -845,7 +860,7 @@ spec:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED", function()
     then
         enemy_revenge_trigger = GetTime()
     elseif sourceGUID == state.GUID and subtype == "SPELL_CAST_SUCCESS" and overpower_ids[actionType] then
-        last_overpower = GetTime()
+        last_overpower = rowT
     end
 end)
 
@@ -893,7 +908,7 @@ spec:RegisterHook("reset_precast", function()
                 enemy_dodged > 0
                 and query_time - enemy_dodged < 6
                 and target.unit == enemy_dodged_target
-                and (last_overpower == 0 or enemy_dodged - last_overpower > 5)
+                and enemy_dodged > last_overpower -- a dodge after our last Overpower (an earlier one was spent)
                 -- a dodge row can be another player's: in its stance the client's yes opens the window; out of it the client
                 -- says no either way, and Fury's stance weave needs the window to swap
                 and (usableNow(OVERPOWER) or not clientInBattle())
@@ -937,6 +952,27 @@ local function interruptReadyTime()
         end
     end
     return state.timeToInterrupt()
+end
+
+-- A landed Heroic Strike or Cleave (wowsims talents_fury.go:65-87 and :374-420 at ab0f00e4fc; EV-0148, EV-0138): it
+-- rolls Unbridled Wrath (its expected rage; the floor gains none, as no proc is seen). Paid at the cast, which
+-- comes with its swing (onNextSwing): an `onLand` would idle on live (target rows secret). Its own avoid
+-- (strikeAvoid) takes the estimate back. Reckless Swings remains unmodelled (CN15). Its Flurry charge
+-- (one a cast, landed or not) is not modelled: the belief reads the swings live.
+-- shortcut: one Unbridled Wrath roll a Cleave, as on one target (wowsims rolls each target it lands on: a second target
+-- is a roll short, the low side); upgrade with the belief's enemy count if a pack line reads rage after a Cleave.
+local strikeWrath = 0
+local function strikeNow()
+    strikeWrath = wrathRage(talent.unbridled_wrath.rank)
+    if strikeWrath > 0 then
+        gain(strikeWrath, "rage", strikeWrath)
+    end
+end
+local function strikeAvoid()
+    if strikeWrath > 0 then
+        spend(strikeWrath, "rage")
+    end
+    strikeWrath = 0
 end
 
 spec:RegisterAbilities({
@@ -1198,6 +1234,8 @@ spec:RegisterAbilities({
         startsCombat = true,
         onNextSwing = true, -- The belief: paid at the main hand's next swing, which then brings no rage
         known = knows(CLEAVE),
+        now = strikeNow,
+        onAvoid = strikeAvoid,
 
         usable = function()
             return not buff.heroic_strike.up and not buff.cleave.up, "a strike is already queued"
@@ -1363,7 +1401,10 @@ spec:RegisterAbilities({
         spendType = "rage",
 
         startsCombat = true,
-        refundOnAvoid = true, -- wowsims execute.go; DB2 Discount Power On Miss
+        -- An avoid costs the base rage alone, none of it back, and keeps the extra rage (wowsims execute.go at e4ef929e54,
+        -- 7025f28b98: 36 avoided Executes in in-game logs), so no `refundOnAvoid`; the extra the `now` below spent
+        -- comes back on the avoid (L1237).
+        refundNowOnAvoid = true,
         known = knows(EXECUTE),
         nobuff = "defensive_stance",
         healthGate = 0.2, -- usable at or below 20% of the target's health: the belief's target health reads it
@@ -1431,6 +1472,8 @@ spec:RegisterAbilities({
         -- and suppresses that swing's white Rage. Cleave uses the same queue behavior.
         onNextSwing = true,
         known = knows(HEROIC_STRIKE),
+        now = strikeNow,
+        onAvoid = strikeAvoid,
 
         usable = function()
             if weapon.size == 0 then
@@ -2761,18 +2804,18 @@ spec:RegisterSetting("maintain_thunder_clap", false, {
 -- /hekili priority <name>.
 spec:RegisterPack(
     "Protection (wowsims.com)",
-    20261114003,
-    [[Hekili:T3vBZTTns4Fl(dNoPPUYYVO20CXzMKM2R9M20mX5U(nrblcjXZuK8iiTQVXJ(TF7casccsqckrzN5A(sJ4lyXUp7IDxSyP7SZN9Pz34ssOZE)ftU4Bo)8ZVAYKlNDtYdr0z3erwChzf8JaYg4)(H4We6IeVWGDZhUnClZBdB8IWnJW38b)qIlsTBt98t(5Gz3wlHzr0fZU53FZh)4p)BF8Lr5uC2nR9CDPIHrzlAy2E5U5jRP7MlV3zldJP3tJ3n3LUKK6NSB(B(WVSBoC7DZlrKuVZWPND2wsCSxy8zft)zKiF2zscmgUy8)Mfgm6uyQIjbmFqqCHFhItThB3CIRByWFf(XD0hyJ3n)DKeYlRHLg(R)8NaISojjI9YZoBLxY60BrP4mTxDeqtGZPtjF3c3lix4UCbq2Vpm03nCBadN7vR8bPgGjkdMQpsti(EeK5Hj4DusY6DZ)Dp2A4QB2sPrEbRGFLe7Dhfz4axjSftw4r8HBn8T(HHWD)X04hGb9wAmJgFhmm4IFinMEhb)HFAaff0FXB16Krip5tymVfi26THe)WU5lia6YwhUD3C)WTF9AkXhzganPbmV7XPher4D2Ug)VCUyHVhnirko7M)qykGwIrcZXpb)GZ)rHOacVqkJkh57uiRauGb8BPjUHOcpk1hLnolXhZ3VMeVc(x8HVjjbSOr1vAWkkAtq43jdFYE3OyAejMimBIP)NuVyk(kGCeq3asmXpMsCHFSerfoNcsGyseIcm(KhgNnLa8Ka3GjEJyklDdY(BO(uGWSTafGlVLIgdWZdtbAc)420LlzzWgjnjKiPgAcgUCjq))fjyvkjgyEFActYgzYXwWCdOfodKiHbbWhblOOj7FhMMi0Qwczlj3Jm3NwNg4IMUGEocMfyMdOK4BFaLPcOcwUs9X)1NS5u0AeuWzW8nsk8M4n4L8fIEB2qDbZvUweaVeHsJbQF0K0ZLDAL5g0cWlYQHjGb)(W4neFj3etqCdvoEiUgqr5kmW)b8)QIOcw7VbqBiJLVUG67LGxGUUCrL69On1hPW60nu8f(eINj4clsuM1flD1kkdb3i0yqSCtY)EWZxH4B2m8rozilIHPfwzKgtUfxmlnaYzC7TRaM7oFksSBKwpOqZ4RaHNcETpfbqIRyIYwtgUu4NXNsqw)BN(xovyyta3G3tlBLX5CUvpIpcU4wUaGYNK3b3JRq0kZGaCQKzHc25047rvHWeiaWtUmXhkFzECi6jr4LkBriWBiNaUQ5ihbnR8Plb2nK7tLSmb)N0OmYjmOabzJxI3k5YwoT8cGxnonkHPYHe2A5Z)qkOGbJOfcklG4fPXXCFtjsTokTF4(FG7poyrk49dNG3YrAHPqsiyUsWRquLp9Gcjm4RfWLybmxt6lqwHU5bfoCC5Gvmc3bNq6VLMaE0de0NLzzZb13)HVhyuiAnE7BZWB894qto594MbaMcR1vx8lWoKD4yqU3Cb4NSw8moD15dGm)t0d7NiPiAXzhiIc3rnh5Ym(bxo3j8bLpM35XiXBGNVI4fGyw(sa0NfhGC5VIW8DlLefgGM9ONc1Obqm0ui6CymgJILcU3G15OtnmaVhFPYpeiiYVcpcFmgcbCmbry(VIfTcFKElLQiUVemg3QGSG(3bXtH3ibT6gdz7ehU0ZhYiIW1wSXri8T5wsY15b9CeEApfyvhWvTZQfUxF(PElVgt6WzriOy(JKuI)a(1ILCocCBGKwtepBb3BUdFH2amyueO5gZ4wZdGKaaB1X3lddmMYfw3YJen1gCcgnzSo)nonAWWteYXyyst8ZFYDbqMhpkgw5NKgnAqmyzo2p8vxlUNdETZD0OKD)JkOYxD9zLiqFdkMewDUEWjMGRoknI5QNfJ6Nk0HSKevNVYeJNJH8DnOfWm(qzZaRxMvhkOA2IQhlpB50YHrwsh1SAhxIHZsz9cExUbyhM8rYNCl4f3r6z66jpkqtHNBU271xRzuZNSfHSKVQY4h1c3BWO1Grw(YPkR1uxrvZcXrdklZ1ZuXkj(NP3AziT7uQbNdA6bDtCnhsfi5xCfw48ODBPddkEkCaE0D71do7asimg4lVn4wtqNxpzG46XyghEbtrSHFDOyBjth4s5GOmzke(0UZ9xKXn55z5azJd7yxLJI4jz(KWmLuw55QIUQ3ALh)dGBKBfViJ783PmFmgRNbyEcjgNtwpMd)68vFkkXS1E18eUL(JvHHZhvqjb4Rre5nnpEvCmwUtlhX20BWNl8Y(av4l3C1WBiB2iFYdo3sbm46RMu40TyiLCajf0TeF)sUFuVp48PgtF8rAZ3LtlMVYeOycv4d15Re7vE6sG9wdz9VrBYMYfUUr3ol3dgk8H7X3sd6dZjk0Jbein6Xkpc(nSHxAvadm)PXyEdm6ZHuOYmITOZb1gTDUCI(OaZshrHYSWOt3xD2sEvI29i35oo0dkBmuBhD7)6wC73wMT2eDkBoutJ8vxFX06Y3TmCrswdo(ngXrphQt4xl26TdFR2DoR2I50uoTLIfa2BoIlD89yjNIf0)6fUozfdUMaOyDCQcMdLjk8AWC6XHcTBSO4FoPmCXwjNkYhjxdSqwo78Bht3G7))vxF(4PJgnshOgiakGbaRgSY0DfLuLL2Z9VbN9f3xt3NikzPZcFsuxn2kfK9f6bzFHySI6E6iRpYRpVEiy4WkMucyjIpXLS00c4HkKrnGHQsOn2AsmNHfg(qaKAY64KH1zwnWGrOzRTjaLQcy1bmvDiOBBHYPaw04n8EnHR2m(6mxnyayL40j(Pz1SKnpDziKDx3D02MQ(ijKTaULSJfM9e8qm6Q0vLpFMKxvHWgH(EVfjHXp4eNcbZooQ262uCw5H6Y0CshC5vAZW8cbve5zsxdQytbLkNEqr1Mle1HmAcQczJ3iRlTt1xuVAlzl(pcqKC)BfhABz9iatAks8o0)GUinbs9EnKDDMTzvXq4kvWm6XZeme)eHK8)EKluLj0My9hZq3sOOuSZMaHHvqbmyx8gMtiOEC2ggd5sZVgKpiby8mBhzmwqhu7D0FYEMmGHKj1r8c4TIXyv8rD)uIe8uayRTDSjdXszsZpDsnrr4O8IdYiQMyc1AQuxgjVOMnUKlHcowr2Ct3eLjBL3kjEASWoSWdJ9ztcbpYTB6pOKJNrDgtkjQwanafC7BzVloNpri)35HChKfq9oEXhjxeu)(VAfxn5rXmsYNtlw3WrWWea4LavVNxHyS484i6idjbW1miFCp1XnmHZWVY0R2GjJMGAYs5qYASnbSETEPu8yiHH93muSZ5cnBDQWlM2z1DxZNSeCCCv)NWc9dLfjQb9Vkh9QAE7M2Xx9c)NbMc6ABZ2gaThA8HVA6J19S8CLV8OBV8zz41)ChiDpdzYK9GQCeSQz)jxuQxzR6kDQ92BAZ6ETrang7IkLLSJmLnjnBvTv2BoOlL9OMY3T3ZBhRPuJvFO2ZBJxuEynrmlPXAV37fwrzITrYa3Fje)mxcpPCAPP2gETLLdN)KVCOFlGI5QuKhN7BourSdvKOrOF4jLlKWY04huo6)sizb3x9Cu6i73znKED8SPEBnFezzn7rNZ4WMQZvDNjQynptF(HyneIxTMW3LaL6cmZJ63PYj(YD1PDAxQpsIdVwEIxhSQQP9F1y5SBmlWHhKyvB2NkgahUuBtALJ2JuYgw2xhKbfoT8J78IjM4A1mGAKRTjfQrDkD4Hv8nNZVxD48BJj8Q5aW8XVl5Ox9DDBHVivuTMmTyohxC41xZFjh03Onn5uDKaLGIp)P9NiuXNn1bqa8ZTI54JF(h2rMz3CpW5aL0(q7WJ5NHFpEf0hU698p4pzt)n7TZUrzoWhk7O9z3uGPafI9sOXEeEJVRXaZsG51wAMdXTtZlTKMceVD6DLT0trb0kvtWVvr(NmyxGw9MHPY0yZEc)8OJy7ElX2j7fvY2FOKjPxxk2JMLTlwUcoO3eRUyKR0VvQZV5gSfj(unINrmLoYS5fm2xndR61vbxQ34TiN(ng4urBF(KYKi78TwQv0Au2JhFEKBv3g6v3U0SU13TU1sbeLFHbLUwhDvbvZZ8ajY3PrKsnqjS(AI6W7y77wFhGA2COGWiND(KMzTlNwzfjofv5xRB)3A7WvoROhOtJvMorHvY6ryvgPJZz3b1gBo4g7oyU8PhFQj5tTdIFsLroNYJ1OBaPBzOWUk9ySQeIKsp2rJM(6rQYCgz2AUCFkZNr9ak9r(sDVpK5SIEeJ9kWzDTOmN62gaiFZo7vsbDP7L5SLjpMfTwClHG036M991CJLoRTgBMZ86EQZdIQ1PZInc5i(dyIYwHW0q1DPAsVO2JiLwJRSz7h7CZqFS6g62lhFZTdnhA0DXBB00s9jnNs6otZOKAng3x79sP(CynqDTnnv36AQdSGQC0sFZdAMGyT26fW6)pAU62n17PUR26JHPlCKbta9aXhhT9rtmBbGvDLWFXz3WRNj6WfLEJ7YuPIV7lMuv4E2qjBkGnhp0Zmz)K8wKZcyw9ey10m6zXKN1IYbUSV8xD9cNrNVLkwJDnZ9bEErC53C6s6N1xPCeS6ukR5ykpAW3ZwJEl4il607(5Gv5kntPj(uK9rx7b8(TjW)8iHMlp0CS1vihTweV9i3nM2mxy1ZAUhSRSRxV672cp31)fnuUsob4YTEo(pzYDF1JBhCZIBdGvIoCCZu2(4H6FSqXofRON6789VXZ3ZoFGJUpnjsZhB8ZqxNRBUO2D1YC2U8yMnDBaZb1T61P3n2U69qE2x(KKN9Nh9OUjZG6mGmL0)ZGbu)1J77xtU3hwz67H44aC8XAtcchHub0t4(jtc7Rubo2b9VY6mI1ALDvSu6RypAD(MSITT355IHPkeBANvASSLnv)bUfebR2s6P7plCy166Q9PyV7pZAz9hVQL0MkoVClkA0vMsarP95T6qMocLGZIo4NlcM6MKs9v)ZLqyvZ9ZfdtrYTC9QLD9FVSE9jUsB93heq)u4kbi01kxDu)ub6d16u9aF5(cmuazBQZBlhiDlFfbhyzHfIL5JkT8M4T67lOtFGbw0k(w)fgSNB0wabMoJxt7sO5SZB6JpWcrUV(6doW89fiJEiEfmOSd296tnObw0M8xbECFYGDQ5me6JVhHgeQw(GeSrAk2QYuB7)OABlhPCz7x1qlFwdZ49sE(FYMN9LUj)lDt(FU6M8oT47GxWHCGP86nLoYjvZhXY)01)uKgI19yOPvbgSAB7pM92)xZEKln3K25)nTVHnCMuTbT3hVIn4DsxXPVgs)p29ZKFfqWsG1yko)e9opFVDZh(JY)V6f)XZ(F)]]
+    20261120000,
+    [[Hekili:T3vBZTTns4Fl(dNoPPUYYVO20CXzMKM2R9M20mX5U(nrdjcjXZuK8iiTQVXJ(TF7casccsqckrzN5AUpKk(cwS7ZUy3flw6B25Z(0SBCjj0zV)Ijx8nNF(ftG)3SBsEiIo7MiYI7iRGFeq2a)7hIdtOls8cd2D7WTHBzEByJxeUze(Mp4hsCrQnp1Zp5NdMnVwcZIOlMDZV)Mp(XF(3(4lJYP4SBw756sfdJYw0WS9YD3MSMU7w59oBzym9EA8UBDPljP(j7U9nF4x2DlC7D3wIiPENHtp7STK4yVW4ZkM(Zir(SZKeymCX4)nlmy0PWuftcy(GG4c)oeNAp2UBjUUHb)v4h3rFGnE3TVJKqEznS0WF9N)eqK1jjrSxE2zR8swNohLIZ0E1ranboNmFYYjtOxTCXlUei73hg67gUnGHZ9Qv(GudWeLbt1hPjeFpcY8We8okjz9UB)Dp2A4QB2sPrEbRGFLe7Dhfz4axjSftw4r8HBn8T(HHWD)X04hGb9wAmJgFhmm4IFinMEhb)HFAaff0FXB16Krip5tymVfi26THe)WUBxqa0LToC7UB9d3(1RPeFKza0KgW8UhNEqeH3z7A8F5CXcFpAqIuC2D7dHPaAjgjmh)e8do)hfIci8cPmQCKVtHScqbgWVLM4gIk8OuFu24SeFmF)As8k4)Ip8njjGfnQUsdwrrBcc)oz4t27gftJiXeHztm9)K6ftXxbKJa6gqIj(XuIl8JLiQW5uqcetIquGXN8W4SPeGNe4gmXBetzPBq2Fd1NceMTfOaC5CkAmappmfOj8J5PlxYYGnsAsirsn0emC5sG()lsWQusmW8(0eMKnYKJTG5gqlCgircdcGpcwqrt2)omnrOvTeYwsUhzUpTonWfnDb9CemlWmhqjXZFaLPcOcwUs9X)RpzZPO1iOGZG5BKu4nXBWl5le92SH6cMRCTiaEjcLgdu)OjPNl70kZnOfGxKvdtad(9HXBi(sUjMG4gQC8qCnGIYvyG)d4)QIOcw7VbqBiJLVUG67LGxGUUCrL69On1hPW60nu8f(eINj4clsuM1flD1kkdb3i0yqSCtY)EWZxH4B2m8rozilIHPfwzKgtMJlMLga5mU92vaZDNpfj2nsRhuOz8vGWtbV2NIaiXvmrzRjdxk8Z4tjiR)Tt)lNkmSjGBW7PLTY4Co3QhXhbxmNlaO8j5DW94keTYmiaNkzwOGDon(Euvimbca8Klt8HYxMhhIEseEPYwec8gYjGRAoYrqZkF6sGDd5(ujltW)tAug5eguGGSXlXBLCzlNwEbWRgNgLWu5qcBT85FifuWGr0cbLfq8I04yUVPePwhL2pC)pW9hhSif8(HtWB5iTWuijemxj4viQYNEqHeg81c4sSaMRj9fiRq38GchoUCWkgH7Gti9ZPjGh9ab9zzw2Cq99F47bgfIwJ3EEgEJVhhAYjVh3maWuyTU6IFb2HSdhdY9Mla)K1INXPRoFaK5FIEy)ejfrlo7aru4oQ5ixMXp4Y5oHpO8X8opgjEd88veVaeZYxcG(S4aKl)veMVBPKOWa0Sh9uOgnaIHMcrNdJXyuSuW9gSohDQHb494lv(Habr(v4r4JXqiGJjicZ)vSOv4J0BPufX9LGX4wfKf0)oiEk8gjOv3yiBN4WLE(qgreU2InocHVnZjjxNh0Zr4P9uGvDax1oRw4E95N6T8AmPdNfHGI5pssj(d4xlwY5iWTbsAnr8SfCV5o8fAdWGrrGMBmJBnpascaSvhFVmmWykxyDlps0uBWjy0KX68340ObdprihJHjnXp)j3fazE8OyyLFsA0ObXGL5y)WxDT4Eo41o3rJs29pQGkF11NvIa9nOysy156bNycU6O0iMREwmQFQqhYssuD(ktmEogY31GwaZ4dLndSEzwDOGQzlQES8SLtlhgzjDuZQDCjgolL1l4D5gGDyYhjFYCWlUJ0Z01tEuGMcp3CT3RVwZOMpzlczjFvLXpQfU3GrRbJS8LtvwRPUIQMfIJguwMRNPIvs8ptV1YqA3Pudoh00d6M4AoKkqYV4kSW5r72shgu8u4a8O72RhC2bKqymWxEBWTMGoVEYaX1JXmo8cMIyd)6qX2sMoWLYbrzYui8PDN7ViJBYZZYbYgh2XUkhfXtY8jHzkPSYZvfDvV1kp(ha3i3kErg35Vtz(ymwpdW8esmoNSEmh(15R(uuIzR9Q5jCl9hRcdNpQGscWxJiYBAE8Q4ySCNwoITP3Gpx4L9bQWxU5QH3q2Sr(KhCMtbm46RMu40TyiLCajf0TeF)sUFuVp48PgtF8rAZ3LtlMVYeOycv4d15Re7vE6sG9wdz9VrBYMYfUUr3ol3dgk8H7X3sd6dZjk0Jbein6Xkpc(nSHxAvadm)PXyEdm6ZHuOYmITOZb1gTDUCI(OaZshrHYSWOt3xD2sEvI29i35oo0dkBmuBhD7)6wC73wMT2eDkBoutJ8vxFX06Y3TmCrswdo(ngXrphQt4xl26TdFR2DoR2I50uoTLIfa2BoIlD89yjNIf0)6fUozfdUMaOyDCQcMdLjk8AWC6XHcTBSO4FoPmCXwjNkYhjxdSqwo78Bht3G7))vxF(4PJgnshOgiakGbaRgSY0DfLuLL2Z9VbN9f3xt3NikzPZcFsuxn2kfK9f6bzFHySI6E6iRpYRpVEiy4WkMucyjIpXLS00c4HkKrnGHQsOn2AsmNHfg(qaKAY64KH1zwnWGrOzRTjaLQcy1bmvDiOBBHYPaw04n8EnHR2m(6mxnyayL40j(Pz1SKnpDziKDx3D02MQ(ijKTaULSJfM9e8qm6Q0vLpFMKxvHWgH(EVfjHXp4eNcbZooQ262uCw5H6Y0CshC5vAZW8cbve5zsxdQytbLkNEqr1Mle1HmAcQczJ3iRlTt1xuVAlzl(pcqKC)BfhABz9iatAks8o0)GUinbs9EnKDDMTzvXq4kvWm6XZeme)eHK8)EKluLj0My9hZq3sOOuSZMaHHvqbmyx8gMtiOEC2ggd5sZVgKpiby8mBhzmwqhu7D0FYEMmGHKj1r8c4TIXyv8rD)uIe8uayRTDSjdXszsZpDsnrr4O8IdYiQMyc1AQuxgjVOMnUKlHcowr2Ct3eLjBL3kjEASWoSWdJ9ztcbpYTB6pOKJNrDgtkjQwanafC7BzVloNpri)35HChKfq9oEXhjxeu)(VAfxn5rXmsYNtlw3WrWWea4LavVNxHyS484i6idjbW1miFCp1XnmHZWVY0R2GjJMGAYs5qYASnbSETEPu8yiHH93muSZ5cnBDQWlM2z1DxZNSeCCCv)NWc9dLfjQb9Vkh9QAE7M2Xx9c)NbMc6ABZ2gaThA8HVA6J19S8CLV8OBV8zz41)ChiDpdzYK9GQCeSQz)jxuQxzR6kDQ92BAZ6ETrang7IkLLSJmLnjnBvTv2BoOlL9OMY3T3ZBhRPuJvFO2ZBJxuEynrmlPXAV37fwrzITrYa3Fje)mxcpPCAPP2gETLLdN)KVCOFlGI5QuKhN7BourSdvKOrOF4jLlKWY04huo6)sizb3x9Cu6i73znKED8SPEBnFezzn7rNZ4WMQZvDNjQynptF(HyneIxTMW3LaL6cmZJ63PYj(YD1PDAxQpsIdVwEIxhSQQP9F1y5SBmlWHhKyvB2NkgahUuBtALJ2JuYgw2xhKbfoT8J78IjM4A1mGAKRTjfQrDkD4Hv8nNZVxD48BJj8Q5aW8XVl5Ox9DDBHVivuTMmTyohxC41xZFjh03Onn5uDKaLGIp)P9NiuXNn1bqa8ZTI54JF(h2rMz3CpW5aL0(q7WJ5NHFpEf0hU698p4pzt)n7TZUrzoWhk7O9z3uGPafI9sOXEeEJVRXaZsG51wAMdXTtZlTKMceVD6DLT0trb0kvtWVvr(NmyxGw9MHPY0yZEc)8OJy7ElX2j7fvY2FOKjPxxk2JMLTlwUcoO3eRUyKR0VvQZV5gSfj(unINrmLoYS5fm2xndR61vbxQ34TiN(ng4urBF(KYKi78TwQv0Au2JhFEKBv3g6v3U0SU13TU1sbeLFHbLUwhDvbvZZ8ajY3PrKsnqjS(AI6W7y77wFhGA2COGWiND(KMzTlNwzfjofv5xRB)3A7WvoROhOtJvMorHvY6ryvgPJZz3b1gBo4g7oyU8PhFQj5tTdIFsLroNYJ1OBaPBzOWUk9ySQeIKsp2rJM(6rQYCgz2AUCFkZNr9ak9r(sDVpK5SIEeJ9kWzDTOmN62gaiFZo7vsbDP7L5SLjpMfTwClHG036M991CJLoRTgBMZ86EQZdIQ1PZInc5i(dyIYwHW0q1DPAsVO2JiLwJRSz7h7CZqFS6g62lhFZTdnhA0DXBB00s9jnNs6otZOKAng3x79sP(CynqDTnnv36AQdSGQC0sFZdAMGyT26fW6)pAU62n17PUR26JHPlCKbta9aXhhT9rtmBbGvDLWFXz3WRNj6WfLEJ7YuPIV7lMuv4E2qjBkGnhp0Zmz)K8wKZcyw9ey10m6zXKN1IYbUSV8xD9cNrNVLkwJDnZ9bEErC53C6s6N1xPCeS6ukR5ykpAW3ZwJEl4il607(5Gv5kntPj(uK9rx7b8(TjW)8iHMlp0CS1vihTweV9i3nM2mxy1ZAUhSRSRxV672cp31)fnuUsob4YTEo(pzYDF1JBhCZIBdGvIoCCZu2(4H6FSqXofRON6789VXZ3ZoFGJUpnjsZhB8ZqxNRBUO2D1YC2U8yMnDBaZb1T61P3n2U69qE2x(KKN9Nh9OUjZG6mGmL0)ZGbu)1J77xtU3hwz67H44aC8XAtcchHub0t4(jtc7Rubo2b9VY6mI1ALDvSu6RypAD(MSITT355IHPkeBANvASSLnv)bUfebR2s6P7plCy166Q9PyV7pZAz9hVQL0MkoVClkA0vMsarP95T6qMocLGZIo4NlcM6MKs9v)ZLqyvZ9ZfdtrYTC9QLD9FVSE9jUsB93heq)u4kbi01kxDu)ub6d16u9aF5(cmuazBQZBlhiDlFfbhyzHfIL5JkT8M4T67lOtFGbw0k(w)fgSNB0wabMoJxt7sO5SZB6JpWcrUV(6doW89fiJEiEfmOSd296tnObw0M8xbECFYGDQ5me6JVhHgeQw(GeSrAk2QYuB7)OABlhPCz7x1qlFwdZ49sE(FYMN9LUj)lDt(FU6M8oT47GxWHCGP86nLoYjvZhXY)01)uKgI19yOPvbgSAB7pM92)xZEKln3K25)nTVHnCMuTbT3hVIn4DsxXPVgs)p29ZKFfqWsG1yko)e9opFVD3o8hL))Qx8hp7)9]]
 )
 spec:RegisterPack(
     "Fury (wowsims.com)",
-    20261108000,
-    [[Hekili:TV16VTTnq8)wYx8SrdKF0L(c1bODDfRfDDfXdyFtY0s02AwwYGKkEbOW)TVJuViPiLLCCcw76hAGk5X7(DhVJK3DjUJD)t3zbig29Ztgn5zJhp6fJgnYDg7UDy3z7q(BqRGpIrBHF((uYDhM3FFYEA4wQJFY2bCAUlkbfW5ZI0Wi2hIDxyKL0DyF3z)1BU5Mp8h38QLaVCNTomiaNTam13OeE1H5S14dZZhB4Yec(wm5W8a8suAe7W838LpDyom8H55lpnCixy0H7resyczyWo6q0UiyXaboWxo)nnjEWLaRjOyAea2a47eUOcPhMJccsI)j4Jn47OohM)oed9kdqO)V)H)eyYAgBh9vdhUkKToDbh1d1iDaWtaP4RqV0pycAsWsFGT)sssuqY(ykx2RwfbAjyqWuquVdJyRpm)VcPRbbCd2FteMsJH)bsffrbOUaVomgGDidgJVtDyofZyHXRGvKSCjqXDLwjUUoBpgVdMg(Irc3G5kkNbcZlb5hc8f4(BJsscYSLWIElMqXKnzC9xtj4ni(hrPXyUb6tHRwZga6YNbeffgZvbmb(jvaR04aUDsiHVKWct46kFN6D4L4yA4T4sDNBNVblui(cP8DKKyWMbMpqpyiYkmde9IeAopItyoG)hjzzye4DI8f83zhbd7alqSPlYWoM4raV4ldxoLHIWXmNWTWQUfh4PsHdogTice8hRXRNmD4cUDrWiaCEGb2BLFW0XwigXyryp66KugxWxSiD5sh5rDs3zEPK8nBp6EWQtntKpkkYlBcVOqk7sEe6uGcVDPWmBbTRCHtntmvS54HiBtiCiYj4wShogVnetLumRIZpWRWTrI2aURR3EUNlW1(l5EiEe8wuym91tf2HksCcsji(k)QcDx33pp2WeTpPVnUmCYGbdKbdrkYraN8qeQtEeQNmf9mIwzkooEnsDoInoNaZkGMMhO6rZItvD4QVxDTYE1(1HKiW1j4yeAEtf8Ci7s2dEg7XOB5hxiJSDyePczcl6fztx6CZqX(yNnXGX4RkE9ztKUtrxX)d2pLj4u(NE7wJOyJAKc6Ja4PflE5Ye)u60jcCPR69eH4rjxpDYvkq42qFwc5opsk4YMXbf7KiWhUyGqzYddNZLe6xyjSJJ(6bw9UqrtRW1ppAWx73)I(fg0k5MBoZNO0EKnSyrwxtPJP8ufUTtnSmqdg0RKHAYQIDvtOZSQz4SAWGsf8zJu9ZvCmmAbhByNemGMIIJdeoSyDRBPMWjjxjUiaNhpcdboKvBbJhjP7M8ORmNktwEIbOIvmOmwkFX9ZOwCzJ3g8owPnRIs)ekRxPuQgVqccGxfKsWOG7kMu)Sp4mGAEIM1REWvh36mwDkWXQbtrVV12x47mpUqU5TJoiznPOieLiQY3ZymOs4e09ZR7Dr)(gD7KrYvfF(6Pp)P2dbm6zd8Aa4S1bds33km(Sa93yz)zEz2o1l9vpAviTIl1lngVeotx9rft(AFl6s(WfhwKZINaOV8CIcs4NsmW2k1hnZa3BByCFoewdV6VanxckO8)FW1JCUskstZFsXnrFoWKpWI3yX7V)E82T2LtHXl(kYo47rZs9eEkplw7ql9erSQw9YdWLxGd485V51xPKMuvsqt9xZtC0qSC3pg0IianimMHj(W95njNogkvjTQ0SMkmjE8QyyqsMYDPAbhpZfd0MN3IHzuZ0scJvX98Ag0suwUGwGY60wGY6Z0ekXzfZODimJ4JJon6YrM2OnIkELvOq(ya)n5nDc5VkZYwObMOUqpmnNw(RDsDoI2uDjVuEZ53XvpHA(v(QA14R0Sixp(LxPDD80Nk)onLZwQvIKwD(tTeON228CEeEKvVMsF4AasfFFFFTDhb3)XYEQ(Mi4lxoM6MMDZ0jLu1pCcYtv7)MgIwX8kf5u8O6OEBv9o8r3zWquq8ATIHxTpQOZpzDha(8ZIobL)yv336oZNecpQjeLvyD5CMlk1oqJwfeZ4Sxw3IKpL0LbiqtaTIjvxMWzXtTWIQkblJ7wx65ZyTN5O8NTGs5lRuW5jCNU5AsFUlknxBUstBKU(I70uQD6fT2Uh01J589zwSsLjsCmg88tXFQwuiNtVWcN0Q2TYEwthmAj)bUOEPfrLNQUSiuksaFTJhDutgNk7bYnxsC3zIdH4bQw3KZk6Uqm2cNLRMEjlfByJTf(kLONGo9aijnOBftV5QPBnZ6gtT(CNB9jLCTCf1BZ(MsVke2y9WAREjNHAKEFQRBlELrdpZ4r4nJs(4wn)kqxy(1p9t3fVtpO8XUm9p07NpifQ)iLhw(AA(DpLXu8Dl9RAA(U7tPi(nkE97NS6MPvgjv3Qt4gRZzH)BQY)37s)FSA)lmJ2U7vRzaI3QQFvRvtErL)vT1NwFcQ1OGw2PG7rRcE47vqtnlqyQ1FVsDV5623VpVvVLDsqy1S98l5kU))bBMYbx1AZGWuz7zNkjOkzQSQXn1)bx(txNv(ROLPmQpUJD7CamLm9XpFQH0NT5Zy8xAT2KHR0jP6VZSG0gZstP)kzwwLnRgmU22uBZwNKmnibR5ej6W05i5W2UPw2UjZcTRNdNP)svAPdkFvNHoALxm1kQZyVO6IbSQtrhh1gAn1zS3uMclTH6SUiDueR3QQZqVQmfZBfLsD8r1)8ekZL5wxDU7DLPZP6S6D6TY6(0lltnZklEUELUASiVpkp0)eQ3(jMdzxH33Yftq)uVhYAj8dVKhGguDETfTJ7vQsLNv58Q1Tv)(jj)RoAbSQNhddIt0qPS18h19B4nHrHhM3)95)X1iM29Fp]]
+    20261118000,
+    [[Hekili:TVvBVTnos4Fl5l(Srd8lPn9LG6aS96U46I96TiEb2VjzAjABEwwYGKk(cqG)TFdPEJKIuwYXjyB3(HgOsoCMNz4mKCMjXBI3F4nleXXEF9QXx92jtM8(XJh7nJ)WoS3SDOGnOvWhXOTWp)Lu6dhM3FFYEgzlByqY2bcAEikbfk4ZIuse)lXElSYs2oCG3S)8NU7UV8FU7MLaV8MTMegIZwaMfyvc3CyoFn(W88XgTmHIVhtpmpeVeLgXpm)N(9F7WCy4dZZxEkzKqySr7rukjHokChBeAxeSyGGHWxd)VSK4bxcSMIIzraydHVteIIWomhfgMe)pGp2GFGn8W8pJ4OBSaH()7V8hatwZ57y3mA0kcFD6cbQhzq6aGNasrlgVC8y8Bwg8(xdS9FMKefMSpMjK9QvrGwcgemde1NXi(6dZ)tcBniG7WbBIWmwm8pqQOiga1f41Kya2eomMyN6WCgMZjXRGvKSCjqXdLwjHUoBpgVdMg(ItjBWcfvWaP5LIciaFbU)POKKWmBjSOpHPmmDtgx)5ukEds8ruAmwyG(nYQ18bGU8varrKyHkGPWpzsyLghkStsj87jCsIqxf7uFgVehZi3Jl1DHD(oSuHelKj2rsIpmxy(a9GJORWCq0lsy58ioHpe8)OjljrG3jkqY)H7OyyhybIpDrg2XuFk4fFjz5uokchZhs2cR6ECOVofdXXOfrGG)1A86vthTqyxKmcaNpyG9xfeoDIdIrCEe2NTojLle8flsxUCO6Odt3zFP08nBF2EWQZStuakkYpBc)icJFPicDkqH)UuyMTG2vUWP2jMj3C8r0TjubefeCp2hhJ3sWmffZP4cc9lCBuOnu466Vx45cCT)sHhIpfVfrIzFCQ0ourYWWuksSYh1O72(b5Xg2O9v9DXLrxnyWavWqvICKWjpeHnmpc1xLIEwrRkfhhVwPohXwNtIznqZYdu9zzXP6oC13RUvBVA)AcncCDcpgH23ubph6UK9GNXEm6EXXfQiBhgrRqM0IEr20Lo3CuCaE4MyWy8OMxF2eP700v8)dhKYLCk)t)DRrmSvnsd9ra8mIfVCzsqkB6vsCzQ69KH4rj3o9QR1GW9KaEc9bFAk4YMXbn7KmWhUyGY4QddNZLqckSeUXrFZaRExOPPv46nJh8y)(x0VWGwj3CZz(eL2JSHLlY5AkDmvNQWTDQLLbAWGELm0qwvSRActMvnJGvdguQGVDSUFUMJHvl4el7KGb0wuCCO0HfBADl1ebj5kXfH484ryiWHSAlyYyfD3MhDL5uBYYtmavSIbLXs5lUFg1YlB83G3XlTzvugKW49kLs14fsqc8QGukgf(qXKMN9bNbuZt0UE1dU64(Ht0NcCSAWu07BT9fXoZllKBE7Ods2qkAcrlIQ89mwdQKobD)86Ex0VVv3ovKCDXNFC67ET7qaRE2aVgaoBDWG09TcRplW8nwUFMxMTt)sF9JwLsR4s9sJXhGZ01FuXvp23HUKpCXHf5S4va6lpNOGeXPedCTsZrZmW92sI7lGWA4v)fO5sqbv))dUD8WRvI0m8N0CtmNdm5dC4nw8(7VhVDRD5uy9IVISd(E0SupHNYZIno0YmreNQvV8aC1fmeC(c28XR1stQkjOPbRfjoAjwU7hd6qeGgqI5yAaCFEtYPJHsvsRknRPstIVOkgwKKTCxQwWXZCXcT55Tyzg9mTuWyvCVOMbTeLLlOfOSoTfOS(mnHsCwXmAhcZi(4OZGUCKzmAJOsuzfgKpgWFBEtNq(RQSSfAGnQl0dBZzK)ANuNJOnvxYRK3C(DC1tOwCLVUwn5AdlYTt(W1gxhp91QVtt7SLALiPvN)ulb6PTnpNxGhz1RP0hUfGuX3p1xB3rW9xSSNQVjc(YLJPVP52mDsjv9dNG8u1(RPHOvmVsrofpQoQ3ovVd)Q3myigiEJwXiQ2ht25NSUdaF(vzNGYFSQ3N8MfqjWJAiOScRRMZCrP2bAmQGygN9Z6wK6PKECabgcOvmP6YeblETdwuvjyvC36spFgR9SaLVXbkvVSsdNNWD62Rj95UO0cT5AdTr56lHttP2zw0A3Eq3orW336WkvMiXXyW7of)PArHco9EhCYOA3A7znDWOJ8heI6doevEQ6QIqRibI1oz8rnzcQChi3CjX9MjpeseO6CtoRO7sX4kCwTA6LSuUHnXv4RsIEs6mdGu0GUvm9MRMUZmRBm16ZDU1NuY1QvuVn7BA9QqAJndRD6LCgQr6tPUUT4vgn8mJxG3mQ4J708RbDP5380ptx8o9GYx6Y0)CVF(SuO(JuEy1RPf39ugtj2TmVQP57UpLI43O4nVFYPBMrzK0DRoHBSoNf(VPk))Kl9)XQ9V0m66UxJMbiFRQ5vTon5fv(x3wFA9jOwJcAzNcEcTk45Vxbn1SaPP289k19MRBF)(8w9w2jbPvZ1ZVuR4(FhSzAhCvRndstLRNDQLGQIPYPg3u)h8epDDw5VIw2YO(4o2TZbWwY0h)8PgsF2LpJ1FP1AtgUkNKA(oZcsBmlnT(RKzz12SAW46AtTnBDkY0IeCMtKSdtNJKdB7MAz7MSl0UEoCM(RuPLoO8vDg6OvEXwROoJ9IQlgWQofDCuBP1uNXEtzlS0fQZ6I0rrSzRQod9QYwmVtuQ0XhD)ZtOmx2BD15U3v2oNQZQ3P3kRNsVSS1mRS456v6QXI8(I8q)tOE7NyoKDfEFlxmbZt9EoRLWp8sEgAq151w0oUxPkvEwLZRx3wZ7Nu8V6OfWPEEmmiprdLYxlEu3)cVHeromV)VK)hxJCAV)p]]
 )
 spec:RegisterPack(
     "Arms (wowsims.com)",
-    20261110000,
-    [[Hekili:TZvBVTnos4Fl5dNRnAxfBN6Ux7vhGTx3fBpS3UlQlq)MvKLOJ5gzjbrP4ZhcYV9Bgs9cjTiLKTtWIEBbsQTi1mpZlCMHKdYYjl)YYfbEzKL)60XtFZKjtgd)B5IS9jKLls88VZ7w4drEBHF)dPBzpEZWDX7y0Tmh)4TJW5Spm2laPZQCAy2NIwUQrsYsi(lx81F4ZF(t)2NFNhqRLl2qdciIxGW8BKdV7XBY2qE8MIND564uY9K0hVjGS2lpm7XB(HF)xE8g4XWNeVEo9sKzSl35LMsJtVmiHDPxsi8lycoWNC(dwC0OxbKo1lIfcGna(CmYkkqbVGG4OxaF4oYEMZJ38rVmV31aeg(V)0xaISjllH9UlV8wA2M8viQVuBQJaAciLmZ7T(bt9MgS2hi7)moomiExed59T3gcsjOqimGvFK4LT5XB(kLTbyWNj(3fsySi4hGREHmaQRiBOraSPzWZql1J3Wizz0OBH3iE9Ayg7R0sOSUyhHKaddFklLEhbfuKaC1BQNpfOlq9peghdp9NYt3dV0hiPms6DcQ(J5PK78WpeMhrqf0VqVDt2iqw(csesuWTGNcahuTtZ2JQsVeeGEWp7JZF8MqIxAe89v0qAgLGQ3FlHe9D7Itdb2MKhIOiNHKZlnKI65ptqCYblyyX)lKRjsbNtqwrYLUfDayzGEaj5x3qr1ziO8d5Imo6AeSIVLNfehNYqbefxbHw7Dp8m4TI3jOTdYAqcwXnneVq0MSnNLHAFHjfeh8RVz2F7FWTEG7C9uPWNbVHvft8EuLtr)Gq6TuGOoLIg7oAc6UfbEdaTdjKGVJUDlOKbZJx6TKSsJ1kualTVPuY6qujVodvtEW7w(wPegFXbcHF)(FevjuesFKSMeXOCOqIqjl4vfQ7psaDOxi9)k8r2akjHnyVqhxO0kSraf)zVTmWtcNnd0zafJIJ(UvXOPb4jOhY36fftdycCSLacgQzJqT9UnOQcC(2JiHla)4)H4NNvofNcQKNHUk7X14Hc2aosWS)e(sP5jv6gzztSGIX1WzGq5Lr5(j8LoveQAfOdeilnEn40SCHNpoxMtskry8MVsSiGK6IEfVIUEoqsaZo0TWBDpjWvDgofA2h)xhqRxo)sFVWqxXaUHuw2RWORZHz4IkwxWhoYN08RUQ0z9vGfZfCcCV1py(eeryOn3QXDzERnrdVSSqycO9fFXlwLVETJ8tDYtokKVfufvV4C2gkje0mEqiSs8LCpXv4ppqq0Rhpq8DNDG7jnA2Glk(oGdgemC2GachG(W6mWvdWM(tUF68XvSfqzs(wWt75LNIv8SS4iDttaLLe6Th8qaxU5xn2gUKPyH6BhOY1OX0zwLTHxiiItiGvU3uGdpWYdclT0JZtgjZY6rSldDK)ssGcaKFUgcUN6NfNU3nnhCAwh7NZKCUJHq)U80enQWA8Dvr(3Bh5xOXgDdmy4DtIXNyv)8AR24bd5jLE)Bg)Gg7u0eP1rT0j)mBAKwDTfbgDcQIvoazkGtsezlKp(65t7Pl0jzXdKs6uhtQBs3KX6Ih8KdLVliI0kUjB8yKYvYhYyhmtGInVm)2jfl5cmHy1JPqqA87fF1pfk0dQQYfl4E(lkty(IbnI5kaDauBoYmlpkasjXloIldkw65tgCXqDnn)7G6inJhtFu7mXpWTS4rf7kuaR7oQi4)qEPxUPKTE0i27NxybkNItqEk3v)bL5D9q)I8Znn3xo0evUC6OrAlMQRFMdNHfvkZCkku3vEkdoyuroz3a83G)EtsJmbAxEAC2fsuJJXLjfHIvuoVltunFdLeOUWEsBrlLhh8yGaqf0gjMvDI8BwwjbF4dbvd6EzkPVATk2sDfwIPxeGru8I(ykrLuauXRvziuhSYKoE0ObCsdL0KMeVdlSd2jWESuGgFEPjgKZYppGxkyy81ZNvdMQ3thi1dOaIHIKs4geaoff8WfwvFpya0kEovdlNID4qZQRbqjE37mrDOrpytdp4VSZ9XoJw6)mGJ2DtSPTv2jrLfsj4GMfSP4ddT7IFy9ks(a72qtd3rRQxPsCRhGR)a9DL2A6SbsArqnm4cJEBYYsfjf6L(cARrBTtnfnAlBjSFLGwQvE)8jZgyBlL8SQGOlCnMATOnTqygkidh6G6AyHEBvC7u0ufg5IHW5Y3G27BCUGAz03K5PQiaxdkEpzDA1KLNgQnQxcmz8ttMgDxK))njZ5XiHe68qj9fLwTAgvJDohWGUHqlGQosGbW0Lidxp3yOHbiM2aBPTQA95vpHLGhi7WXVCSZvAfHNq8sRlc)CKHSLWsTKN5Ig5aSrV2EXdtqDmzvFAcJ0HQgSlChHnPqt2q9ydvCaFy4blhBYz)ADF9rMRLOZ5(lac(okyszt78lEqtJjV4wZWpPomXRhps9iWsJP(LE6gjOXYa0oAHbMx3Qh3wfIZLG4BMDeiupesf1El)aLupzFESJIZZVVoLptl6mxVQwHTJ6yHJLfb(2XTvd4kTlty4qRXJRKb1bRI4Ao6CpvLVF6OQfMAkYbnQivbq9iILQduIrWpSWkT6KJAvszf4YvjRhhrjrJ(r515vzA1E39vDfrXK5SddVGv9R(OtcSngpukKZdd1pg(hufbP6yUsv1NTrav)qVeL4OOLkd(XvEg2vffcV8liFTynyrSroJQY3pRpNbRJ2LeoVLIfmumqBlLoxPWBc44Deo3FdUH0MkUPqh2900gybyFO41d7tsYSXNEUpGAUvFQ3Z5rhDxJ9lXHCQPJkU(fA)GIByUfhtCdJOEW3sySoDfEBgDeLvVqhq5HZTeLhoInuseDys3qOyYTJoT5vGmTNAfvy7UWCdr63K30tW1jiZYoiHnn7s5SPX0UoHEjUNO0wNNt6AoeR7UOOSzPbWkXvL6jZ00yxp5TZEqthEL8zzQe39Glf7uJnVCbe5Jb8rRF3WBiJXBVorlybF8x5TBxrXKl)qzRMSCHuVsSCHFkfICr9GHp27CSt9VWYmaXgaKOhkEEXYvAyr5AVHHh3f4SCHKdlQWRejPw0a52RTZTPZoW6GxFDxGGLRpVX7phrZSwK9z9JXhEr8nFt8M1w1qeH3B0GNgwAOo0AkjFtJlxWRie5eq1V3Uq)9ZALiDrPOxojY5)UDo)6o5QjDm6hCo62DdPvnsccM32cyKudsDfsxmcTU280AgKE3nigCcbDWKXgceDyBA0Fb)POpr4G2u48Q(0OtUrTzKEYAGeUmONbqcW(9UBrQvb69kIiFOROrYLZ1YbHEO)orL6Aw40qpGEThuzdIilCDUJuoJTKchM6r6RxAxx1JcqpXYT6EVQCUBwfU4QN5Wuyr9UzXSJ418Cht0tE0E6Mj6r9lFfLDSlZyR6woj1JDBs8u23AlMxL9I3ZBW6yVcRoDhwg2N)5TbfARdfo80jA74jmE(e8cG1t8iBAmRWmCzLpR3w53(26NTUIPnGuVqUAC1ylt1lfqYnYQTqyd1pvR25NEABJbE0CpuDWB7KapOAql3pXzVxB4YPPkdQ4HQQUVIdNhMQCWyEb7SHtt908gTpLxTsNkv0YooARZD4OQ)7JRVnVJCbnOXPWPDkN9MYzJ3XwJlzA6oK6r7(WzQEw)VPtr3uZHCmDhYzojREzs)vs2ZP1YuxbDeKsF5UTLZxzP0P(0XqN1wgYkGnE8Rhe)Ph9y0tttgXXRPtNvRRJo5QnqEPNOT)Hj)ZqNj1Vwt6KcQDLEzdhvjyTEtS92A25gx647CjU4B6GmASYSwly6k9stkjxbMLjMIyWFz9clKuWAEpQT3Ku8bJMprduXzJEPeDO8jTti7m10tDb3k9Lbh(wYcF0De1rHKxRN54Ow68Cf4O7Txfx20tY0Rk)T35vC6BkPWkPUtsxpzl91ZApz9m2uwCLLEwTA1sxAaRJZ5202jvo17Jk2H2oX6ESelTYfhY6XYL2QRfMO02wn03wwBCRJt3AklHCFA1yEh0V4S0cyCyyCJSgmX24ZP1)baCYW)2vu8hPHLwAYG6ay6rD0JWRoZYy98DYzG2wVOgTUwJNl6ucsAkYypdm24F4lqczQYMUjKy7NjSkkEd26(ddEnNjpdjy1aimw2dVh9ohBTORhvzvd71mt77(ZfYV0Le2dHVU36uWsxBMVZy381hfyDV21oQBO5(oJD3xFwIl6dVwrSEZ(Dg62VMcAyeLs9eNQ)5tW9Z2CZ)DU7(VMc11BX)eL(6AUoOzapLUbSP2bulEyrUO(euW0jFCUAZ6J(4ieYgiDE5zBWCi)m5oAi9XBg(tf)9NJp8Y)3p]]
+    20261120000,
+    [[Hekili:TZvBVTnos4Fl5dNRnARITtC3T9IdW2R7ITh2B3fnlq)MvKLOJ5fzjbrP4ZhcYV9Bgs9cjTiLKTtWIEBbsQTi1mpZlCMHKdYIjl(Jf3e4Lrw8Rthp9DtMmDm8Vf3KTlHS4Mep)79Ud(qK3g43)q6g2t3oCB8wgDdZXpEZiCo7cJ9cq6SmNgM95OflBKKSeI)IB(6p8LV85F7lFWdO1IBwtdciIxGW8BKdF4PBZwtE62IND(Q4uYdK0NUnGSYlpm7PB)HF)xE6w4XWNeVEo9CKzSZ36LMsJtppiHDUxsi8lycoWNC(3S4OrVbiDQxeleaBa85yKvuGcEbbXrVc(W9KDmNNU9tEzEFObim8F95)aiY6SSe2ho)87OzRZxIO(CTPocOjGuVLJxnEm5Yv(F)faz)hXXHbXBJyiVV7UqqkbfcHbS6teVS1pD7xPS1ad(cX)(qcJfb)aC1lKbqDjznncGnndEgAPE6wgjlJgDh8gXRwbZyxLwcL1B2sijWWWNYsP3tqbfjax9M65tb6cu)JHXXWt)P80DWl9rskJKEVGQ)yEk5Ep8dH5reub9l07wNncKL)ajcjk4oWtbGdQ2Pz7qvPxccqp4NDX5pDBiXlncvf0qAgLGQ3FlHe92TXPHaBtYdruKZqY5Lgsr98xiio5GfmS4)fY1ePGZjiRi5s3GoaSmqpGK8RRPO6meu(HCrghDfcwX3YZcIJtzOaIIRGqR8EaEg8wXBf02bznibl5MgIxiAt2KZYqTVWKcId(13n7V935wpWDUEQu4ZG3WYIj(aQYPWNbmDhfiQtPOXUNMGUBrG3aq7qcj4T0nBaLmyE8sVJKvASwIcyP9nLswfIk5vzOAYdE3Y3kLW4loqi87p8JOkHIq6tKvKigLdfsekzbVPqD)jcOd9cP)xHpYAqjjSb7e64cLwHncO4p7THbEs4SzGodOyuC0BxgJMgGNGEiFJxumnGjWXgciyOMnc12BxJQkW5BhIeUa8J)hIFEw5uCkOsEg6QSdxJhkyd4ibZ(Z4lLMNuPBKLnXckgxdNbcLxgL7NWx6urOQvGoqGS04vGtZIB88X5YCssjcJ38LIfbKux0R4n0vZbscy2HUbERhibUQZWPqZ(0)CpA965N77fg6kgWnKYYEdgDDomdxuX6c(Wr(KMF1LLoRVbSyUGtG7D(bZNGicdT5wnUlZBLjA4LLfctaTV4lE2Y8vRCKFQtEYbH8nGQO6fNZwtjHGMXdcHvIVKhiUc)5bcIE94bIV7SfCpPrZgCwX3bCWGGHZgeq4a0hwNbUAa20FYdtNpUITaktY3aEAVS8uSINLfhPBAcOSKqVDGhc4Yn)IX2WLmfluFBbvUgnMoZQSn8mbrCcbSY9McC4bwEuyPLECEYizwwpIDzOJ8xscuaG8Z1qWdu)S40DUP5GtZQy)CMKZDme63LNMOrfwJVRkY)o7i)mn2OBGbdVBsm(eR6NlTAJhmKNu6Q3n(rn2POjsRJAPt(z20iT6Alcm6eufRCaYuaNKiYgiF81ZN2txOJYIhiL0PoMu3KUjJ1fp4j7lFNrePvCtw7XiLRK3NXoyMafBEz(TJkwYzycXQhtHG043l(QFkuOhuvLlwW98xvMW8vdAeZvaApO2CKzwEuaKsIxCexguS0ZNm4SH6AA(3b1rAgpM(O2zIFGBzXJk2vOaw3TurW)H8sVCtjB8OrSRMxybkNItqEk3v)rL5D9q)I8Znn3xp0evoF6OrAlMQRFMdNHfvkZCkku3vEkd2Buroz3a83G)EtsJmbAxEAC2fsuJJXLjfHIvuoVltunFdLeOUWEsBrlLhh8yGaqf0gjMvDI8BwwjbF49bvd6EzkPVATk2sDfwIPxeGru8I(ykrLuauXRvziuhSYKoE0ObCsdL0KMeVflSd2jWoSuGgFEPjgKZYppGxkyy81ZNvdMQ3thi1dOaIHIKs4geaoff84zwvFpAa0kEovdlNID4qZQRbqjEp4mrDOrpAtdp4VSZ9XoJw6)mGJ2DtSPTv2jrLfsj4GMfSP4ddT7IVF9ks(aBxttd3sRQxPsCRhGR)a9DL2A6SbsArqnm4mJEBYYsfjf6L(cARrBTtnfnAlBjSFLGwQvUA(KzdSTLsEwvq0fUgtTw0MwimdfKHdTxDnSqVnkUDkAQcJCXq4C5Bq7QgNlOwg9nzEQkcW1GI3twNwnz5PHAJ6Latg)8KPr3f5)FtYCAmsiHonusFrPvRMr1yNZbmOBi0cOQJeyamDjYW1ZngAyaIP1WwARQwFE1tyj4bYoC8Rh7CHwr4jeV06IWpfziBjSul5zoRroaB0RTxC)euhsw1NNWiDOQb7c3bytk0Knup2qfhWhhU3YXMC2Vw3xFK5Aj6CU)cGGVJcMu20o)Ih00yYlU1m8tQdtC54rQhbwAm1V0t3ibnwgG2rlmW86w942QqCUeeF3SdaH6HqQO275hOK6j7ZJDuCE(91P8fArN56v1kSDuhlCSSiW3pUTAaxQDzcdhAnECLmOoyvexZrN7PQ8QPJQwyQPih0OIufa1JiwQoqjgb)WcR0QtoOvjLvGlxLSECeLen6hLxNxLPv7D3x1veftMZom8cw1V6JojW2y8qPqopou)y4FuveKQJ5cvvF2Abu9d9suIJIwQm4hx5zyxvui8YVG81I1GfXg5mQkVAwFodwhTljCElflyOyG2wkDQsH3eWX7iCU)ACdPnvCtHoS7PPnWcW(qXRh2NKKzJp9CFa1CR(uVNZJo6Uc7xI95uthvC9l0(bf3WCloM4ggr9GVLWyD6k82m6ikREHoGY9NBjk3FeBOKi6WKUHqXKBhDAZRazAp1kQW2DH5gI0VjVPNHRtqMLDqcBA2LYztJPDDc9sCpsPTopN01Ciw3DwrzZsdGvIRk1tMPPXUEY7N9OMo8c5ZYujU7Exk2XgBEXnqKpgWhT(DdVHmgV96eTGf8XFL3UDfftU4JLTAYIBK6vIf34NsHixupy4d9oh7u)lSidqSbaj6HIxwSCHgwuU2By4XDbolUrYHfv4vIKulAGC7s7CB6S9So41x3fiy56ZB8(Zr0mRfzFw)y8(xeFZ3eVzTvner49on4PHLgQdTMsY304IB4veICcO63zxO)UzTsKUOu0lNe583BNZx2jxnPJrFVZr3UBiTQrsqW8(waJKAqQRq6IrO11MhxZG07UbXGtiOdMm2qGO9BtJ(l4ph9jch0McNx1NgDYnQnJ0ZwdKWLb9masa2V3DlsTkqVxre5dDfnsUCUwoi0d93jQuxZcNg6b0R9GkBqezHRZDKYjSLu4WupsF9s76QEua6rwUv37vLtDZQWfx9mhMclQ3nlMDeVMN7yIEYJ2t3mrpQF5ROSJDzgBv3YjPESBtINY(wBX8QSx8EEdwh6vy1P7WYW(8pTnOqBDOW(NorBhpHXZNGxaSEIhztJzfMHlR8f92k)23w)I1vmTbK6fYvJRgBzQEPasUrwTfcBO(PA1o)0tBBmWJM7HQdEBNe4EvdA5(jo59Adxonvzqfpuv19vC48WuLdgZlyNnCAQNM3O9P8Qv6uPIw2XrBDUdhv9FFC9T5DKlObnofoTt5S3uoB8o2ACjtt3HupA3hot1Z6)nDk6MAoKdP7qoXjz1lt6VsYEkTwM6kOdGu6l3TTC(clLo1Nog6K2YqwbSXJFDV4p9OhJEEAYioEnD6SADD0rxTbYl9eT9pm5Fg6mP(1AshvqTl0lB4GkbR1BIT3wZo34shENlXfFthKrJvM1AbtxOxAsj5kWSmXued(lRxyHKcwZ7rT9MKIpy08jAGkoB0lLOdLpPDczNOMEQl4wPVm4W3sw4dUJOoiKCPEMJdAPZlvGJU3EvCztpjtVQ83ENxXPVPKclL6ojD9KT0xVO9K1lytzXvw6z1QvlDPbSomNBtBNu5uVpOyhA7eR7XsS0kxCiRhlxARUwyIsBB1qFBzTXTomDRPSeY9PvJ5Dq)ItslGXHHXnYAWeBJphx)haWjd)BxrXFKgwyPjdQdGPh1rpcV6mlJ1Z3jNbAB9IA06AnEUOJjiPPiJ9mWyJ)HVajKPkB6MqITFMWQO4nyR7pm41CI8mKGvdGWyzp8E07uS1IUEuLvnSxZmTV7pxi)sxsype(6ERtblDTz(oHDZxFuG19Ax7OUHM77e2DF9zjUOp8AfX6n73jOB)AkOHruk1tCQ(Npd3pBZn)3PU7)AkuxVf)Ju6RR5AVMb8y6gWMAhqT4Hf5I6tqbtN8XPQnRp4JJqiBG05LNTgZH8ZK7PH0NUD4pv83Fo(Wl(Fp]]
 )
 
 -- The hand-built lists the wowsims.com packs replace (wowsims packs plan, P9): a saved choice of one falls back to the

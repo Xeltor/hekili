@@ -241,6 +241,7 @@ local function cdmOf(rec)
     return nil
 end
 
+local resolveApl -- below: the APL windows' records with this build's ability indexes
 local function buildDef()
     for _, name in ipairs(LISTS) do
         wipe(def[name])
@@ -258,6 +259,7 @@ local function buildDef()
         local r = class.resources[k]
         local swing, value, offValue, auraRegen, swingAura = 0, nil, nil, nil, nil
         local crit, offCrit -- a white crit's extra amount by hand (Resources.lua, I.SwingCrit)
+        local width, offWidth -- a swing value's half-width by hand: a proc the belief cannot see (I.SwingWidth)
         local taken -- the paying entry's gain from a hit on the player (Resources.lua, tank design §1.2)
         local model = r.state and r.state.regenModel
         if model then
@@ -265,10 +267,10 @@ local function buildDef()
                 if m.forecastOnly then -- luacheck: ignore 542
                     -- the sim's forecast only: the belief pays it another way (a reaction), so it never reads it
                 elseif m.swing == "offhand" then
-                    offValue, offCrit = m.value, m.crit
+                    offValue, offCrit, offWidth = m.value, m.crit, m.width
                 elseif m.swing and HANDS[m.swing] and swing == 0 then
                     swing, value, swingAura = HANDS[m.swing], m.value, m.aura -- `aura`: swings pay only while it is up
-                    crit, taken = m.crit, m.taken
+                    crit, width, taken = m.crit, m.width, m.taken
                 elseif
                     name ~= DECAY
                     and name ~= TAKEN
@@ -284,6 +286,7 @@ local function buildDef()
         end
         if swing == 0 and offValue ~= nil then
             swing, value, offValue, crit, offCrit = 2, offValue, nil, offCrit, nil -- the off hand alone pays it
+            width, offWidth = offWidth, nil
         end
         local meta = r.state and r.state.meta or NO_META
         local d = {
@@ -298,6 +301,8 @@ local function buildDef()
             swingOff = offValue,
             swingCrit = crit,
             swingOffCrit = offCrit,
+            swingWidth = width,
+            swingOffWidth = offWidth,
             swingAura = swingAura,
             taken = taken,
             auraRegen = auraRegen,
@@ -420,6 +425,7 @@ local function buildDef()
         insert(def.reactions, recordOf(class.reactions[k])) -- its `now` crosses as the function itself
     end
     def.units[1], def.units[2] = "player", "target"
+    resolveApl() -- this build's ability indexes for the sequences' steps
     settingsOf()
 end
 
@@ -439,6 +445,39 @@ function Hekili:CdmSwitchChanged()
         def.auras[j].cdm = cdmOf(def.auras[j])
     end
     def.providers.cdmGen = (def.providers.cdmGen or 0) + 1
+end
+
+--- (windows design v6 §9) The active pack's APL window records (Engine/Sim/Scripts.lua CheckWindows) and the
+--- operations bound: a new generation, which the belief applies at its next Drain out of combat (after combat end
+--- otherwise; a full Build at once). Never a rebuild here.
+-- A sequence's `steps` (ability keys, Scripts.lua) as ability indexes of this build (0: untracked, never due), into
+-- new records: the compiler's own records are never changed (they are re-applied after a spec change).
+resolveApl = function()
+    local src, indexOf, out = def.aplSource or {}, {}, {}
+    for i = 1, #def.abilities do
+        indexOf[def.abilities[i].key] = i
+    end
+    for i, r in ipairs(src) do
+        if r.steps then
+            local rec = {}
+            for k, v in pairs(r) do
+                rec[k] = v
+            end
+            rec.steps = {}
+            for k, key in ipairs(r.steps) do
+                rec.steps[k] = indexOf[key] or 0
+            end
+            out[i] = rec
+        else
+            out[i] = r
+        end
+    end
+    def.aplWindows = out
+end
+
+function ns.SetAplWindows(records, cap)
+    def.aplSource, def.aplOpCap, def.aplGen = records, cap, (def.aplGen or 0) + 1
+    resolveApl()
 end
 
 --- Rebuilds the belief's tracked set from the active spec (decision 8). Called at the end of

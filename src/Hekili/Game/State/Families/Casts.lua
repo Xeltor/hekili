@@ -9,7 +9,7 @@
 local _, ns = ...
 local VS, I = ns.VirtualState, ns.VirtualStateInternal
 local Obs = VS.Obs
-local floor, ceil, abs, max = math.floor, math.ceil, math.abs, math.max
+local floor, abs, max = math.floor, math.abs, math.max
 
 -- By ability index a. `obj` is the spec's ability table (Hekili's `class.abilities[key]`): VirtualState reads its
 -- `spend`, `spendType`, `cooldown`, `charges`, `recharge`, `gcd`, `gcdTime`, `cast`, `onNextSwing` and `rangedSwing`
@@ -43,6 +43,7 @@ local A = {
 }
 I.ab = A
 A.bySpell = {}
+A.idPos = {} -- by spell ID: its place among its ability's IDs (A.ids), the rank a cast of it was (Obs.CastSuccess `c`)
 
 -- Unknown, not ready, ready (the plain isActive flag as last reported).
 local UNKNOWN, NOT, YES = -1, 0, 1
@@ -52,6 +53,9 @@ local UNKNOWN, NOT, YES = -1, 0, 1
 -- shortcut: a fall seen late by under 0.01 s still teaches, and a hasted spell GCD can learn up to 1.5; upgrade by
 -- learning only below the haste default if a hasted class shows it.
 local GCD_MIN, GCD_MAX = { 1.0, 0.9 }, { 1.51, 1.01 }
+-- A spell-kind GCD's floor (wowsims GCDMin): the simulation's GCD_FLOOR (Engine/Sim/State.lua) holds the same value,
+-- pinned by tests/Forever/gcd_rule_spec.lua.
+local GCD_FLOOR = 1.0
 -- An own cast within this of the GCD's rising edge, before or after it, opened it (UNMEASURED until checkpoint G3).
 local GCD_EDGE = 0.1
 
@@ -96,14 +100,14 @@ function I.Eval(f, t, retry)
     end
     local env = getfenv(f)
     setfenv(f, I.nowCtx)
-    I.NowAt(t)
-    local ok, v = pcall(f)
+    local n, why = I.nowErrors, I.nowError
+    local ok, v = I.Guard(f, t)
     setfenv(f, env)
     if not ok then
-        if not raised then
-            failed[f] = true
-            I.nowErrors, I.nowError = (I.nowErrors or 0) + 1, v
+        if raised then -- a retry's raise is the fault counted at its first
+            I.nowErrors, I.nowError = n, why
         end
+        failed[f] = true
         return nil, false
     end
     if raised then
@@ -138,7 +142,7 @@ local function gcdMult(a, t)
     local f = 1
     for k = 1, GM.n do
         local j, sc = GM.aura[k], GM.scope[k]
-        if (not sc or sc[a]) and I.auras.applied[1][j] <= t and I.auras.exp0[1][j] > t then -- unit 1: "player"
+        if (not sc or sc[a]) and I.AuraUpAt(1, j, t) then -- unit 1: "player"
             f = f * GM.mult[k]
         end
     end
@@ -179,10 +183,10 @@ function I.GcdLen(a, t, t0)
         -- spell haste (the belief's UnitSpellHaste %, composed in a fight: Families/Player.lua), never melee haste: attack
         -- speed does not shorten a GCD on Forever
         local h = VS.SpellHaste and VS.SpellHaste(t).est or 0
-        len = max(1.0, 1.5 / (1 + (h > 0 and h or 0) / 100)) -- 1 + h/100 >= 1: h > 0 checked
+        len = max(GCD_FLOOR, 1.5 / (1 + (h > 0 and h or 0) / 100)) -- 1 + h/100 >= 1: h > 0 checked
     end
     local f = a > 0 and GM.n > 0 and gcdMult(a, t0 or t) or 1
-    return f ~= 1 and max(1.0, len * f) or len
+    return f ~= 1 and max(GCD_FLOOR, len * f) or len
 end
 
 -- Whether a GCD modifier cut the current GCD, fixed where its length is (review M2): its fall teaches no length then,
@@ -198,14 +202,21 @@ local function maxCharges(a)
 end
 
 -- By resource slot: the base power a cost between 0 and 1 is a fraction of, as the client prices a percent-of-base cost
--- (floored): the pack's `base` (its level's value; the meta field, Engine/Schema/Spec.lua) until a plain cost read
--- teaches it (I.LearnBases); 0 for a pool without one, whose fractions are of its maximum (Hekili's pricing).
+-- (to the nearest whole): the pack's `base` (its level's value; the meta field, Engine/Schema/Spec.lua) until a plain
+-- cost read teaches it (I.LearnBases); 0 for a pool without one, whose fractions are of its maximum (Hekili's pricing).
 I.basePow, I.baseDefault = {}, {}
-local EPS = 1e-6 -- a float product a hair under a whole cost (0.05 x 1240) floors to it, not below
+local EPS = 1e-6 -- a float product a hair under a half (0.5 x 1213 = 606.5) rounds up, as the true half does
+
+-- Fraction c of base b to the nearest whole, a half up: the client's percent-of-base price (wowsims e4ef929e54
+-- mana.go `math.Round`, from the game's form costs: 35% of 914 costs 320). The simulation's ns.FractionCost (Engine/Sim
+-- State.lua) is the same expression. Allocates nothing.
+local function nearest(c, b)
+    return floor(c * b + 0.5 + EPS)
+end
 
 I.OnBuild(function(def, now)
     for k in pairs(A.bySpell) do
-        A.bySpell[k] = nil
+        A.bySpell[k], A.idPos[k] = nil, nil
     end
     for r = 1, #def.resources do
         local b = def.resources[r].base
@@ -220,7 +231,7 @@ I.OnBuild(function(def, now)
         local ids = def.abilityIds[a]
         A.ids[a], A.id[a] = ids, ids[1]
         for k = 1, #ids do
-            A.bySpell[ids[k]] = a
+            A.bySpell[ids[k]], A.idPos[ids[k]] = a, k
         end
         A.slot[a] = def.abilitySlot[a]
         A.qid[a], A.readCost[a], A.multiCost[a] = ids[1], 0, false
@@ -474,9 +485,9 @@ function I.GcdModel(expires, t, event)
 end
 
 --- What our cast success `o` of ability a paid: the cost priced when it was heard (Sources/Casts.lua: `o.b`, with
---- `o.c` 1), else I.CostOf(a) now. Allocates nothing.
+--- `o.c` the cast ID's place, 1 or more), else I.CostOf(a) now. Allocates nothing.
 function I.CastCost(o, a)
-    if o.c == 1 then
+    if o.c >= 1 then
         return o.b
     end
     return I.CostOf(a)
@@ -515,8 +526,8 @@ local function isFraction(a, c)
 end
 
 --- Ability a's declared cost, before any cost modifier (0 when it has none); a fraction (isFraction: below 1, or any
---- magnitude under `spendBase`) is of its pool's base power, floored (I.basePow), else of its believed maximum, as
---- Hekili's simulation prices it (ns.SpendPoints). Allocates nothing.
+--- magnitude under `spendBase`) is of its pool's base power, to the nearest whole (I.basePow, nearest), else of its
+--- believed maximum, as Hekili's simulation prices it (ns.SpendPoints). Allocates nothing.
 function I.BaseCostOf(a)
     local c, r = declaredCost(a), A.slot[a]
     if not c then
@@ -524,7 +535,7 @@ function I.BaseCostOf(a)
     end
     if r > 0 and isFraction(a, c) then
         local b = I.basePow[r] or 0
-        c = b > 0 and floor(c * b + EPS) or c * I.res.max[r]
+        c = b > 0 and nearest(c, b) or c * I.res.max[r]
     end
     return c
 end
@@ -537,31 +548,72 @@ function VS.BasePower(pt)
     return b and b > 0 and b or nil
 end
 
+-- The wholes lo..hi a cut read R stands for: each W with nearest(m, W) = R (R itself when m = 1). When no whole gives
+-- R (only a factor above 1 can step over it; no shipped talent raises a cost) both are R / m, the read's own middle,
+-- which pins nothing. m > 0; about 1 / m steps, out of combat only. Allocates nothing.
+local function wholeWindow(R, m)
+    local lo = floor((R - 0.5) / m) - 1
+    while nearest(m, lo) < R do
+        lo = lo + 1
+    end
+    if nearest(m, lo) ~= R then
+        return R / m, R / m
+    end
+    local hi = lo
+    while nearest(m, hi + 1) == R do
+        hi = hi + 1
+    end
+    return lo, hi
+end
+
 --- Each pool's base from the plain out-of-combat cost reads (A.readCost, Sources/Spellbook.lua) of its fraction-priced
---- abilities: the pack's value unless the read with the largest fraction (the finest: a read pins the base to within
---- 1 / f) misprices it, then the least whole base that floors to that read. A read is skipped while a cost modifier in
---- scope changes its price (it is then not the base's). Runs after the reads and again after a talent walk that changed
---- a rank (Sources/Talents.lua), so a talent-scaled fraction is the walked rank's. Allocates nothing.
--- shortcut: the base is exact only to 1 / f of the chosen read (a 55% read: within 2 mana); a smaller fraction's read
--- the result misprices by one is not reconciled; upgrade by intersecting every read's [cost / f, (cost + 1) / f).
+--- abilities whose price no cost modifier changes but a passive talent's percent (I.PassiveCostFactor: factor m, 1 with
+--- none; an aura's modifier comes and goes, so its read is skipped). A read R of fraction f is the whole price
+--- W = nearest(f, base) cut by m, then whole again: to the nearest, as assumed here (nearest(m, W) = R), or, unprobed,
+--- truncated (0 <= W m - R < 1). The wholes W the read allows are lo..hi (wholeWindow; R itself when m = 1); the pack's
+--- base stays while it prices the finest read either way (-0.5 <= W m - R < 1; with m = 1 exactly W = R) and the finest
+--- uncut read exactly (never looser than with no cut read), else the base is the whole nearest (lo + hi) / 2 / f.
+--- Under nearest rounding the true base lies within ((hi - lo) / 2 + 0.5) / f of that middle (0.5 / f when the read
+--- pins W, always uncut), so the learned base within that + 0.5, never worse than (0.5 / m + 0.5) / f + 0.5; under
+--- truncation within (1.5 / m + 0.5) / f + 0.5. The finest read is the one with the
+--- smallest half-width under either rounding: 0.5 / f uncut, (1.5 / m + 0.5) / f cut, so an uncut read, which has no
+--- rounding doubt, wins any near tie and the chosen read is never coarser than the finest uncut one. Runs after the
+--- reads and again after a talent walk that changed a rank (Sources/Talents.lua), so a talent-scaled fraction and a
+--- talent's factor are the walked rank's. Allocates nothing.
+-- shortcut: the base is exact only to that half-width of the chosen read (a 55% read: within 1 mana); a coarser read
+-- the result misprices is not reconciled; upgrade by intersecting every read's interval.
 function I.LearnBases()
     for r = 1, #I.baseDefault do
         I.basePow[r] = I.baseDefault[r]
     end
     for r = 1, #I.baseDefault do
         if I.basePow[r] > 0 then
-            local bestF, bestCost = 0, 0
+            local bestF, bestM, bestCost, bestW, uncutF, uncutCost = 0, 1, 0, 0, 0, 0
             for a = 1, A.n do
                 local cost = A.readCost[a]
                 if A.slot[a] == r and cost > 0 then
                     local f = declaredCost(a)
-                    if f and f > bestF and isFraction(a, f) and I.CostOf(a) == I.BaseCostOf(a) then
-                        bestF, bestCost = f, cost
+                    local m = f
+                        and isFraction(a, f)
+                        and (I.PassiveCostFactor and I.PassiveCostFactor(a, r, I.clock) or 1)
+                    if m and m > 0 then
+                        local w = (m == 1 and 0.5 or 1.5 / m + 0.5) / f -- f > 0 (isFraction)
+                        if bestW == 0 or w < bestW then
+                            bestF, bestM, bestCost, bestW = f, m, cost, w
+                        end
+                        if m == 1 and f > uncutF then
+                            uncutF, uncutCost = f, cost
+                        end
                     end
                 end
             end
-            if bestF > 0 and floor(bestF * I.basePow[r] + EPS) ~= bestCost then
-                I.basePow[r] = ceil(bestCost / bestF - EPS) -- bestF > 0 checked
+            local miss = bestF > 0 and nearest(bestF, I.basePow[r]) * bestM - bestCost
+            if
+                miss
+                and (miss < -0.5 - EPS or miss >= 1 - EPS or uncutF > 0 and nearest(uncutF, I.basePow[r]) ~= uncutCost)
+            then
+                local lo, hi = wholeWindow(bestCost, bestM)
+                I.basePow[r] = max(floor((lo + hi) / 2 / bestF + 0.5), 1) -- bestF > 0 checked; 0 would mean no base
             end
         end
     end

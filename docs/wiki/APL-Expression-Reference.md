@@ -41,12 +41,12 @@ When a comparison asks a resource to reach a value, as in `energy.lo>=60` or `60
 <!-- /GENERATED -->
 
 > [!NOTE]
-> **On Forever:** The game hides target health, so every time-to-die value reads 3600 seconds. In the Affliction line above, `fight_remains>60` always passes. A line that needs `fight_remains<8` never fires.
+> **On Forever:** The game hides target health, so every time-to-die value reads as unknown: 3600 seconds. In the Affliction line above, `fight_remains>60` always passes. A line that needs `fight_remains<8` never fires.
 
 ### Edge cases
 
 - `<resource>.time_to_<N>` with an N that is not a number reads 3600.
-- `health.pct` reads 100 while the game hides the player's health.
+- `health.pct` reads 100 in combat, where the game hides the player's health; a line that reads it gets a warning in **Warnings** when the priority loads.
 - The WoW client raises an error on division by zero, unlike standard Lua. A value that can be zero must not be used as a divisor.
 
 ## Buffs and debuffs
@@ -167,7 +167,7 @@ A talent key the class pack does not know reads as not taken and adds a warning 
 | `target.is_targeting_player` | boolean | The target is targeting the player | Read; false when hidden | `!target.is_targeting_player` |
 | `target.creature_type` | text | The target's creature type in snake case, such as `beast` or `undead`; `unknown` when hidden | Read | `target.creature_type='undead'` |
 | `target.is_undead`, `target.is_demon` | boolean | The creature type is undead, or demon | Read | `target.is_undead` |
-| `target.moving` | boolean | The target is moving | Read | `!target.moving` |
+| `target.moving` | boolean | The target is moving | Read out of combat; false in combat | `!target.moving` |
 | `target.health.pct` | percent | The target's health | 100 unless narrowed (see below) | `target.health.pct<20` |
 
 From Feral (wowsims.com), shortened:
@@ -233,8 +233,8 @@ actions+=/mind_flay,if=((action.inner_focus.known&prev.1.inner_focus)|(!action.i
 | `spell_targets.<key>` | number | Enemies counted for the ability; `active_enemies` unless the class pack limits it | Read | `spell_targets.swipe_bear>=3` |
 | `gcd.remains` | seconds | Time until the running GCD ends | Read | `gcd.remains<=0` |
 | `gcd.max` | seconds | The length of a GCD | Modelled | `gcd.max<1.5` |
-| `health.pct` | percent | The player's health | Read; 100 while hidden | `health.pct<=30` |
-| `totem.<element>.up` | boolean | A totem of that element is placed | Read | `!totem.fire.up` |
+| `health.pct` | percent | The player's health | Read out of combat; 100 in combat (hidden) | `health.pct<=30` |
+| `totem.<element>.up` | boolean | A totem of that element is placed | Read out of combat; estimated in combat | `!totem.fire.up` |
 | `totem.<element>.remains` | seconds | Time until it expires | Estimated | `totem.fire.remains<2` |
 | `main_hand.<kind>`, `off_hand.<kind>` | boolean | The weapon in that hand is of a kind, such as `dagger` or `two_handed` | Read | `main_hand.dagger` |
 | `equipped.shield` | boolean | A shield is equipped | Read | `equipped.shield` |
@@ -243,7 +243,7 @@ actions+=/mind_flay,if=((action.inner_focus.known&prev.1.inner_focus)|(!action.i
 From Protection (wowsims.com), Warrior:
 
 ```simc
-actions+=/healthstone,use_off_gcd=1,if=health.pct<=30
+actions+=/sweeping_strikes,use_off_gcd=1,if=active_enemies>1
 ```
 
 A class pack can register names of its own, such as the swing timers `mainhand_remains`, `mainhand_speed`, `ranged_remains` and `ranged_speed` that several classes define. The class file defines each one ([Pack class file anatomy](Pack-Class-File-Anatomy)).
@@ -251,5 +251,6 @@ A class pack can register names of its own, such as the swing timers `mainhand_r
 ## See also
 
 - [APL line options](APL-Line-Options)
+- [APL conditions on Forever](APL-Conditions-On-Forever): which expressions are estimated, limited or fixed, and what to write instead
 - [APL windows](APL-Windows): the `window.<name>` expressions
 - [APL debugging](APL-Debugging): reading a line's result in a snapshot

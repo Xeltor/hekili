@@ -26,9 +26,8 @@ local ROGUE = {
 }
 -- the melee-weave strikes (Mongoose Bite, Strider Kick, Immolation Trap, Wing Clip) rotational (the user)
 -- (R51: each move arm is its own line where its move is called, at its source line's tier: the re-pin's Hunter's Mark
--- leads, Raptor Strike's and Serpent Sting's in-range lines, then the arms: Beast Mastery and Survival walk in (walk_in
--- #1 reaches Serpent Sting) before the weave (#6: Raptor Strike; #7, the move back: Serpent Sting); Marksmanship's walk
--- in is never called)
+-- leads, Raptor Strike's and Serpent Sting's in-range lines, then the arms: Survival walks in (walk_in #1 reaches
+-- Serpent Sting) before the weave (#6: Raptor Strike; #7, the move back: Serpent Sting))
 local HUNTER = {
     "hunters_mark=2",
     "raptor_strike=1",
@@ -37,11 +36,20 @@ local HUNTER = {
     "serpent_sting=1",
     "raptor_strike=1",
 }
--- 0.7 re-pin: the weave is move #4 (the shots' move back) then #5 (the strikes), so the strike line comes last
-local HUNTER_MM = { "hunters_mark=2", "raptor_strike=1", "serpent_sting=1", "serpent_sting=1", "raptor_strike=1" }
 
 -- file order of the generated simc: the Banes, Searing Pain's Demonic Brand upkeep and the curses at 2, Soul Fire on Decimation at 1
 local WARLOCK_DEMO = {
+    "shadow_bolt=1",
+    "curse_of_the_elements=2",
+    "curse_of_recklessness=2",
+    "curse_of_weakness=2",
+    "searing_pain=2",
+    "soul_fire=1",
+    "corruption=2",
+    "bane_of_agony=2",
+    "immolate=2",
+    "immolate=2",
+    "corruption=2",
     "bane_of_doom=2",
     "searing_pain=2",
     "soul_fire=1",
@@ -59,6 +67,17 @@ local WARLOCK_DEMO = {
 -- Shadow Brand's second searing_pain is the end-of-fight line (!shadow_bolt.known|cast+travel>fight_remains): filler-like, never fires
 -- in game (fight_remains reads 3600, gap AN), so it takes the lower tier (2) like the other upkeep lines; the DoT order differs from Demonology's
 local WARLOCK_SHADOW_BRAND = {
+    "shadow_bolt=1",
+    "curse_of_the_elements=2",
+    "curse_of_recklessness=2",
+    "curse_of_weakness=2",
+    "searing_pain=2",
+    "shadow_bolt=1",
+    "corruption=2",
+    "bane_of_agony=2",
+    "immolate=2",
+    "immolate=2",
+    "corruption=2",
     "bane_of_doom=2",
     "searing_pain=2",
     "searing_pain=2",
@@ -87,8 +106,6 @@ local PACKS = {
         "rupture=1",
         "slice_and_dice=1",
     },
-    ["Hunter/APLs/Beast Mastery"] = HUNTER,
-    ["Hunter/APLs/Marksmanship"] = HUNTER_MM,
     ["Hunter/APLs/Survival"] = HUNTER,
     -- the non-weave builds (ledger L661): the Turret list has no strikes; Survival Melee's Raptor Strike leads, its
     -- move arm follows the Mark, and the walk in's Serpent Sting is the group's (file order)
@@ -121,9 +138,13 @@ local PACKS = {
     },
     ["Druid/APLs/Balance"] = { "moonfire=2", "insect_swarm=2", "starfire=1" },
     -- re-pin e2842f0a78 (R66): the adaptive list's order; Claw's one line is wowsims's "Claw can replace Shred" fallback
-    ["Druid/APLs/Feral"] = { "shred=1", "rip=2", "rake=2", "claw=1" },
+    -- re-pin ab0f00e4fc (wowsims #1087): one flat list; its two Claw lines share the fallback's condition (the recipe's
+    -- `(A)|(B)`), both 1
+    ["Druid/APLs/Feral"] = { "shred=1", "rip=2", "rake=2", "claw=1", "claw=1" },
     -- re-pin e5a9cd2a2d: the adaptive list puts the upkeep Lacerate and Roar first, the rage dump (Maul) last
-    ["Druid/APLs/Guardian"] = { "lacerate=2", "demoralizing_roar=2", "lacerate=2", "maul=1", "maul=2" },
+    -- re-pin ab0f00e4fc (wowsims #1087): one flat list: the upkeep (2), the Maul rage dump (2: as Heroic Strike, always
+    -- tier 2; Fable for the owner 2026-11-17, L1302), then the leveling Maul (2)
+    ["Druid/APLs/Guardian"] = { "demoralizing_roar=2", "lacerate=2", "maul=2", "maul=2" },
     ["Mage/APLs/Arcane"] = { "arcane_missiles=1" },
     -- Frost (new pack): Cone of Cold on five Winter's Chill stacks and Ice Lance on a Fingers of Frost charge 1, Ice
     -- Barrier kept for Frigid Power 2 (the AoE list's too); Cold Snap a cooldown (none)
@@ -142,6 +163,16 @@ local PACKS = {
     -- 0.7 re-pin (e5a9cd2a2d): the rewritten build's lists (immolate no longer appears); the Siphon Life line is back
     -- with CN14 (spellIsChanneling); the pre-pull Shadow Bolt (travel fold) takes no tier
     ["Warlock/APLs/Affliction"] = {
+        "shadow_bolt=1",
+        "curse_of_the_elements=2",
+        "curse_of_recklessness=2",
+        "curse_of_weakness=2",
+        "corruption=2",
+        "bane_of_agony=2",
+        "siphon_life=2",
+        "immolate=2",
+        "immolate=2",
+        "corruption=2",
         "shadow_bolt=2",
         "shadow_bolt=1",
         "curse_of_the_elements=2",
@@ -154,6 +185,16 @@ local PACKS = {
         "siphon_life=2",
     },
     ["Warlock/APLs/SM Ruin"] = {
+        "shadow_bolt=1",
+        "curse_of_the_elements=2",
+        "curse_of_recklessness=2",
+        "curse_of_weakness=2",
+        "corruption=2",
+        "bane_of_agony=2",
+        "siphon_life=2",
+        "immolate=2",
+        "immolate=2",
+        "corruption=2",
         "curse_of_the_elements=2",
         "curse_of_recklessness=2",
         "curse_of_weakness=2",
@@ -168,6 +209,14 @@ local PACKS = {
     -- 0.7 re-pin (e5a9cd2a2d): the rewritten rotation (Bane of Doom first, the dot groups, Immolate in the cooldowns and
     -- as the Incinerate-cast refresh)
     ["Warlock/APLs/Destruction"] = {
+        "shadow_bolt=1",
+        "curse_of_the_elements=2",
+        "curse_of_recklessness=2",
+        "curse_of_weakness=2",
+        "immolate=2",
+        "corruption=2",
+        "bane_of_agony=2",
+        "corruption=2",
         "bane_of_doom=2",
         "immolate=2",
         "curse_of_the_elements=2",

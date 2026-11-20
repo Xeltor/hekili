@@ -16,7 +16,7 @@
 **Write priorities**
 - [Overview](APL-Overview) · [Tutorial](APL-Tutorial-Your-First-Custom-Priority)
 - Reference: [Syntax](APL-Syntax-Reference) · [Expressions](APL-Expression-Reference) · [Line options](APL-Line-Options) · [Editor](APL-Priority-Editor)
-- [Forever differences](APL-Forever-Differences) · [Windows](APL-Windows) · [Debugging](APL-Debugging)
+- [Forever differences](APL-Forever-Differences) · [Conditions on Forever](APL-Conditions-On-Forever) · [Windows](APL-Windows) · [Debugging](APL-Debugging)
 - [wowsims priorities explained](APL-wowsims-Packs-Explained)
 
 **Write class packs**
@@ -24,6 +24,9 @@
 - [Class file anatomy](Pack-Class-File-Anatomy)
 - Reference: [API](Pack-API-Reference) · [Abilities](Pack-Abilities-Reference) · [Auras](Pack-Auras-Reference) · [Resources](Pack-Resources-And-Regen) · [Talents and selectors](Pack-Talents-Specs-And-Selectors) · [Settings](Pack-Settings) · [Expects](Pack-Expects-And-Outcomes) · [Windows and reactions](Pack-Windows-And-Reactions) · [Environment names](Pack-Environment-Names) · [Translator rules](Pack-Translator-Rules)
 - [Testing and gates](Pack-Testing-And-Gates) · [wowsims recipes](Pack-wowsims-Recipes) · [Adding a spec or class](Pack-Adding-A-Spec-Or-Class)
+
+**Integrate with Hekili Forever**
+- [Overview](Integration-Overview) · [Reference](Integration-Reference) · [WeakAuras example](Integration-WeakAuras-Example)
 
 **Contribute**
 - [Contributing](Contributing) · [Architecture](Contributing-Architecture) · [Display styles and integrations](Contributing-Display-Styles-And-Integrations) · [Docs](Contributing-Docs) · [Style guide](Style-Guide)

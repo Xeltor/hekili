@@ -37,6 +37,14 @@
 -- Translation gaps: Thistle Tea (selectedConjured), potions, sapper charges, item swaps, autocastOtherCooldowns (GAP
 -- 14: no class cooldown lost). Time to die is unknown on Forever (3600), so the `fight_remains` lines read a long fight
 -- (API-forced).
+-- Re-pin e4ef929e54 (0.9): the talents follow the new preset CatTalents (presets.ts:71, Rend and Tear 5/5; owner L1154
+-- (4)). The idol branches resolve to the kit's auras (Idol of Ferocity 27851, Idol of the Dream 446212; the request
+-- wears neither).
+-- Re-pin ab0f00e4fc (wowsims #1087, "feral-apl-simplify"): the adaptive APL is one flat list at every enemy count (no
+-- 2/3-target groups, no target swaps, no other target's read), with shared tuning: Shifting Power at 53 energy or
+-- less, Ferocious Bite pooling to 75 energy (60 at 5 combo points, 45 under Clearcasting). The 0.9 owner deviation
+-- L1169 (omit the 2/3-target group calls) and CN24 (other-target reads) have nothing left to apply to: gone. Claw: two
+-- adjacent lines (`condition.claw`, re-derived on the new lines).
 return {
     class = "DRUID",
     pack = "Feral (wowsims.com)",
@@ -48,7 +56,7 @@ return {
         race = "RaceTauren",
         class = "ClassDruid",
         gear = "ui/specs/druid/feralcat/gear_sets/pre_raid.gear.json",
-        talentsString = "050022-53200032123012124001-055",
+        talentsString = "050021-53200032123012125001-055",
         specKey = "feralCatDruid",
         options = { assumeBleedActive = true },
         profession1 = "Engineering",
@@ -64,10 +72,14 @@ return {
     condition = {
         -- owner deviation R69 (header): no Prowl cancel line; Prowl ends when Ravage lands or the player attacks
         cancel_buff = false,
-        -- Claw vs Shred (header): wowsims's translated Claw condition, `!action.shred.ready` -> the cases the Shred guard
-        -- refuses and `energy.lo>=action.shred.cost` -> `energy.lo>=action.claw.cost`; the rest as generated (re-copy it
-        -- on a re-pin)
-        claw = "(((!(action.cat_form.known|action.shred.known)|((!action.cat_form.known|buff.cat_form.up)&(!action.shred.known|(!settings.behind&target.is_targeting_player|talent.improved_shred.rank<2&!buff.clearcasting.up))&(!action.shred.known|energy.lo>=action.claw.cost)))&energy.lo>=action.claw.cost)&!((talent.predatory_discipline.enabled&(!action.cat_form.known|buff.cat_form.up)&combo_points.current>=4&(!action.rip.known|debuff.rip.remains>=2))&!((talent.predatory_discipline.enabled&(!action.cat_form.known|buff.cat_form.up)&combo_points.current>=4&(!action.rip.known|debuff.rip.remains>=2))&(((buff.clearcasting.up&energy.lo>=60)|(!buff.clearcasting.up&energy.lo>=85))|(combo_points.current>=5&((!buff.clearcasting.up&energy.lo>=70)|(buff.clearcasting.up&energy.lo>=50)))))))",
+        -- Claw vs Shred (header): wowsims's two adjacent Claw lines (rule 7 keys a condition by action, so both take
+        -- this one: adjacent lines of one action are their conditions' OR, so it is `(A)|(B)`): A, the Claw builder of
+        -- a build without Shredding Attacks, as generated; B, "Claw can replace Shred" (the APL variable, inlined here)
+        -- with `!action.shred.ready` -> the cases the Shred guard refuses and `energy.lo>=action.shred.cost` ->
+        -- `energy.lo>=action.claw.cost`, then the line's own `energy.lo>=action.claw.cost`; the rest as generated
+        -- (re-derive both on a re-pin: translate with this key removed, take the first Claw line's condition and the
+        -- `v_claw_can_replace_shred` value, each without the movement gate)
+        claw = "(((!action.cat_form.known|buff.cat_form.up)&!talent.improved_shred.enabled&energy.lo>=action.claw.cost&variable.v_paid_builder_fits_the_energy_pool))|((((!action.cat_form.known|buff.cat_form.up)&(!action.shred.known|(!settings.behind&target.is_targeting_player|talent.improved_shred.rank<2&!buff.clearcasting.up))&(!action.shred.known|energy.lo>=action.claw.cost)&(buff.clearcasting.up|!(((!action.cat_form.known|buff.cat_form.up)&talent.predatory_discipline.enabled&((talent.primal_fury.enabled&combo_points.current>=4)|(!talent.primal_fury.enabled&combo_points.current>=5))&((talent.primal_fury.enabled&(!action.rip.known|debuff.rip.remains>=3))|(!talent.primal_fury.enabled&(((!talent.improved_shred.enabled&!(!talent.primal_fury.enabled&!talent.improved_shred.enabled&talent.predatory_discipline.enabled&talent.shifting_power.enabled&buff.idol_of_ferocity.up)&(time+fight_remains)<=60)&(!action.rip.known|debuff.rip.remains>=2))|(!(!talent.improved_shred.enabled&!(!talent.primal_fury.enabled&!talent.improved_shred.enabled&talent.predatory_discipline.enabled&talent.shifting_power.enabled&buff.idol_of_ferocity.up)&(time+fight_remains)<=60)&(!action.rip.known|debuff.rip.remains>=4))))))&!((buff.clearcasting.up&energy.lo>=45)|(!buff.clearcasting.up&(energy.lo>=75|((combo_points.current>=5|(talent.primal_fury.rank>=2&!talent.improved_shred.enabled))&energy.lo>=60)))))))&energy.lo>=action.claw.cost))",
     },
     guard = {
         -- R69 too: Faerie Fire (wowsims's line above Ravage) breaks Prowl, so it waits while Prowl is up
@@ -75,8 +87,14 @@ return {
         -- Claw vs Shred (header): Shred only from behind (or `settings.behind`) and where it beats Claw
         shred = "(settings.behind|!target.is_targeting_player)&(talent.improved_shred.rank>=2|buff.clearcasting.up)",
     },
-    -- by role (docs/dev/wowsims-packs.md): Shred's first line (Clearcasting) at 1, not the builder; Claw's one line is
-    -- wowsims's "Claw can replace Shred" builder fallback, kept at tier 1 as before (R66)
-    focus = { shred = { 1, false }, claw = { 1, false }, rip = 2, rake = 2 },
+    -- by role (docs/dev/wowsims-packs.md): Shred's first line (Clearcasting) at 1, not the builder; Claw's lines are
+    -- wowsims's "Claw can replace Shred" builder fallback (one condition, above), kept at tier 1 as before (R66): every
+    -- Claw line. Shred's occurrences: the Clearcasting line first, the paid builder second
+    focus = {
+        shred = { 1, false },
+        claw = 1,
+        rip = 2,
+        rake = 2,
+    },
     leveling = {},
 }

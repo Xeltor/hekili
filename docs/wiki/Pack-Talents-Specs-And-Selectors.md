@@ -57,6 +57,7 @@ Each entry of `specs` in `Hekili:NewClass(token, { specs = { ... } })` is one sp
 | `package` | The spec's default priority, by name, such as `"Feral (wowsims.com)"` |
 | `formerPackages` | A set of priority names that count as the default: a profile on one of them counts as being on the default. |
 | `movement` | True when the spec's priorities read the Movement toggle, whose options row is then shown |
+| `fillWindow` | A resource key, such as `"energy"`: the forecast window reaches at least the time that pool takes to fill from empty at its combined regeneration |
 | `unsupported` | True for a spec with no priorities on Forever: its displays are off and its options page says so |
 
 From `src/Hekili_Druid/Druid.lua`:
@@ -75,6 +76,11 @@ From `src/Hekili_Druid/Druid.lua`:
 ```
 
 Each spec reads the kit's abilities, auras and talents, and keeps its own settings and options.
+
+Beside `specs`, the definition may set `gcd`, the class's own GCD kind: `"spell"` (the default) or `"totem"`, or a
+function of the state that answers one. The simulation uses it where no ability names a kind: a wait, and `gcd.max`
+during an off-GCD ability. The Rogue sets `"totem"` (its strikes' 1 s GCD); the Druid answers `"totem"` in Cat Form.
+Each ability still declares its own `gcd`.
 
 ## Spec ids
 

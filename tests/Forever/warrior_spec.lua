@@ -2,6 +2,7 @@
 -- The headless loader records what the class file registers with Hekili.
 local lw = require("Forever.helpers.load_warrior")
 local alloc = require("Game.State.helpers.alloc")
+local pe = require("Forever.helpers.pack_entries") -- a pack check walks a sequence's members too
 -- the project interpreter when bootstrapped, else the system one (as tools/list_api_reads.sh picks it)
 local LUA = io.open(".lua/bin/lua") and ".lua/bin/lua" or "lua5.1"
 
@@ -416,6 +417,48 @@ describe("Forever Warrior", function()
         assert.is_nil(w.resource[2].reckless_swings)
     end)
 
+    -- A landed Heroic Strike or Cleave rolls Unbridled Wrath (ab0f00e4fc, EV-0148).
+    -- Keep Reckless Swings conservative until its charge timing is reconciled (CN15).
+    it(
+        "pays a strike's Unbridled Wrath at its cast and takes it back on avoid, without assuming Reckless rage",
+        function()
+            for _, key in ipairs({ "heroic_strike", "cleave" }) do
+                local a = w.abilities[key]
+                local e = lw.env(w)
+                local spreads, stacks = {}, {}
+                function e.gain(n, _, spread)
+                    table.insert(e.gained, n)
+                    table.insert(spreads, spread or 0)
+                end
+                function e.addStack(k, d)
+                    table.insert(stacks, { k, d })
+                end
+                e.weapon, e.now = { size = 1 }, 3
+                lw.run(a.now, e) -- no talent, no charge: nothing
+                assert.are.same({}, e.gained)
+                e.talent = setmetatable({ unbridled_wrath = { rank = 5, enabled = true } }, getmetatable(e.talent))
+                e.buff =
+                    setmetatable({ reckless_swings = { up = true, stack = 4, expires = 10 } }, getmetatable(e.buff))
+                lw.run(a.now, e)
+                assert.is_true(math.abs(e.gained[1] - 0.595) < 1e-9, key .. " " .. tostring(e.gained[1]))
+                assert.are.same(e.gained[1], spreads[1]) -- the floor gains none: no proc is seen
+                assert.is_nil(e.gained[2])
+                assert.are.same({}, e.stackRemoved)
+                lw.run(a.onAvoid, e)
+                assert.is_true(math.abs(e.spent[1] - 0.595) < 1e-9, key .. " " .. tostring(e.spent[1]))
+                assert.is_nil(e.spent[2])
+                assert.are.same({}, stacks) -- no unobserved charge was consumed
+                e.spent = {}
+                lw.run(a.onAvoid, e) -- a second avoid: nothing more
+                assert.are.same({}, e.spent)
+                e.weapon.size = 2 -- a two-hander's proc is 1 rage too (owner L1419, wowsims ab0f: 22/22 Arms procs at 1)
+                e.gained = {}
+                lw.run(a.now, e)
+                assert.is_true(math.abs(e.gained[1] - 0.595) < 1e-9, key .. " " .. tostring(e.gained[1]))
+            end
+        end
+    )
+
     it("spends the rest of the rage after Execute's cost in the belief, as the sim's handler and wowsims do", function()
         -- gaps.md "Execute floor": the belief kept lo above the truth after an Execute (Fury flicker, 2026-11-03)
         local e = lw.env(w)
@@ -491,6 +534,22 @@ describe("Forever Warrior", function()
             e = reset(13)
             assert.are.same({ "overpower_ready" }, { e.applied[#e.applied] })
             assert.is_nil(e.durations.overpower_ready)
+        end)
+
+        -- re-pin e4ef929e54 trace (Fury replay 157.70 / 161.44): a dodge 1.76 s after our Overpower opens a new window
+        -- (Classic's "5 s since the last Overpower" kept it shut); the row's own time, not its delivery, dates the dodge
+        it("opens a new window on a dodge after our last Overpower, dated by the row's own time", function()
+            row(10, "SWING_MISSED", ME, MOB, "DODGE")
+            row(10.5, "SPELL_CAST_SUCCESS", ME, MOB, 7384)
+            row(12, "SWING_MISSED", ME, MOB, "DODGE")
+            assert.are.equal(4, reset(13).durations.overpower_ready)
+            row(13.5, "SPELL_CAST_SUCCESS", ME, MOB, 7384)
+            w.game.now = 16 -- a held avoid's row (R46): delivered late, its dodge before that Overpower
+            w.game.row = { 13.2, "SWING_MISSED", false, ME, "", 0, 0, MOB, "", 0, 0, "DODGE", "", 1, 0 }
+            w.events.COMBAT_LOG_EVENT_UNFILTERED()
+            for _, k in ipairs(reset(16.2).applied) do
+                assert.are_not.equal("overpower_ready", k) -- spent by the 13.5 Overpower
+            end
         end)
 
         it("gates Overpower on its window, not on the usability read", function()
@@ -670,21 +729,21 @@ describe("Forever Warrior", function()
             assert.is_true(math.abs(got - want) < 1e-9, ("want %.4f, got %.4f"):format(want, got))
         end
         w.state.talent = setmetatable({
-            unbridled_wrath = { rank = 5, enabled = true }, -- 0.075 x 5 = 0.375 rage a swing (one-hander)
+            unbridled_wrath = { rank = 5, enabled = true }, -- 0.119 x 5 = 0.595 rage a swing (one-hander; EV-0148)
             dual_wield_specialization = { rank = 3, enabled = true }, -- +30% off-hand rage
         }, getmetatable(rank(0)))
         w.state.main_hand.size = 1
         w.game.base = { 2.2, 2.5 }
         w.state.mainhand_speed, w.state.offhand_speed, w.state.haste = 2.2, 2.5, 1
-        near(3.46 * 2.2 + 0.375, lw.run(models.mainhand.value, w.state)) -- 7.612 + 0.375 = 7.987
-        near(1.73 * 2.5 * 1.3 + 0.375, lw.run(models.offhand.value, w.state)) -- 5.6225 + 0.375 = 5.9975
+        near(3.46 * 2.2 + 0.595, lw.run(models.mainhand.value, w.state)) -- 7.612 + 0.595 = 8.207
+        near(1.73 * 2.5 * 1.3 + 0.595, lw.run(models.offhand.value, w.state)) -- 5.6225 + 0.595 = 6.2175
         -- haste shortens the swing but not its rage: the hasted speeds do not enter
         w.state.mainhand_speed, w.state.offhand_speed, w.state.haste = 1.76, 2.0, 1.25
-        near(3.46 * 2.2 + 0.375, lw.run(models.mainhand.value, w.state))
-        near(1.73 * 2.5 * 1.3 + 0.375, lw.run(models.offhand.value, w.state))
-        w.state.main_hand.size = 2 -- a two-hander: 4.5 x speed, Unbridled Wrath 2 rage a proc
+        near(3.46 * 2.2 + 0.595, lw.run(models.mainhand.value, w.state))
+        near(1.73 * 2.5 * 1.3 + 0.595, lw.run(models.offhand.value, w.state))
+        w.state.main_hand.size = 2 -- a two-hander: 4.5 x speed, Unbridled Wrath 1 rage a proc (owner L1419)
         w.game.base = { 3.3, 0 }
-        near(4.5 * 3.3 + 0.75, lw.run(models.mainhand.value, w.state)) -- 14.85 + 0.75 = 15.6
+        near(4.5 * 3.3 + 0.595, lw.run(models.mainhand.value, w.state)) -- 14.85 + 0.595 = 15.445
         near(4.5 * 3.3, lw.run(models.mainhand.crit, w.state)) -- a white crit doubles the swing's rage, two-hander too (W1)
         w.state.main_hand.size, w.game.base = 1, { 2.2, 2.5 }
         near(3.46 * 2.2, lw.run(models.mainhand.crit, w.state))
@@ -692,6 +751,13 @@ describe("Forever Warrior", function()
         near(1.73 * 2.5 * 1.3, lw.run(models.offhand.crit, w.state))
         w.state.talent.dual_wield_specialization.rank = 0
         near(1.73 * 2.5, lw.run(models.offhand.crit, w.state))
+        -- Unbridled Wrath is a roll the belief cannot see: each hand's `width` is its expected rage, so the floor of a
+        -- swing counts no proc (L1456 i, no optimistic proc modelling)
+        near(0.595, lw.run(models.mainhand.width, w.state))
+        near(0.595, lw.run(models.offhand.width, w.state))
+        w.state.talent.unbridled_wrath.rank = 0
+        near(0, lw.run(models.mainhand.width, w.state))
+        near(0, lw.run(models.offhand.width, w.state))
         assert.are.same({ "offhand", "offhand_speed" }, { models.offhand.swing, models.offhand.interval })
     end)
 
@@ -743,9 +809,12 @@ describe("Forever Warrior", function()
             w.game.healthMax = 5000 -- our health plays no part
             near(g, (run("WOUND", 1000, 63)))
             w.game.stat.UnitArmor = { 0, 0 }
-            near(1000 * perPoint(0.38 + 0.02 * 10 / 13, 230.60000004), (run("WOUND", 1000, 60))) -- A between 50 and 63
-            near(1000 * perPoint(0.37, 180.0852468984), (run("WOUND", 1000, 48))) -- between 46 (0.36) and 50 (0.38)
-            near(1000 * perPoint(0.2, 37.43235079), (run("WOUND", 1000, 10))) -- 0.20 up to 42
+            -- A by wowsims's rows at e4ef929e54 (rage.go:34-46): 38 0.218, 42 0.239, 44 0.31, 46 0.36, 47 0.377,
+            -- 50 0.38, 55 0.381, 59 0.38, 63 0.40
+            near(1000 * perPoint(0.38 + 0.02 / 4, 230.60000004), (run("WOUND", 1000, 60))) -- A between 59 and 63
+            near(1000 * perPoint(0.377 + 0.003 / 3, 180.0852468984), (run("WOUND", 1000, 48))) -- 47 0.377, 50 0.38
+            near(1000 * perPoint(0.218 + 0.021 / 2, 147.86647018), (run("WOUND", 1000, 40))) -- 38 0.218, 42 0.239
+            near(1000 * perPoint(0.218, 37.43235079), (run("WOUND", 1000, 10))) -- 0.218 up to 38
             near(1000 * perPoint(0.4, 274.70000005), (run("WOUND", 1000, 70))) -- 0.40 from 63
         end)
 
@@ -766,24 +835,17 @@ describe("Forever Warrior", function()
             near(2 * open, (run("WOUND", 1000, 63)))
         end)
 
-        it(
-            "adds the cached block value to a partial block, and estimates a full block from the unblocked amounts",
-            function()
-                w.game.stat.UnitArmor = { 0, 0 }
-                w.game.healthMax = 100
-                w.game.stat.GetShieldBlock = { 20 }
-                local k = perPoint(0.2, 20.621051355) -- a level-5 attacker's
-                local g, wd = run("BLOCKED", 10, 5) -- 10 + 20 unblocked
-                near(30 * k, g)
-                near(0.15 * g, wd)
-                -- min(block value 20, the average unblocked amount 0.2 x 30)
-                near(6 * k, (run("BLOCK", 0, 5)))
-                local g, wd = run("BLOCK", 0, 5)
-                assert.are.equal(g, wd) -- a full block's band is its whole estimate
-                w.events.PLAYER_REGEN_ENABLED() -- the fight ends: the next fight learns its own unblocked amounts
-                assert.are.same({ 0, 0 }, { run("BLOCK", 0, 5) })
-            end
-        )
+        it("adds the cached block value to a partial block, and gives a full block no rage", function()
+            w.game.stat.UnitArmor = { 0, 0 }
+            w.game.healthMax = 100
+            w.game.stat.GetShieldBlock = { 20 }
+            local k = perPoint(0.218, 20.621051355) -- a level-5 attacker's
+            local g, wd = run("BLOCKED", 10, 5) -- 10 + 20 unblocked
+            near(30 * k, g)
+            near(0.15 * g, wd)
+            -- a hit blocked in full gives none (wowsims rage.go:112-115; 6 of 6 in its in-game logs)
+            assert.are.same({ 0, 0 }, { run("BLOCK", 0, 5) })
+        end)
 
         it("takes the rage from the hit after Defensive Stance's and Shield Wall's reduction (W2, wowsims)", function()
             local open = run("WOUND", 50, 20)
@@ -802,7 +864,7 @@ describe("Forever Warrior", function()
             assert.are.same({ 0, 0 }, { run("DODGE", 0, 20) })
             w.game.stat.UnitArmor = { 0, 0 }
             ctx({}, { shield_specialization = 1 })
-            local hit = 30 * perPoint(0.2, 72.4215672) -- a level-20 attacker's
+            local hit = 30 * perPoint(0.218, 72.4215672) -- a level-20 attacker's
             local g, wd = run("BLOCKED", 30, 20) -- a partial block: the hit's, plus the proc
             near(hit + 1, g)
             near(0.15 * hit + 4, wd)
@@ -900,8 +962,10 @@ describe("Forever Warrior", function()
     end)
 
     it(
-        "gives back 80% of an avoided ability's rage where wowsims does, per ability (not Cleave or Whirlwind)",
+        "gives back 80% of an avoided ability's rage where wowsims does, per ability (not Cleave, Whirlwind or Execute)",
         function()
+            -- Execute: an avoid costs the base rage, none of it back (wowsims execute.go at e4ef929e54, 7025f28b98:
+            -- 36 avoided Executes in in-game logs)
             assert.are.equal(0.8, w.resource[4].refundOnAvoid)
             local yes = {}
             for key, a in pairs(w.abilities) do
@@ -914,7 +978,6 @@ describe("Forever Warrior", function()
                 "bloodthirst",
                 "concussion_blow",
                 "disarm",
-                "execute",
                 "hamstring",
                 "heroic_strike",
                 "mocking_blow",
@@ -931,6 +994,19 @@ describe("Forever Warrior", function()
             }, yes)
         end
     )
+
+    it("gives back an avoided Execute's extra rage, the base cost kept (refundNowOnAvoid on Execute only)", function()
+        -- wowsims execute.go at e4ef929e54 (7025f28b98): an avoid costs the base rage and keeps the extra, which
+        -- the belief's `now` took (L1237)
+        local yes = {}
+        for key, a in pairs(w.abilities) do
+            if a.refundNowOnAvoid then
+                yes[#yes + 1] = key
+            end
+        end
+        assert.are.same({ "execute" }, yes)
+        assert.is_nil(w.abilities.execute.refundOnAvoid)
+    end)
 
     it("declares no rage maximum of its own: a Gnome's 105 is the race pack's Expansive Mind", function()
         assert.is_nil(w.resource[4].max) -- 100 by default; the Gnome's race pack adds Expansive Mind
@@ -1101,7 +1177,7 @@ describe("Forever Warrior", function()
         local focus = {}
         for _, p in ipairs(assert(loadfile("tools/make_pack.lua"))("lists", "warrior")) do
             for _, list in pairs(p.lists) do
-                for _, e in ipairs(list) do
+                for _, e in ipairs(pe.flat(list)) do
                     if e.focus then
                         local k = p.name .. " " .. e.action
                         focus[k] = focus[k] or {}
@@ -1136,7 +1212,7 @@ describe("Forever Warrior", function()
         for _, p in ipairs(assert(loadfile("tools/make_pack.lua"))("lists", "warrior")) do
             if p.name ~= "Protection (wowsims.com)" then
                 for list, entries in pairs(p.lists) do
-                    for i, e in ipairs(entries) do
+                    for i, e in ipairs(pe.flat(entries)) do
                         if e.action == "berserker_rage" then
                             local _, times = (e.criteria or ""):gsub("talent%.improved_berserker_rage%.enabled", "")
                             assert.are.equal(1, times, p.name .. " " .. list .. " " .. i)
@@ -1193,7 +1269,7 @@ describe("Forever Warrior", function()
         }
         for _, p in ipairs(packs) do
             for list, entries in pairs(p.lists) do
-                for i, e in ipairs(entries) do
+                for i, e in ipairs(pe.flat(entries)) do
                     local where = p.name .. " " .. list .. " " .. i
                     if e.list_name then
                         assert.is_not_nil(p.lists[e.list_name], where .. ": no list " .. e.list_name)
@@ -1202,6 +1278,7 @@ describe("Forever Warrior", function()
                         -- the shared kit's (Hekili_Shared/Shared/Consumables.lua)
                         assert.is_true(
                             w.abilities[e.action] ~= nil
+                                or pe.LINE[e.action]
                                 or e.action == "use_items"
                                 or racial[e.action] ~= nil
                                 or set.abilities[e.action] ~= nil,
@@ -1288,17 +1365,28 @@ describe("Forever Warrior", function()
     end)
     it("the forecast horizon follows the forecast window, its loop guard scaled to it (core edit E9)", function()
         local src = assert(io.open("src/Hekili/Engine/Sim/State.lua")):read("*a")
-        assert.is_truthy(src:find("local timeout = Hekili.Engine.settings.performance.forecastWindow or 15\n", 1, true))
+        assert.is_truthy(
+            src:find(
+                "local timeout = state.ForecastWindow( state.forecastHorizon"
+                    .. " or Hekili.Engine.settings.performance.forecastWindow or 15 )\n",
+                1,
+                true
+            )
+        )
         assert.is_truthy(src:find("local maxIter = ceil( 3 * timeout ) + 10", 1, true))
         assert.is_truthy(src:find("iter < maxIter ) do", 1, true))
         assert.is_nil(src:find("FORECAST_DURATION", 1, true))
         local core = assert(io.open("src/Hekili/Engine/Sim/Core.lua")):read("*a")
         assert.is_truthy(
             core:find(
-                "-- Forever E9:[^\n]*\n%s+local defaultMax = isMain and %( Hekili%.Engine%.settings%.performance%.forecastWindow or 15 %)"
-                    .. " or %( display%.forecastPeriod or 15 %)\n"
+                "-- Forever E9:[^\n]*\n%s+local defaultMax = state%.ForecastWindow%( isMain and %( Hekili%.Engine%.settings%.performance%.forecastWindow or 15 %)"
+                    .. " or %( display%.forecastPeriod or 15 %) %)\n"
             )
         )
+        -- dry-forecast (engine pass E3): one window rule, its stretch pack data (Kits.lua `fillWindow`)
+        assert.is_nil(core:find("DEATHKNIGHT", 1, true))
+        assert.is_nil(core:find("assassination", 1, true))
+        assert.is_nil(src:find("assassination", 1, true)) -- time_to_max_combined: one rule for every spec
     end)
     it("the forecast window is a global Performance option, default 15 s (core edit E9)", function()
         local opts = assert(io.open("src/Hekili/Options/Options.lua")):read("*a")
@@ -1313,3 +1401,115 @@ end)
 
 -- The wowsims lines (class-completion Task 5) on the headless engine, as fury_spec checks Fury's: each line's `if=` runs
 -- through the real Scripts.lua against a booted Arms Warrior (helpers/warrior_world.lua) with the state pinned per case.
+
+-- Execute's `refundNowOnAvoid` on the belief (L1237): its `now` spends all the rest of the rage; a DODGE with no usable
+-- answer in between gives that back, the base cost kept (wowsims execute.go at e4ef929e54: an avoid costs the base only).
+describe("the belief's rage after an avoided Execute", function()
+    local headless = require("Game.harness.headless")
+    local ww = require("Forever.helpers.warrior_world")
+    local EXECUTE = 5308
+
+    local function avoided(field)
+        local c = ww.character()
+        local H = headless.new({ character = c, pack = "Fury (wowsims.com)" })
+        assert.are.same({}, H.loadErrors)
+        local VS, I = H.ns.VirtualState, H.ns.VirtualStateInternal
+        local a = I.ab.bySpell[EXECUTE]
+        I.ab.refundNow[a] = field
+        H.ctl.inRange.target, H.ctl.level.target = true, 60
+        H.Fire("PLAYER_TARGET_CHANGED")
+        H.ctl.combat = true
+        H.Fire("PLAYER_REGEN_DISABLED")
+        local t = H.ctl.now + 1
+        H.ctl.power[1] = 60 -- a plain read seeds the belief, then rage goes secret (as in combat)
+        H.Fire("UNIT_POWER_FREQUENT", "player", "RAGE")
+        assert.is_true(headless.cycle(H, t))
+        H.ctl.power[1] = nil
+        local R = VS.Power(1, t).est
+        H.ctl.now = t + 0.1
+        H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-X", EXECUTE)
+        assert.is_true(headless.cycle(H, t + 0.15))
+        assert.are.equal(0, VS.Power(1, t + 0.15).est) -- the `now` spent the rest
+        H.ctl.now = t + 0.2
+        H.Fire("UNIT_COMBAT", "target", "DODGE", "", 0, 1)
+        assert.is_true(headless.cycle(H, t + 0.25))
+        VS.Drain(t + 0.3)
+        return R, VS.Power(1, t + 0.3).est, I.CostOf(a)
+    end
+
+    it("is back to R less Execute's cost with the field on, and 0 with it off", function()
+        local R, back, cost = avoided(true)
+        assert.is_true(R > 0 and cost > 0 and R >= cost, tostring(R) .. " " .. tostring(cost))
+        assert.are.equal(R - cost, back)
+        local _, off = avoided(false)
+        assert.are.equal(0, off)
+    end)
+end)
+
+-- A Heroic Strike pays Unbridled Wrath once, whichever event arrives first, and no white rage.
+-- Reckless Swings remains unmodelled until resource reconciliation (CN15).
+describe(
+    "the belief's rage at a Heroic Strike's swing (the Fury build: Unbridled Wrath 5/5, Reckless Swings)",
+    function()
+        local headless = require("Game.harness.headless")
+        local gate = require("Forever.helpers.fury_gate")
+        local HEROIC_STRIKE, RECKLESS_SWINGS = 25286, 1329555
+
+        local function strike(successFirst, outcome)
+            local C = gate.content(60)
+            local H = headless.new({ character = C.character(), pack = C.PACK })
+            assert.are.same({}, H.loadErrors)
+            local VS, I = H.ns.VirtualState, H.ns.VirtualStateInternal
+            H.ctl.inRange.target, H.ctl.level.target = true, 60
+            H.Fire("PLAYER_TARGET_CHANGED")
+            H.ctl.combat = true
+            H.Fire("PLAYER_REGEN_DISABLED")
+            local t = H.ctl.now + 1
+            H.ctl.power[1] = 60 -- a plain read seeds the belief, then rage goes secret (as in combat)
+            H.Fire("UNIT_POWER_FREQUENT", "player", "RAGE")
+            assert.is_true(headless.cycle(H, t))
+            H.ctl.power[1] = nil
+            H.ctl.now = t + 0.1
+            H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-R", RECKLESS_SWINGS)
+            assert.is_true(headless.cycle(H, t + 0.15))
+            local R = VS.Power(1, t + 0.15).est
+            H.ctl.now = t + 0.5
+            if successFirst then
+                H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-H", HEROIC_STRIKE)
+                H.Fire("PLAYER_SWING", 2.1, 0)
+            else
+                H.Fire("PLAYER_SWING", 2.1, 0)
+                H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-H", HEROIC_STRIKE)
+            end
+            assert.is_true(headless.cycle(H, t + 0.55))
+            if outcome then
+                H.ctl.now = t + 0.6
+                H.Fire("UNIT_COMBAT", "target", outcome, "", 0, 1)
+                assert.is_true(headless.cycle(H, t + 0.65))
+            end
+            VS.Drain(t + 0.7)
+            local _, stacks = I.CastAura("player", RECKLESS_SWINGS, t + 0.7)
+            return R, VS.Power(1, t + 0.7).est, stacks or 0, I.CostOf(I.ab.bySpell[HEROIC_STRIKE])
+        end
+
+        it("pays Unbridled Wrath's 0.595 once, in either order, and leaves Reckless charges alone", function()
+            for _, first in ipairs({ true, false }) do
+                local R, after, stacks, cost = strike(first)
+                assert.is_true(cost > 0, tostring(cost))
+                local want = R - cost + 0.595
+                assert.is_true(
+                    math.abs(after - want) < 1e-6,
+                    ("%s: %s -> %s, want %s"):format(tostring(first), R, after, want)
+                )
+                assert.are.equal(4, stacks, tostring(first))
+            end
+        end)
+
+        it("takes Unbridled Wrath back when the strike is dodged", function()
+            local R, after, stacks, cost = strike(true, "DODGE")
+            local want = R - cost + 0.8 * cost -- Heroic Strike's 80% refund (refundOnAvoid)
+            assert.is_true(math.abs(after - want) < 1e-6, ("%s -> %s, want %s"):format(R, after, want))
+            assert.are.equal(4, stacks)
+        end)
+    end
+)

@@ -58,6 +58,7 @@ A swing entry pays the resource on each white melee swing, as rage is paid. The 
 | `forecastOnly` | Simulation | True when the belief pays this entry another way (a reaction), so only the simulation's forecast reads it |
 | `value` | Both | The amount one landed swing pays: a number or a function |
 | `crit` | Both | The amount a critical swing pays instead |
+| `width` | Both | The half-width of `value`: a random part the belief cannot see, such as a proc's expected gain. A landed swing raises the floor by `value - width` and the top by `value + width`; each forecast swing, a pending one included, steps the simulation's floor and top the same way. A number or a function; none when absent |
 | `taken` | Belief | `function(kind, amount, attacker)`: the resource gained from a hit on the player, as an expected gain and its half-width. The simulation forecasts the rate the belief learns from it. `kind` is `"WOUND"`, `"BLOCKED"`, `"BLOCK"`, `"DODGE"`, `"PARRY"` or `"MISS"`. |
 | `last` | Simulation | The time of the last swing, from which the forecast steps |
 | `interval` | Simulation | The swing period, such as `"mainhand_speed"` |
@@ -83,7 +84,7 @@ mainhand = {
 },
 ```
 
-The Warrior's main-hand entry in `src/Hekili_Warrior/Warrior.lua` adds a `taken` function for rage from hits on the player.
+The Warrior's main-hand entry in `src/Hekili_Warrior/Warrior.lua` adds a `taken` function for rage from hits on the player, and both hands pass Unbridled Wrath's expected rage as `width`.
 
 ### Aura entries
 
@@ -114,7 +115,7 @@ enrage = {
 
 ### Rate entries
 
-A rate entry changes the continuous rate while a player aura is up. It has `aura` and any of four rate fields, which follow wowsims's mana model.
+A rate entry changes the continuous rate while a player aura is up. It has `aura` and any of five rate fields, which follow wowsims's mana model.
 
 | Field | Meaning |
 |---|---|
@@ -122,11 +123,14 @@ A rate entry changes the continuous rate while a player aura is up. It has `aura
 | `spirit` | The spirit part of the rate times this, a number or a function |
 | `share` | This share of the spirit part continues inside the five-second rule, added to the meta's `share` and capped at all of it |
 | `mp5` | This much more a second, inside and outside the five-second rule |
+| `mp5Mult` | The MP5 from gear and buffs times this: the player's own MP5 and every other entry's `mp5`, except an entry marked `energize` |
 
-From `src/Hekili_Druid/Druid.lua`: Innervate makes the spirit regeneration five times as fast and lets all of it continue while casting.
+An entry with `mp5` and `energize = true` is a periodic energize, such as a totem's mana tick. It gives its own amount whatever multiplies the MP5. `spirit`, `share`, `mp5Mult` and `energize` act only on a resource with the five-second rule (`fsr`).
+
+From `src/Hekili_Shared/Shared/Auras.lua`: Innervate makes the spirit regeneration and the MP5 from gear and buffs five times as fast, and lets all of the spirit regeneration continue while casting.
 
 ```lua
-innervate = { aura = "innervate", spirit = 5, share = 1 },
+shared:RegisterRegenMod({ resource = "mana", aura = "innervate", spirit = 5, share = 1, mp5Mult = 5 })
 ```
 
 A rate entry is not a forecast event: the simulation takes the belief's current rate as constant over its forecast, so it does not see a rate aura end in the middle of the forecast.
@@ -139,7 +143,7 @@ A race applies a rate entry with `race:RegisterRegenMod({ resource, aura, ... })
 |---|---|---|
 | `max` | number or function | The maximum. Without it, 100. |
 | `regen` | number | The base rate a second, which the belief uses until it reads a plain rate. Energy needs it, because the game hides energy even out of combat. |
-| `base` | number | The pool's base power at the class's top level. A cost between 0 and 1, or any cost of an ability with `spendBase`, is that share of it, rounded down. The belief replaces it with the player's own once it reads a plain cost. Without it, a share is of the maximum. |
+| `base` | number | The pool's base power at the class's top level. A cost between 0 and 1, or any cost of an ability with `spendBase`, is that share of it, rounded to the nearest whole (a half rounds up), as the game prices it. The belief replaces it with the player's own once it reads a plain cost. Without it, a share is of the maximum. |
 | `decay` | function | The amount lost a second out of combat |
 | `decayInterval` | function | The seconds between decay steps; with `decay`, the decay is stepped |
 | `fsr` | table | The five-second rule's parts ([below](#the-five-second-rule)) |
@@ -194,7 +198,9 @@ bash = {
 },
 ```
 
-The refund is the belief's only. The simulation does not predict avoidance, so it never reads the field. When the client reports the avoid, the belief also removes the target debuffs the cast's `now` applied.
+An ability whose `now` spends more of its resource than the cost, such as a strike that puts all the remaining rage into its damage, declares `refundNowOnAvoid = true` when an avoid takes the cost alone. The belief then gives back what the cast's `now` took from the ability's resource when the target dodges, parries or misses that cast. It adds the cost share, if the ability has one, and gives both back once. When the Cooldown Manager shows first that the cast's debuff never landed, that gives back the cost share alone; the cast's own dodge, parry or miss, reported after it, still gives back what the `now` spent.
+
+The refund is the belief's only. The simulation does not predict avoidance, so it never reads either field. When the client reports the avoid, the belief also removes the target debuffs the cast's `now` applied.
 
 ## See also
 

@@ -1028,7 +1028,7 @@ do
     -- Visibility reads the spec and combat from Engine.Output.status, which the engine publishes from its next update
     -- (after PLAYER_REGEN_* or a spec change ran UpdateAlpha/UpdateDisplayVisibility): redo them when either moves.
     local seenSpec, seenCombat
-    Hekili.Engine.Subscribe( "status", function( _, _, st )
+    ns.Output.Subscribe( "status", function( _, _, st )
         if st.specID ~= seenSpec then
             seenSpec, seenCombat = st.specID, st.combat
             Hekili:UpdateDisplayVisibility()
@@ -1178,7 +1178,7 @@ do
                 local style = self.style
                 local needs = style and style.needs
                 if style and style.NeedsFor then needs = style.NeedsFor( self.id, Hekili.DB.profile.displays[ self.id ] ) end
-                Hekili.Engine.Subscribe( self.id, self.OnPublish, nil, needs )
+                ns.Output.Subscribe( self.id, self.OnPublish, nil, needs ) -- Hekili's own slot: an outside subscriber never takes it
             end
         end
 
@@ -1354,6 +1354,8 @@ do
         end
     end
 
+    local SEQ_LINE = { sequence = true, strict_sequence = true, restart_sequence = true }
+
     function Hekili:ReviewPacks()
         local profile = self.DB.profile
 
@@ -1372,7 +1374,8 @@ do
 
                     -- NYI:  We can cache if abilities are disabled here as well to reduce checking in ProcessHooks.
                     for a, entry in ipairs( list ) do
-                        if entry.enabled and entry.action and Registry.Abilities()[ entry.action ] then
+                        -- a sequence line is the engine's, not an ability (windows design v6 §6, Engine/Sim/Core.lua)
+                        if entry.enabled and entry.action and ( Registry.Abilities()[ entry.action ] or SEQ_LINE[ entry.action ] ) then
                             actsActive[ packName .. ":" .. listName .. ":" .. a ] = true
                         end
                     end

@@ -374,6 +374,17 @@ describe("the wowsims APL translator", function()
         local function h(f)
             return setfenv(f, env)
         end
+        -- the engine's shape of a field the kit computes: kept in `funcs`, run on read (Spec/Auras.lua, Abilities.lua)
+        local function computed(t, funcs)
+            t.funcs = funcs
+            return setmetatable(t, {
+                __index = function(x, k)
+                    if x.funcs[k] then
+                        return x.funcs[k]()
+                    end
+                end,
+            })
+        end
         local function guardCtx(r)
             local kit = {
                 abilities = {
@@ -466,6 +477,37 @@ describe("the wowsims APL translator", function()
                         end),
                     },
                     plain = { key = "plain", id = 1010, gcd = "spell", cooldown = 0 },
+                    swing = {
+                        key = "swing",
+                        id = 1011,
+                        gcd = "off",
+                        cooldown = 60,
+                        handler = h(function()
+                            applyBuff("swing")
+                        end),
+                    },
+                    quick = {
+                        key = "quick",
+                        id = 1012,
+                        gcd = "off",
+                        cooldown = 60,
+                        handler = h(function()
+                            applyBuff("quick")
+                        end),
+                    },
+                    -- CN21 (review M1): a computed cooldown (300) longer than the aura (10): moot if it were read
+                    slow = computed({
+                        key = "slow",
+                        id = 1013,
+                        gcd = "off",
+                        handler = h(function()
+                            applyBuff("slow")
+                        end),
+                    }, {
+                        cooldown = function()
+                            return 300
+                        end,
+                    }),
                 },
                 auras = {
                     shout = { id = 2001, duration = 120 },
@@ -477,6 +519,29 @@ describe("the wowsims APL translator", function()
                     stance = { id = 2008, duration = 3600 },
                     other_stance = { id = 2018, duration = 3600 },
                     boom = { id = 2009, duration = 30 },
+                    -- CN21: the engine keeps a function duration in `funcs` and runs it on read, in the stub state,
+                    -- which raises on a key it lacks (Guardian's prepull Maul: mainhand_speed)
+                    swing = setmetatable({
+                        id = 2010,
+                        funcs = {
+                            duration = function()
+                                error('stub state lacks "mainhand_speed"')
+                            end,
+                        },
+                    }, {
+                        __index = function(t, k)
+                            if t.funcs[k] then
+                                return t.funcs[k]()
+                            end
+                        end,
+                    }),
+                    -- CN21 (review M1): a computed duration (1) under the cooldown (60): moot if it were read
+                    quick = computed({ id = 2012 }, {
+                        duration = function()
+                            return 1
+                        end,
+                    }),
+                    slow = { id = 2013, duration = 10 },
                 },
                 talents = {},
             }
@@ -516,6 +581,26 @@ describe("the wowsims APL translator", function()
             )
             assert.are.equal(1, #omitted)
             assert.matches("^precombat #7: no guard: boom's handler raised", omitted[1])
+        end)
+
+        -- CN21: a duration the kit computes (a function, run in the stub state) is unknown, never moot: the guard stays,
+        -- and its read never raises (Guardian's prepull Maul, whose aura lasts the main hand's swing)
+        it("keeps the guard of an aura whose duration is a function, without reading it", function()
+            local text, omitted = apl.translate({ prepullActions = { at(1011, "-1s") } }, guardCtx())
+            assert.are.equal("actions.precombat=swing,use_off_gcd=1,if=!buff.swing.up", text)
+            assert.are.same({}, omitted)
+        end)
+
+        -- review M1: the rule, not a guarded read: a computed duration a read would call moot keeps the guard, and so
+        -- does a computed cooldown
+        it("keeps the guard of a computed duration or cooldown that a read would call moot", function()
+            local text, omitted = apl.translate({ prepullActions = { at(1012, "-2s"), at(1013, "-1s") } }, guardCtx())
+            assert.are.equal(
+                "actions.precombat=quick,use_off_gcd=1,if=!buff.quick.up\n"
+                    .. "actions.precombat+=/slow,use_off_gcd=1,if=!buff.slow.up",
+                text
+            )
+            assert.are.same({}, omitted)
         end)
 
         it(
@@ -907,8 +992,8 @@ describe("the wowsims APL translator", function()
                 { name = "Mana", value = math("OpAdd", { currentManaPercent = {} }, const("1")) },
             },
             priorityList = {
-                cast(100, cmp("OpLe", const("20%"), { currentHealthPercent = {} })), -- either side
-                cast(100, cmp("OpLt", { currentHealthPercent = {} }, at)), -- a variable, still the direct operand
+                cast(100, cmp("OpLe", const("20%"), { currentManaPercent = {} })), -- either side
+                cast(100, cmp("OpLt", { currentManaPercent = {} }, at)), -- a variable, still the direct operand
                 -- wowsims's Demonology "In execute": the fight's elapsed plus remaining time scaled by the fraction
                 cast(
                     100,
@@ -925,15 +1010,15 @@ describe("the wowsims APL translator", function()
                 cast(100, cmp("OpGt", { currentManaPercent = {} }, math("OpAdd", const("10%"), const("5")))),
                 cast(100, cmp("OpLt", { currentRage = {} }, const("50%"))), -- not a percent read
                 -- a percent read inside math or min / max: its scale (0-100 here, 0-1 in wowsims) leaks, unsupported
-                cast(100, cmp("OpLt", math("OpSub", { currentHealthPercent = {} }, const("10%")), const("20%"))),
+                cast(100, cmp("OpLt", math("OpSub", { currentManaPercent = {} }, const("10%")), const("20%"))),
                 cast(100, cmp("OpLt", math("OpMul", const("2"), at), { variableRef = { name = "Mana" } })),
                 cast(100, cmp("OpLt", { min = { vals = { { currentManaPercent = {} }, const("5") } } }, const("20%"))),
             },
         }, ctx({}))
         assert.are.equal(
             table.concat({
-                "actions=strike,if=20<=health.pct",
-                "actions+=/strike,if=health.pct<35",
+                "actions=strike,if=20<=mana.pct_lo",
+                "actions+=/strike,if=mana.pct_lo<35",
                 "actions+=/strike,if=(fight_remains-((time+fight_remains)*0.35))<=0",
                 "actions+=/strike,if=mana.pct_lo>(0.1+5)",
                 "actions+=/strike,if=rage.lo<0.5",
@@ -2000,15 +2085,25 @@ describe("the wowsims APL translator's re-pin reads", function()
         assert.are.equal("actions=strike,if=action.strike.gcd<1.5", lines(g(100)))
     end)
 
-    it("currentHealth is health.current; another unit's is unsupported", function()
-        assert.are.equal(
-            "actions=strike,if=health.current>1000",
-            lines(cmp("OpGt", { currentHealth = {} }, const("1000")))
-        )
-        local pet = cmp("OpGt", { currentHealth = { sourceUnit = { type = "Pet" } } }, const("1000"))
-        local text, omitted = one(pet)
-        assert.are.equal("", text)
-        assert.are.same({ "default #1: currentHealth of Pet" }, omitted)
+    it("omits a line reading the player's health, hidden in combat (rule 23); another unit's is unsupported", function()
+        local hidden = ": the player's health, hidden in combat"
+        local text, omitted = apl.translate({
+            valueVariables = { { name = "Low", value = cmp("OpLt", { currentHealthPercent = {} }, const("50%")) } },
+            priorityList = {
+                cast(100, cmp("OpLe", { currentHealthPercent = {} }, const("60%"))),
+                cast(100, AND(cmp("OpGt", { currentHealth = {} }, const("1000")), const("true"))),
+                cast(100, { variableRef = { name = "Low" } }), -- through a variable too
+                cast(100, cmp("OpGt", { currentHealth = { sourceUnit = { type = "Pet" } } }, const("1000"))),
+                cast(100, cmp("OpLt", { currentManaPercent = {} }, const("50%"))), -- not health: kept
+            },
+        }, ctx({}))
+        assert.are.equal("actions=strike,if=mana.pct_lo<50", text)
+        assert.are.same({
+            "default #1: currentHealthPercent" .. hidden,
+            "default #2: currentHealth" .. hidden,
+            "default #3: currentHealthPercent" .. hidden,
+            "default #4: currentHealth of Pet",
+        }, omitted)
     end)
 
     it("auraDuration is the aura's duration on its unit, guarded; another player's is dropped", function()
@@ -2102,7 +2197,7 @@ describe("the wowsims APL translator's re-pin reads", function()
         )
         assert.are.same({
             "default #4: targetIsActive of Target",
-            "default #5: timeUntilTargetDies of Target",
+            "default #5: timeUntilTargetDies of Target: Forever gives no other target's time to die", -- CN24
             "default #6: numActiveAdds",
             "default #7: remainingCastTime",
             "default #8: isExecutePhase of Target",
@@ -2902,17 +2997,37 @@ describe("the wowsims APL translator's auto-attack clocks", function()
         end
     )
 
-    -- The converted weave build (re-pin e2842f0a78's bm_weave.siml, Task 19's request), its timing variables read by
+    -- The converted weave build (re-pin e5a9cd2a2d's bm_weave.siml, kept as a fixture: the build and its Beast Mastery
+    -- (wowsims.com) pack are retired, L1154), its timing variables read by
     -- a line each: "Windup close" on the ranged clock (the time since inside math as speed - remains), "Just shot"
     -- from the weave window (the recipe's windowVars; folded false at input delay 0), and "Weave fits" on the clocks:
     -- its "Weave done" keeps its timing addends, the walk times (yards over the run speed) drop alone (R17 refined).
     -- No walk term reaches the text; the build's waits and waitUntils give no line -- (decision 9).
     it("translates bm_weave's timing variables on the clocks and the window, no walk term, no wait line", function()
         local json = require("dkjson")
-        local f = assert(io.open("tests/Forever/wowsims/hunter_beast_mastery.build.json", "rb"))
+        local f = assert(io.open("tests/Forever/fixtures/hunter_bm_weave_e5a9cd2a2d.build.json", "rb"))
         local player = json.decode(f:read("*a")).player
         f:close()
-        local r = dofile("tools/wowsims/specs/hunter_beast_mastery.lua")
+        -- the retired recipe's translation fields (tools/wowsims/specs/hunter_beast_mastery.lua at e5a9cd2a2d)
+        local r = {
+            class = "HUNTER",
+            pack = "Beast Mastery (wowsims.com)",
+            spec = "beast_mastery",
+            name = "Beast Mastery",
+            map = {},
+            focus = { raptor_strike = 1, hunters_mark = 2, serpent_sting = 1 },
+            ranges = {
+                raptor_strike = { 0, 5 },
+                mongoose_bite = { 0, 5 },
+                strider_kick = { 0, 5 },
+                wing_clip = { 0, 5 },
+                arcane_shot = { 8, 35 },
+                multi_shot = { 8, 35 },
+                serpent_sting = { 8, 35 },
+            },
+            leveling = { "arcane_shot,if=!action.summon_hawk.known&target.outside8" },
+            levelingFirst = { "call_pet,if=!pet_out&!pet.dead&!talent.lone_wolf.enabled", "revive_pet,if=pet.dead" },
+        }
         local set = require("Forever.helpers.engine").abilitySet(r.class)
         local rotation = { valueVariables = player.rotation.valueVariables, priorityList = {} }
         for _, name in ipairs({ "Windup close", "Just shot", "Weave fits" }) do
@@ -3012,7 +3127,7 @@ describe("the wowsims APL translator on the Warlocks' assigned-curse check", fun
         local r = dofile("tools/wowsims/specs/warlock_demonology.lua")
         local set = require("Forever.helpers.engine").abilitySet(r.class)
         local player = { warlock = { options = { classOptions = {} } } } -- the zero value, Elements
-        r.extra, r.guard = nil, nil -- the filler lines anchor on the shipped list's last Life Tap, not in this one
+        r.extra, r.guard, r.levelingFirst = nil, nil, nil -- isolate the synthetic curse group from the shipped PvE prefix
         r.select.castWarlockAssignedCurse.is = nil -- the shipped recipes name it now (CN3, the 0.7 re-pin): drop it for the "before"
         local before, omitted = apl.translate(rotation, apl.context(set, r, nil, player))
         assert.are.equal("", before)
@@ -3372,6 +3487,57 @@ describe("the wowsims APL translator's target swaps (option D)", function()
         }, omitted)
     end)
 
+    -- CN24 (API-forced): Forever gives no other target's time to die, so an entry that reads another target's death
+    -- (Feral's 2/3-target lists, through their variables) or compares the current target's with the fight's end
+    -- (Guardian's, both fight_remains here) is omitted with its reason, never folded into an always-false term
+    -- review M2: the target's death against the fight's end is a constant term (S4's fold), so `|`, `!` and
+    -- `<=`/`>=`/`=` keep their meaning: false for `<`, `>`, `!=`; true for `<=`, `>=`, `=`
+    it(
+        "CN24: omits another target's death and a swap to it; folds the target's death against the fight's end",
+        function()
+            local next = { timeUntilTargetDies = { targetUnit = { type = "NextTarget" } } }
+            local dies = { timeUntilTargetDies = { targetUnit = { type = "CurrentTarget" } } }
+            local text, omitted = apl.translate({
+                priorityList = {
+                    cast(100, cmp("OpGt", next, const("10s"))),
+                    cast(100, { variableRef = { name = "Next target lives" } }),
+                    swap({ variableRef = { name = "Next target lives" } }),
+                    swap(nil, "PreviousTarget"),
+                    cast(200, AND(cmp("OpLt", dies, const("3s")), cmp("OpLt", dies, { remainingTime = {} }))),
+                    cast(200, cmp("OpGt", { remainingTime = {} }, { timeUntilTargetDies = {} })),
+                    cast(200, cmp("OpLt", dies, const("3s"))),
+                    cast(300, OR(cmp("OpLt", dies, { remainingTime = {} }), cmp("OpLt", dies, const("2s")))),
+                    cast(
+                        400,
+                        AND(cmp("OpLe", dies, { remainingTime = {} }), cmp("OpGt", { currentRage = {} }, const("5")))
+                    ),
+                    cast(500, NOT(cmp("OpLt", dies, { remainingTime = {} }))),
+                },
+                valueVariables = { { name = "Next target lives", value = cmp("OpGt", next, const("6s")) } },
+            }, ctx({}))
+            assert.are.equal(
+                table.concat({
+                    "actions=big_hit,if=fight_remains<3",
+                    "actions+=/roar,use_off_gcd=1,if=fight_remains<2",
+                    "actions+=/dot,if=rage.lo>5",
+                    "actions+=/starfire",
+                }, "\n"),
+                text
+            )
+            local other = "timeUntilTargetDies of NextTarget: Forever gives no other target's time to die"
+            local fight = "never: timeUntilTargetDies against remainingTime: the target's time to die is fight_remains here"
+                .. " (gap AN), so the comparison is a constant."
+            assert.are.same({
+                "default #1: " .. other,
+                "default #2: " .. other,
+                "default #3: changeTarget NextTarget: no on-all-targets read of a cast before it in this list",
+                "default #4: changeTarget PreviousTarget: no previous target in Hekili",
+                "default #5: " .. fight,
+                "default #6: " .. fight,
+            }, omitted)
+        end
+    )
+
     it("rule 17: multidot on more than one target is cycle_targets with max_cycle_targets", function()
         local function multidot(dots)
             return { action = { multidot = { spellId = { spellId = 400 }, maxDots = dots, maxOverlap = const("0ms") } } }
@@ -3433,5 +3599,609 @@ describe("the wowsims APL translator's target swaps (option D)", function()
         assert.are.equal("actions=dot,if=!(active_dot.dot>0)", text)
         assert.are.same({}, omitted)
         assert.are.same({}, header)
+    end)
+end)
+
+describe("CN25: a variable of many terms is one variable line, read by name", function()
+    -- n `rage.lo<k` reads OR'd: n term occurrences
+    local function big(n)
+        local t = {}
+        for i = 1, n do
+            t[i] = cmp("OpLt", { currentRage = {} }, const(tostring(i)))
+        end
+        return OR(unpack(t))
+    end
+    local function run(entries, vars)
+        return (apl.translate({ priorityList = entries, valueVariables = vars }, ctx({})))
+    end
+
+    it("emits a variable of M.HOIST_TERMS terms once, heading the default list, and reads it by name", function()
+        local text = run({
+            cast(100, { variableRef = { name = "Big one" } }),
+            cast(300, NOT({ variableRef = { name = "Big one" } })),
+        }, {
+            { name = "Big one", value = big(apl.HOIST_TERMS) },
+        })
+        local lines = {}
+        for l in text:gmatch("[^\n]+") do
+            lines[#lines + 1] = l
+        end
+        assert.are.equal(3, #lines)
+        assert.is_truthy(lines[1]:find("^actions=variable,name=v_big_one,pure=1,value=%(rage%.lo<1|rage%.lo<2|"))
+        assert.are.equal(apl.HOIST_TERMS, apl.terms(lines[1]:match(",value=(.*)$")))
+        assert.are.equal("actions+=/strike,if=variable.v_big_one", lines[2])
+        assert.are.equal("actions+=/roar,use_off_gcd=1,if=!variable.v_big_one", lines[3])
+    end)
+
+    -- fix round 1 (M2): rule 19 reads a line's own range terms (target.within/outside, in_range), so a text holding one
+    -- stays in the line
+    it("inlines a variable of M.HOIST_TERMS terms that reads the target's range", function()
+        local d = { unitDistance = { sourceUnit = { type = "Self" } } }
+        local text = run({ cast(100, { variableRef = { name = "Big near" } }) }, {
+            { name = "Big near", value = AND(cmp("OpLe", d, const("5")), big(apl.HOIST_TERMS)) },
+        })
+        assert.is_nil(text:find("variable", 1, true))
+        assert.is_truthy(text:find("^actions=strike,if=%(target%.within5&"), text:sub(1, 80))
+    end)
+
+    it("inlines a variable under M.HOIST_TERMS terms, as before", function()
+        local text = run({ cast(100, { variableRef = { name = "Small" } }) }, {
+            { name = "Small", value = big(apl.HOIST_TERMS - 1) },
+        })
+        assert.is_nil(text:find("variable", 1, true))
+        assert.are.equal(apl.HOIST_TERMS - 1, apl.terms(text:match(",if=(.*)$")))
+    end)
+
+    it("emits a variable another reads before it, and none an emitted line never reads", function()
+        local text = run({
+            cast(100, AND({ variableRef = { name = "Outer" } }, cmp("OpGt", { currentRage = {} }, const("5")))),
+            cast(999, { variableRef = { name = "Unread" } }), -- omitted: spell 999 is unmapped
+        }, {
+            { name = "Inner", value = big(apl.HOIST_TERMS) },
+            { name = "Outer", value = AND({ variableRef = { name = "Inner" } }, big(apl.HOIST_TERMS)) },
+            { name = "Unread", value = big(apl.HOIST_TERMS + 1) },
+        })
+        local names = {}
+        for x in text:gmatch("variable,name=([%w_]+)") do
+            names[#names + 1] = x
+        end
+        assert.are.same({ "v_inner", "v_outer" }, names)
+        assert.is_truthy(text:find("value=(variable.v_inner&(rage.lo<1|", 1, true))
+        assert.is_truthy(text:find("actions+=/strike,if=(variable.v_outer&rage.lo>5)", 1, true))
+    end)
+end)
+
+-- Windows design v6 §10 (rulings 14, 30, 31, 35; L1291 c, L1315), Part A of windows Phase 3: with the recipe's
+-- `sequences = true` a strictSequence is one `strict_sequence` line (rule 14) and a sequence one `sequence` line
+-- (rule 14b), each at its list position, the wowsims options always written.
+describe("the wowsims APL translator's sequence lines (recipe sequences = true)", function()
+    local d = { unitDistance = {} }
+    local mh = { autoTimeToNext = { autoType = "MainHandAuto" } }
+    local function member(id, cond)
+        return { castSpell = { spellId = { spellId = id } }, condition = cond }
+    end
+    local function lines(t)
+        return table.concat(t, "\n")
+    end
+    local function on(r)
+        r = r or {}
+        r.sequences = true
+        return ctx(r)
+    end
+    local BIG = "(!action.big_hit.known|cooldown.big_hit.ready)"
+
+    it("rule 14: a strictSequence is one strict_sequence line in place of the prev.1 chain", function()
+        local levels = assert(loadfile("tools/check_pack_levels.lua"))()
+        local text, omitted = apl.translate({
+            priorityList = {
+                {
+                    action = {
+                        condition = AND({ spellIsReady = { spellId = { spellId = 300 } } }, ready),
+                        strictSequence = { actions = { member(300), member(100, up), member(400) } },
+                    },
+                },
+                { action = { strictSequence = { actions = { member(300), { wait = {} } } } } },
+                cast(500),
+            },
+        }, on({ focus = { strike = 1 } }))
+        -- the sequence's condition, all reads guarded (no member is the line's own); each member its own line's text
+        local GO = "(!(action.roar.known|action.big_hit.known)|((!action.roar.known|cooldown.roar.ready)&"
+            .. BIG
+            .. "))"
+        assert.are.equal(
+            lines({
+                "actions=strict_sequence,name=roar_dot,start_on_first=1,hold_off_gcd=1,if="
+                    .. GO
+                    .. ":roar,use_off_gcd=1:strike,focus=1,if=(!action.dot.known|buff.dot.up):dot",
+                "actions+=/starfire",
+            }),
+            text
+        )
+        assert.are.same({ "default #2: strictSequence of wait" }, omitted)
+        assert.is_falsy(text:find("prev.1", 1, true))
+        local function isAbility(k)
+            return k == "strike" or k == "big_hit" or k == "roar" or k == "dot"
+        end
+        assert.are.same({}, levels.line(text:match("^actions=(.-)\n"), isAbility))
+    end)
+
+    it(
+        "rule 14: two strictSequences sharing a first member are told apart by name, each with its own condition",
+        function()
+            local text = apl.translate({
+                priorityList = {
+                    { action = { condition = up, strictSequence = { actions = { member(300), member(100) } } } },
+                    { action = { condition = NOT(up), strictSequence = { actions = { member(300), member(400) } } } },
+                },
+            }, on())
+            assert.are.equal(
+                lines({
+                    "actions=strict_sequence,name=roar_strike,start_on_first=1,hold_off_gcd=1,if="
+                        .. "(!action.dot.known|buff.dot.up):roar,use_off_gcd=1:strike",
+                    "actions+=/strict_sequence,name=roar_dot,start_on_first=1,hold_off_gcd=1,if="
+                        .. "(!action.dot.known|!buff.dot.up):roar,use_off_gcd=1:dot",
+                }),
+                text
+            )
+        end
+    )
+
+    -- (Priest Shadow's Starshards extra: the wowsims entry it stands for, #11, sits before the strict sequence, #13)
+    it("rule 7: a recipe extra `before` a sequence's member goes before that sequence's line", function()
+        local text = apl.translate({
+            priorityList = {
+                cast(500),
+                { action = { strictSequence = { actions = { member(300), member(100) } } } },
+                cast(100),
+            },
+        }, on({ extra = { { before = "strike", line = "dot" } } }))
+        assert.are.equal(
+            lines({
+                "actions=starfire",
+                "actions+=/dot",
+                "actions+=/strict_sequence,name=roar_strike,start_on_first=1,hold_off_gcd=1:roar,use_off_gcd=1:strike",
+                "actions+=/strike",
+            }),
+            text
+        )
+    end)
+
+    it("rule 14: a generated name that repeats in one priority is an error", function()
+        local seq = { action = { strictSequence = { actions = { member(300), member(100) } } } }
+        local ok, err = pcall(apl.translate, { priorityList = { seq, seq } }, on())
+        assert.is_false(ok)
+        assert.are.equal("strictSequence: the generated name roar_strike repeats (default #2)", err)
+    end)
+
+    it(
+        "L1315: a sequence in a group list is written in that list (the engine keeps sequences to Primary and AOE)",
+        function()
+            local text = apl.translate({
+                priorityList = { { action = { groupReference = { groupName = "Evocation" } } }, cast(500) },
+                groups = {
+                    {
+                        name = "Evocation",
+                        actions = { { action = { strictSequence = { actions = { member(300), member(400) } } } } },
+                    },
+                },
+            }, on())
+            assert.are.equal(
+                lines({
+                    "actions=call_action_list,name=evocation",
+                    "actions+=/starfire",
+                    "actions.evocation=strict_sequence,name=roar_dot,start_on_first=1,hold_off_gcd=1:roar,use_off_gcd=1:dot",
+                }),
+                text
+            )
+        end
+    )
+
+    it(
+        "rule 14b: a sequence is one line, mode=continue, repeated members kept; resetSequence a restart line",
+        function()
+            local done = { sequenceIsComplete = { sequenceName = "HHA" } }
+            local text, omitted, _, header = apl.translate({
+                priorityList = {
+                    { action = { resetSequence = { sequenceName = "HHA" }, condition = done } },
+                    {
+                        action = {
+                            condition = { talentIsKnown = { talentId = { spellId = 950 } } },
+                            sequence = { name = "HHA", actions = { member(100), member(100), member(200) } },
+                        },
+                    },
+                    cast(400, done),
+                },
+            }, on())
+            assert.are.equal(
+                lines({
+                    "actions=restart_sequence,name=hha,if=window.hha.done",
+                    "actions+=/sequence,name=hha,mode=continue,if=talent.cuts.enabled:strike:strike:big_hit",
+                    "actions+=/dot,if=window.hha.done",
+                }),
+                text
+            )
+            assert.are.same({}, omitted)
+            assert.are.same({}, header) -- no `# Window:` line: nothing for the class to register (G06)
+        end
+    )
+
+    it(
+        "rule 14b: sequenceIsComplete is window.<n>.done in its own condition; a held gate reads it in progress",
+        function()
+            local function inRange(id)
+                return { spellInRange = { spellId = { spellId = id } } }
+            end
+            local text, omitted, _, header = apl.translate({
+                priorityList = {
+                    { action = { groupReference = { groupName = "Move to melee" }, condition = NOT(inRange(100)) } },
+                    cast(200),
+                    cast(100),
+                },
+                groups = {
+                    {
+                        name = "Move to melee",
+                        actions = {
+                            {
+                                action = {
+                                    condition = AND(
+                                        { talentIsKnown = { talentId = { spellId = 900 } } },
+                                        NOT({ sequenceIsComplete = { sequenceName = "move1" } })
+                                    ),
+                                    sequence = {
+                                        name = "move1",
+                                        actions = {
+                                            { move = { rangeFromTarget = const("5") } },
+                                            { waitUntil = { condition = inRange(200) } },
+                                            { castSpell = { spellId = { spellId = 200 } } },
+                                            { wait = { duration = { inputDelay = {} } } },
+                                            { castSpell = { spellId = { spellId = 400 } } },
+                                            { waitUntil = { condition = inRange(100) } },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            }, on())
+            -- a parked sequence stays up, so "the sequence is running" is up and not done
+            local held = "(toggle.movement&(window.move1.up&!window.move1.done)|(!action.strike.known|action.strike.in_range)"
+                .. "|(!window.move1.up|window.move1.done))"
+            assert.are.equal(
+                lines({
+                    "actions=call_action_list,name=move_to_melee,if=(!action.strike.known|!action.strike.in_range)",
+                    "actions+=/big_hit,if=" .. held,
+                    "actions+=/strike,if=" .. held,
+                    "actions.move_to_melee=sequence,name=move1,mode=continue,if=(talent.furious.enabled&!window.move1.done)"
+                        .. ":big_hit,if=(toggle.movement|action.big_hit.in_range):dot",
+                }),
+                text
+            )
+            assert.are.same({}, omitted)
+            assert.are.same({
+                "# Movement: move_to_melee #1 reaches move_to_melee: big_hit; default: big_hit, strike",
+            }, header)
+        end
+    )
+
+    it("rule 19: two sequences' held gate skips the second sequence's line and goes to the caller's lines", function()
+        local function inRange(id)
+            return { spellInRange = { spellId = { spellId = id } } }
+        end
+        local function seq(name, id)
+            return {
+                action = {
+                    sequence = {
+                        name = name,
+                        actions = {
+                            { move = { rangeFromTarget = const("5") } },
+                            { waitUntil = { condition = inRange(200) } },
+                            { castSpell = { spellId = { spellId = id } } },
+                            { waitUntil = { condition = inRange(100) } },
+                        },
+                    },
+                },
+            }
+        end
+        local text, _, _, header = apl.translate({
+            priorityList = { { action = { groupReference = { groupName = "Move" } } }, cast(200), cast(100) },
+            groups = { { name = "Move", actions = { seq("move1", 200), seq("move2", 400) } } },
+        }, on())
+        local held = "(toggle.movement&((window.move1.up&!window.move1.done)|(window.move2.up&!window.move2.done))"
+            .. "|(!action.strike.known|action.strike.in_range)|(!window.move1.up|window.move1.done)&(!window.move2.up|window.move2.done))"
+        assert.are.equal(
+            lines({
+                "actions=call_action_list,name=move",
+                "actions+=/big_hit,if=" .. held,
+                "actions+=/strike,if=" .. held,
+                "actions.move=sequence,name=move1,mode=continue:big_hit,if=(toggle.movement|action.big_hit.in_range)",
+                "actions.move+=/sequence,name=move2,mode=continue"
+                    .. ":dot,if=(toggle.movement|(!action.big_hit.known|action.big_hit.in_range))",
+            }),
+            text
+        )
+        assert.are.same({
+            "# Movement: move #1 reaches move: big_hit; default: big_hit, strike",
+            "# Movement: move #2 reaches move: dot; default: big_hit, strike",
+        }, header)
+    end)
+
+    it("rule 14b: a member rule 19 places elsewhere is a reader line there; the member keeps its place", function()
+        local text, _, _, header = apl.translate({
+            priorityList = {
+                { action = { move = { rangeFromTarget = const("5") }, condition = cmp("OpGt", mh, const("0.5s")) } },
+                cast(500),
+                { action = { sequence = { name = "S", actions = { member(100, cmp("OpLe", d, const("5"))) } } } },
+            },
+        }, on())
+        assert.are.equal(
+            lines({
+                "actions=strike,if=window.s.next.strike&toggle.movement&mainhand_remains>0.5",
+                "actions+=/starfire",
+                "actions+=/sequence,name=s,mode=continue:strike,if=target.within5",
+            }),
+            text
+        )
+        assert.are.same({ "# Movement: default #1 reaches default: strike" }, header)
+    end)
+
+    -- The shipped recipes with sequences, translated with `sequences` set (nothing written): design v6 §10.1's 18 strict
+    -- lines and §10.2-10.3's plain ones, every option written as ruling 14 says and none other (L1291 c: no allow_skip),
+    -- no prev.1 chain or `# Window:` header left, every part of a line guarded (tools/check_pack_levels.lua).
+    it(
+        "every shipped recipe's sequences, as lines: the 18 strict lines of §10.1, the plain ones, their options",
+        function()
+            local ex = assert(loadfile("tools/wowsims/export.lua"))()
+            local levels = assert(loadfile("tools/check_pack_levels.lua"))()
+            local engine = require("Forever.helpers.engine")
+            local forced = setmetatable({
+                recipe = function(spec)
+                    local r = ex.recipe(spec)
+                    r.sequences = true
+                    return r
+                end,
+            }, { __index = ex })
+            local ROGUE = {
+                "default strict blood_fury_blade_flurry",
+                "default strict blood_fury_adrenaline_rush",
+                "default strict elunes_light_adrenaline_rush",
+            }
+            local want = {
+                rogue_assassination = ROGUE,
+                rogue_combat = ROGUE,
+                rogue_subtlety = ROGUE,
+                mage_arcane = {
+                    "default strict presence_of_mind_arcane_wrath",
+                    "evocation strict read_ley_line_evocation",
+                },
+                mage_fire = { "evocation strict read_ley_line_evocation" },
+                mage_frostfire = { "evocation strict read_ley_line_evocation" },
+                priest_shadow = { "default strict inner_focus_mind_flay" },
+                warrior_arms = { "default strict battle_stance_overpower", "default strict battle_stance_rend" },
+                warrior_fury = {
+                    "default strict battle_stance_rend",
+                    "overpower_weaving strict battle_stance_overpower",
+                },
+                hunter_beast_mastery_turret = { "default plain hha" },
+                paladin_retribution = { "move_to_melee plain move1", "move_to_melee plain move2" },
+            }
+            local strict = 0
+            for spec, lines in pairs(want) do
+                local _, text = apl.render(spec, forced)
+                local class = ex.recipe(spec).class
+                local abilities = engine.abilitySet(class).abilities
+                local function isAb(k)
+                    local a = abilities[k]
+                    return type(a) == "table" and a.key == k
+                end
+                local got = {}
+                for line in text:gmatch("[^\n]+") do
+                    local list, body = line:match("^actions%.?([%w_]*)%+?=/?(.+)$")
+                    if body then
+                        local headOpts = body:match("^[^:]*")
+                        local kind, name = body:match("^(s[%w_]*equence),name=([%w_]+)")
+                        if kind then
+                            got[#got + 1] = (list == "" and "default" or list)
+                                .. (kind == "strict_sequence" and " strict " or " plain ")
+                                .. name
+                            local opts = headOpts:gsub(",if=.*$", "")
+                            if kind == "strict_sequence" then
+                                strict = strict + 1
+                                assert.are.equal(
+                                    "strict_sequence,name=" .. name .. ",start_on_first=1,hold_off_gcd=1",
+                                    opts
+                                )
+                            else
+                                assert.are.equal("sequence,name=" .. name .. ",mode=continue", opts)
+                            end
+                        end
+                        assert.is_falsy(body:find("allow_skip", 1, true), line)
+                        -- L1270: the hold walks the normal lists only for a window or variable line (holdWalk)
+                        assert.is_falsy(
+                            body:match("^variable,") or body:match("^open_window") or body:match("^close_window"),
+                            line
+                        )
+                        assert.are.same({}, levels.line(body, isAb), line)
+                    end
+                end
+                assert.are.same(lines, got, spec)
+                assert.is_falsy(text:find("prev.1.", 1, true), spec)
+                assert.is_falsy(text:find("# Window:", 1, true), spec)
+            end
+            assert.are.equal(18, strict)
+        end
+    )
+
+    -- The engine reads the lines as written: Arms with `sequences` set parses without a warning, compiles with no window
+    -- error, and declares its two strict sequences with the two options on and allow_skip off.
+    it("the engine parses and compiles the Arms recipe's strict_sequence lines", function()
+        local ex = assert(loadfile("tools/wowsims/export.lua"))()
+        local headless = require("Game.harness.headless")
+        local ww = require("Forever.helpers.warrior_world")
+        local _, text = apl.render(
+            "warrior_arms",
+            setmetatable({
+                recipe = function(spec)
+                    local r = ex.recipe(spec)
+                    r.sequences = true
+                    return r
+                end,
+            }, { __index = ex })
+        )
+        local H = headless.new({ character = ww.character(), pack = ww.PACK })
+        local byList = {}
+        for line in text:gmatch("[^\n]+") do
+            local list = line:match("^actions%.?([%w_]*)%+?=")
+            if list then
+                list = list == "" and "default" or list
+                byList[list] = (byList[list] and (byList[list] .. "\n") or "") .. line
+            end
+        end
+        local lists = {}
+        for name, t in pairs(byList) do
+            local parsed, warnings = H.Hekili:ParseActionList(t, true)
+            assert.are.same({}, warnings or {}, name)
+            lists[name] = parsed
+        end
+        local cw = H.Hekili.Scripts.CheckWindows(lists, "pk")
+        assert.are.same({}, cw.errors)
+        assert.is_false(cw.holdWalk) -- L1270: no window or variable line, so the hold walks no normal list
+        local got = {}
+        for _, decl in ipairs(cw.decls) do
+            got[#got + 1] =
+                { decl.name, decl.strict, decl.start_on_first, decl.hold_off_gcd, decl.allow_skip, #decl.steps }
+        end
+        assert.are.same({
+            { "battle_stance_overpower", true, true, true, false, 2 },
+            { "battle_stance_rend", true, true, true, false, 2 },
+        }, got)
+    end)
+
+    -- a recipe's translation with `sequences` set in a test copy of the recipe (no shipped recipe sets it); its action
+    -- lines by list, and each list through the engine's parser on `H`
+    local function sequenced(spec)
+        local ex = assert(loadfile("tools/wowsims/export.lua"))()
+        local _, text = apl.render(
+            spec,
+            setmetatable({
+                recipe = function(s)
+                    local r = ex.recipe(s)
+                    r.sequences = true
+                    return r
+                end,
+            }, { __index = ex })
+        )
+        return text
+    end
+    local function engineLists(H, text)
+        local byList, lists, warn = {}, {}, {}
+        for line in text:gmatch("[^\n]+") do
+            local list = line:match("^actions%.?([%w_]*)%+?=")
+            if list then
+                list = list == "" and "default" or list
+                byList[list] = (byList[list] and (byList[list] .. "\n") or "") .. line
+            end
+        end
+        for name, t in pairs(byList) do
+            local parsed, warnings = H.Hekili:ParseActionList(t, true)
+            for _, w in ipairs(warnings or {}) do
+                warn[#warn + 1] = name .. ": " .. w
+            end
+            lists[name] = parsed
+        end
+        return lists, warn
+    end
+
+    -- I1: the Arms lines go through make_pack as a pack (load, encode, decode) unchanged, and the decoded lists, as a
+    -- built-in pack loads them (Packs.lua), declare the same two strict sequences
+    it("builds the Arms recipe's strict_sequence lines into a pack that declares both sequences", function()
+        local mp = assert(loadfile("tools/make_pack.lua"))("lib")
+        local headless = require("Game.harness.headless")
+        local ww = require("Forever.helpers.warrior_world")
+        local lines = {}
+        for line in sequenced("warrior_arms"):gmatch("[^\n]+") do
+            if line:match("^actions") then
+                lines[#lines + 1] = line
+            end
+        end
+        local root = os.tmpname()
+        os.remove(root)
+        assert(os.execute("mkdir -p " .. root) == 0)
+        local f = assert(io.open(root .. "/packs.lua", "wb"))
+        f:write('return { class = "WARRIOR", packs = { "Arms" }, specs = { Arms = "arms" } }\n')
+        f:close()
+        f = assert(io.open(root .. "/Arms.simc", "wb"))
+        f:write("# Arms, sequences on\n" .. table.concat(lines, "\n") .. "\n")
+        f:close()
+        local ok, packs = pcall(mp.load, "warrior", root .. "/", { src = "" })
+        os.execute("rm -r " .. root)
+        assert.is_true(ok, tostring(packs))
+        local payload = mp.decode(mp.encode(packs[1]))
+        local back = {}
+        for line in mp.unparse(payload.lists):gmatch("[^\n]+") do
+            back[#back + 1] = line
+        end
+        table.sort(lines)
+        table.sort(back)
+        assert.are.same(lines, back) -- every line written back byte for byte
+        local H = headless.new({ character = ww.character(), pack = ww.PACK })
+        local cw = H.Hekili.Scripts.CheckWindows(payload.lists, "pk")
+        assert.are.same({}, cw.errors)
+        local got = {}
+        for _, decl in ipairs(cw.decls) do
+            got[#got + 1] =
+                { decl.name, decl.strict, decl.start_on_first, decl.hold_off_gcd, decl.allow_skip, #decl.steps }
+        end
+        assert.are.same({
+            { "battle_stance_overpower", true, true, true, false, 2 },
+            { "battle_stance_rend", true, true, true, false, 2 },
+        }, got)
+    end)
+
+    -- M1: the BM and Ret plain sequence lines parse without a warning; until each Part B lane drops the class's Lua
+    -- window of the same name, CheckWindows reports exactly that clash (E3) and, for BM, the restart line on it (E1)
+    for _, case in ipairs({
+        {
+            "hunter_beast_mastery_turret",
+            "Forever.helpers.hunter_world",
+            "BeastMasteryTurret",
+            { "E1 restart_sequence: hha is not a plain sequence", "E3 hha is a class window" },
+        },
+        {
+            "paladin_retribution",
+            "Forever.helpers.paladin_world",
+            "Retribution",
+            { "E3 move1 is a class window", "E3 move2 is a class window" },
+        },
+    }) do
+        it("the engine parses the " .. case[1] .. " recipe's sequence lines", function()
+            local C = require(case[2])[case[3]]
+            local H = require("Game.harness.headless").new({ character = C.character(), pack = C.PACK })
+            local lists, warn = engineLists(H, sequenced(case[1]))
+            assert.are.same({}, warn)
+            local errs = {}
+            for _, x in ipairs(H.Hekili.Scripts.CheckWindows(lists, "pk").errors) do
+                errs[#errs + 1] = x.code .. " " .. x.text
+            end
+            table.sort(errs)
+            assert.are.same(case[4], errs)
+        end)
+    end
+
+    it("rule 14b: a restart line and a reader of an omitted sequence are omitted with it", function()
+        local text, omitted = apl.translate({
+            priorityList = {
+                { action = { resetSequence = { sequenceName = "S" } } },
+                { action = { sequence = { name = "S", actions = { { castFriendlySpell = {} } } } } },
+                cast(400, { sequenceIsComplete = { sequenceName = "S" } }),
+                cast(200),
+            },
+        }, on())
+        assert.are.equal("actions=big_hit", text)
+        assert.are.same({
+            "default #2: sequence s of castFriendlySpell",
+            "default #1: reads window s, whose sequence was omitted",
+            "default #3: reads window s, whose sequence was omitted",
+        }, omitted)
     end)
 end)

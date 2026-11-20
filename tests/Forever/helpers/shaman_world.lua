@@ -6,7 +6,8 @@
 -- the booted oracle's Hekili.Class and Hekili.State for the rest). The world's own, restated from the DB2 and
 -- wowsims/forever (so the class file's belief is measured against them): the totem slots and durations (W.summonTotem;
 -- slot order fire, earth, water, air: checkpoint), the shocks' shared cooldown, Fire Nova needing a fire totem,
--- Maelstrom Weapon stacked by our landed melee (10 a minute, wowsims's rate) and spent by Lightning Bolt, Elemental
+-- Maelstrom Weapon stacked by our landed melee (6..10 a minute by talent rank, wowsims's rate) and spent by Lightning
+-- Bolt, Windfury Totem's strike (ours standing: a 20% roll on each landed main-hand swing or Stormstrike), Elemental
 -- Focus's Clearcasting (10% after a Fire or Nature damage spell, spent by the next one), Lightning Shield's charges
 -- spent by the mob's hits on us, mana under the five-second rule; Elemental's casts (Lightning Bolt, Chain Lightning;
 -- Lava Burst is gone from the game) shortened by Elemental Alacrity and Elemental Mastery, Convection's cost cut, Chain Lightning's cooldown
@@ -25,8 +26,19 @@ local MANA = 0 -- Enum.PowerType
 local GCD = { totem = 1.0, spell = 1.5, off = 0 }
 -- The default regen parts (a pack's `fsr` replaces them; the class file declares them per spec, as wowsims's logs).
 local FSR = { 20, 3 }
-local MAELSTROM_PPM = 10 -- wowsims talents_enhancement.go (fits a 3.6 s weapon)
+-- Maelstrom Weapon's rate a minute by talent rank: the talent's effect 2 (wowsims e4ef929e54 curve 408498: 6, 7, 8, 9,
+-- 10; maelstromWeaponPPM in talents_enhancement.go; was a 20 constant before hotfix push 113722)
+local MAELSTROM_PPM = { 6, 7, 8, 9, 10 }
+-- Windfury Totem's proc (10612: ProcChance 20, ICDMs 100) on a landed main-hand swing or melee ability of ours while our
+-- totem stands: one main-hand weapon strike (10610) on the special table, in the same instant (wowsims e4ef929e54
+-- core/buffs/drivers.go NewWindfuryTotemProcTrigger, from hotfix push 114060). The strike stacks no Maelstrom Weapon
+-- (talents_enhancement.go: EV-0009), resets no swing and rolls no proc of its own (it lands inside the ICD).
+local WINDFURY = { chance = 0.2, icd = 0.1 }
 local CLEARCASTING = 0.1 -- Elemental Focus's chance (DB2 16164 ProcChance)
+-- Lightning Overload 3/3 (wowsims's curve for 408438: 10/20/30): a Lightning Bolt's chance, a third of it per target a
+-- Chain Lightning lands on (one target here). The overload's launch rolls Elemental Focus once more (wowsims PR 1066),
+-- spends no Clearcasting; its own damage and mana are not modelled (shortcut: upgrade if a gate measures them).
+local OVERLOAD = { lightning_bolt = 0.1, chain_lightning = 0.1 / 3 } -- per talent rank
 
 -- The totems the kit summons at level 60: the slot (1 fire, 2 earth, 3 water, 4 air) and the top rank's duration (DB2).
 local TOTEM = {
@@ -47,7 +59,7 @@ local COST = {
     earth_shock = { 30, 50, 85, 145, 240, 345, 450 },
     flame_shock = { 55, 95, 160, 250, 345, 410 },
     fire_nova = { 65, 120, 210, 290, 375 }, -- wowsims/forever's spell data (R57a: in game 375; the DB2's 520)
-    stormstrike = { 121 }, -- wowsims/forever's: 8% of base mana, 121 at 60 (the DB2's: 125)
+    stormstrike = { 122 }, -- wowsims/forever's: 8% of base mana, 121.6 at 60 to the nearest (the DB2's: 125)
     searing_totem = { 25, 45, 75, 110, 145, 170 },
     flametongue_totem = { 90, 140, 200, 275 },
     strength_of_earth_totem = { 25, 65, 125, 225, 275 },
@@ -73,6 +85,7 @@ local MASTERED = { lightning_bolt = true }
 -- UNMEASURED: the hits' amounts.
 local AMOUNT = {
     stormstrike = 400,
+    windfury_strike = 300,
     earth_shock = 500,
     flame_shock = 250,
     lightning_bolt = 550,
@@ -96,6 +109,16 @@ local function class()
     return W0
 end
 
+-- Windfury Totem's summon IDs, every rank (the class file's), as a set.
+local function windfuryIds()
+    local a, set = class().abilities.windfury_totem, {}
+    set[a.id] = true
+    for _, id in ipairs(a.copy or {}) do
+        set[id] = true
+    end
+    return set
+end
+
 local function aura(W, X, dst, key, duration, stacks)
     local a = X.aura[key]
     W.applyAura(dst, a.id, duration or a.duration, stacks or 1, a.max_stack)
@@ -108,10 +131,29 @@ local function drop(W, e, X, key) -- aura `key` off us, if up
     end
 end
 
--- A melee hit of ours that lands stacks Maelstrom Weapon at its rate a minute (by the main hand's speed).
+-- A melee hit of ours that lands stacks Maelstrom Weapon at its rank's rate a minute (by the main hand's speed); no
+-- talent, no roll.
 local function maelstrom(W, e, X)
-    if W.rng.chance(MAELSTROM_PPM * e.weapons[1][3] / 60) then
+    local ppm = MAELSTROM_PPM[X.maelstromRank or 0]
+    if ppm and W.rng.chance(ppm * e.weapons[1][3] / 60) then
         aura(W, X, e, "maelstrom_weapon")
+    end
+end
+
+-- A landed main-hand melee hit of ours with our Windfury Totem standing (its summon's ID in the air slot) rolls the
+-- totem's strike, off its ICD: W.hit's outcome on the special table, no Maelstrom Weapon. The rng draws only then, so a
+-- world without the totem or without melee keeps its seeded fights. The hit in progress's `lastHit` is kept (an
+-- ability's effect reads its own).
+local function windfuryStrike(W, e, X)
+    local t = W.totem(e, 4)
+    if not (t and X.windfury[t.spell]) or W.t < (e.windfuryReady or 0) then
+        return
+    end
+    if W.rng.chance(WINDFURY.chance) then
+        e.windfuryReady = W.t + WINDFURY.icd
+        local last = e.lastHit
+        W.hit(e, e.target, AMOUNT.windfury_strike, 1, "melee")
+        e.lastHit = last
     end
 end
 
@@ -163,6 +205,14 @@ local function spell(key, extra)
                 extra(W, e, p, X)
             end
             elemental(W, e, X)
+            if
+                X.overload > 0
+                and OVERLOAD[key]
+                and W.rng.chance(OVERLOAD[key] * X.overload)
+                and W.rng.chance(CLEARCASTING)
+            then
+                aura(W, X, e, "clearcasting")
+            end
         end,
     }
 end
@@ -213,6 +263,7 @@ M.MAP = {
             aura(W, X, e, "improved_stormstrike") -- every cast: rank 2's 100%, 15 s
             if W.hit(e, e.target, AMOUNT.stormstrike, 1).act == "WOUND" then
                 maelstrom(W, e, X)
+                windfuryStrike(W, e, X)
             end
         end,
     },
@@ -285,15 +336,15 @@ local PACKS = {
         -- build's 408498=5@2: the world stacks it on every landed swing, and the pack's Lightning Bolt line reads the talent
         -- since central-talents registered it)
         talents = { [1223031] = 2, [408498] = 5 },
-        -- wowsims's log (shaman_enhancement.log, re-pin e2842f0a78: Windshaper Skyborne, was 5000 / 9.8 / 38.42 as an
-        -- Orc): 6565 mana, 17.8 a second while casting, 49.05 outside; Improved Stormstrike (1238931, DB2 aura 134 = 50)
-        -- adds half the spirit part while casting (33.42: the log's 3.342 a tick); the 17.8 is 12.8 without Mana Spring
-        -- Totem's buff (10494: 5 a second, up while the totem stands)
-        mana = 6565,
-        fsr = { 31.25, 12.8, auras = { [1238931] = { share = 0.5 }, [10494] = { mp5 = 5 } } },
+        -- wowsims's log (shaman_enhancement.log, re-pin e4ef929e54: the gear lost the Five Thunders pieces; 6565 / 17.8 /
+        -- 49.05 at e2842f0a78, 5000 / 9.8 / 38.42 as an Orc): 6250 mana, 17.0 a second while casting, 42.75 outside;
+        -- Improved Stormstrike (1238931, DB2 aura 134 = 50) adds half the spirit part while casting (29.88: the log's
+        -- 2.988 a tick); the 17.0 is 12.0 without Mana Spring Totem's buff (10494: 5 a second, up while the totem stands)
+        mana = 6250,
+        fsr = { 25.75, 12.0, auras = { [1238931] = { share = 0.5 }, [10494] = { mp5 = 5, energize = true } } },
         uptime = { "flame_shock" },
     },
-    -- wowsims/forever's Elemental build (builds/testing.build.json, talents 5500331023001351-05500001-053): the casts,
+    -- wowsims/forever's Elemental build (builds/default.build.json, talents 5500331023001351-05500001-053): the casts,
     -- the totems its pre-pull and list summon, at a caster's range. Mana Tide Totem and Water Shield are left out:
     -- the build lacks their Restoration talents, so wowsims never casts them.
     Elemental = {
@@ -331,11 +382,12 @@ local PACKS = {
             [1223033] = 3, -- Mindfulness (wowsims's tree; not in the DB2's Talent table)
         },
         weapon = { 40, 70, 3.0 },
-        -- wowsims's log (shaman_elemental.log, re-pin e2842f0a78: Windshaper Skyborne, was 5590 / 29.75 / 42.5 as a
-        -- Troll): 5650 mana, 31.13 a second while casting (OtherID 2 Tag 1, Mana Spring Totem and Mindfulness's share
-        -- included: 26.13 without the totem's 5) and 45.25 outside the five-second rule (Tag 2)
-        mana = 5650,
-        fsr = { 14.12, 26.13, share = 0.5, auras = { [10494] = { mp5 = 5 } } }, -- Mindfulness 3/3: 50% (wowsims's curve)
+        -- wowsims's log (shaman_elemental.log, re-pin ab0f00e4fc; 5950 / 31.31 / 45.62 at e4ef929e54): 6295 mana, 31.85
+        -- a second while casting (OtherID 2 Tag 1, 3.185 a tick: Mana Spring Totem and Mindfulness's share included;
+        -- 26.85 without the totem's 5, 2.685 a tick before it stands) and 45.10 outside the five-second rule (Tag 2,
+        -- 4.510 a tick), so the spirit part 45.10 - 31.85 = 13.25
+        mana = 6295,
+        fsr = { 13.25, 26.85, share = 0.5, auras = { [10494] = { mp5 = 5, energize = true } } }, -- Mindfulness 3/3: 50% (wowsims's curve)
         distance = 20, -- the build's distanceFromTarget: the shocks reach 20 yd
         uptime = { "flame_shock" },
     },
@@ -365,13 +417,15 @@ local function classData(H, C)
     X.magma = TOTEM.magma_totem[2] + 10 * T.improved_fire_nova.rank -- Trial by Fire: +10 s a rank (wowsims spell data)
     X.convection = T.convection.rank
     X.alacrity = ALACRITY[T.elemental_alacrity.rank] or 0
+    X.maelstromRank = T.maelstrom_weapon.rank
+    X.overload = T.lightning_overload.rank
+    X.windfury = windfuryIds()
     return X
 end
 
 local function content(name)
     local P = PACKS[name]
     local C = { PACK = P.pack, IDS = {} }
-    local truth -- the current world's us (hooks): a press is priced by its true auras
     C.SPEC = P.spec
 
     function C.character()
@@ -403,17 +457,20 @@ local function content(name)
     -- The class's world hooks on us, from the class file's aura IDs: our landed swing stacks Maelstrom Weapon; a hit
     -- that lands on us spends a Lightning Shield charge.
     local function hooks(_, us)
-        truth = us
         us.health, us.healthMax = 1e9, 1e9 -- never killed: see C.WORLD
         local A = class().auras
         local X = { aura = {} }
         for _, key in ipairs({ "maelstrom_weapon", "lightning_shield" }) do
             X.aura[key] = { id = A[key].id, duration = A[key].duration, max_stack = A[key].max_stack }
         end
+        X.maelstromRank, X.windfury = (P.talents or {})[408498], windfuryIds()
         local ls = A.lightning_shield.id
-        us.landed = function(W, act)
+        us.landed = function(W, act, hand)
             if act == "WOUND" then
                 maelstrom(W, us, X)
+                if hand == 1 then
+                    windfuryStrike(W, us, X)
+                end
             end
         end
         -- Improved Stormstrike's rank effect 2 (wowsims talents_enhancement.go:218-231): at 2/2 a dodge or parry of an
@@ -468,9 +525,9 @@ local function content(name)
 
     --- The resolved press of `key` from instance `H` (the oracle's: its state is true): the highest known rank's ID
     --- and every known rank's (a shock's with the other shock's: the client answers the shared cooldown on both), the
-    --- cost (Clearcasting and Maelstrom Weapon on the current world's us), the cooldown, GCD and cast time, the
+    --- cost (Clearcasting and Maelstrom Weapon on the world's us `e`), the cooldown, GCD and cast time, the
     --- mapping's effects. Raises "unmapped key".
-    function C.resolve(key, H)
+    function C.resolve(key, H, e)
         local m = M.MAP[key]
         if not m then
             error("unmapped key " .. tostring(key), 2)
@@ -491,11 +548,9 @@ local function content(name)
                 end
             end
         end
-        -- Clearcasting and Maelstrom Weapon from the world, not the oracle: the leveling brackets never step the oracle
-        if truth and truth.stopped then
-            truth = nil -- the world ended (its stop): a later press has no world to read
-        end
-        local auras = truth and truth.auras or {}
+        -- Clearcasting and Maelstrom Weapon from the world's us `e` (the loop's, at the press), not the oracle: the
+        -- leveling brackets never step the oracle; no world, no aura
+        local auras = e and e.auras or {}
         local cc = auras[X.aura.clearcasting.id]
         local mw = auras[X.aura.maelstrom_weapon.id] and auras[X.aura.maelstrom_weapon.id].stacks
         local em = auras[X.aura.elemental_mastery.id] ~= nil
@@ -520,6 +575,14 @@ local function content(name)
             refund = world.refundOf(H.Hekili.Class, key), -- an avoid gives back the kit's share (W.hit)
             outcomes = M.OUTCOMES[key], -- nil: the special melee tables
         }
+        if cast > 0 then -- a cast bar pays at its landing with the world's auras then (owner, L1383); checked at `cost`
+            local sf = S.talent.shamanistic_focus.rank > 0
+            p.price = function(_, w)
+                local stacks = w.auras[X.aura.maelstrom_weapon.id]
+                local free = w.auras[X.aura.clearcasting.id] ~= nil
+                return costOf(key, rank, free, stacks and stacks.stacks or 0, sf, X.convection)
+            end
+        end
         p.requires = function(W, e)
             if m.requires then
                 return m.requires(W, e, X)

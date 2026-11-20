@@ -79,6 +79,13 @@ local function AbilityLabel( key )
     return actionLabel( Registry.AbilityList()[ key ] )
 end
 
+-- The player-facing name of an ability's toggle, as the Require Toggle dropdown lists it (the raw key when unknown).
+local toggleLabels = {
+    cooldowns = L["Cooldowns"], minor_cooldowns = L["Minor CDs"], defensives = L["Defensives"],
+    interrupts = L["Interrupts"], potions = L["Potions"], custom1 = L["Custom 1"], custom2 = L["Custom 2"],
+}
+local function toggleLabel( key ) return toggleLabels[ key ] or key end
+
 local GetSpecialization = C_SpecializationInfo.GetSpecialization
 local GetSpecializationInfo = C_SpecializationInfo.GetSpecializationInfo
 
@@ -1333,6 +1340,22 @@ return end
                                 hidden = function () return _G["ElvUI"] == nil or notClassic() end,
                             },
 
+                            -- (windows design v6 §7, rulings 10, 19; L1315) Primary and AOE only (no entry elsewhere):
+                            -- sequences exist only in a display with this on; a change reloads the scripts (new keys,
+                            -- applied as a priority edit is)
+                            sequences = ( name == "Primary" or name == "AOE" ) and {
+                                type = "toggle",
+                                name = L["Sequences"],
+                                desc = L["When on, this display runs the priority's sequence and strict_sequence lines. When off, it skips them as if they were not in the priority. Free-form windows work either way.\n\nOn by default for Primary and AOE."],
+                                width = "full",
+                                order = 1.5,
+                                get = function() return Hekili.Scripts.SequencesOn( name ) end,
+                                set = function( _, val )
+                                    Hekili.DB.profile.displays[ name ].sequences = val
+                                    Hekili:LoadScripts()
+                                end,
+                            } or nil,
+
                             numIcons = {
                                 type = 'range',
                                 name = L["Icons Shown"],
@@ -2564,6 +2587,7 @@ do
         impControl.warnings = nil
     end
 
+    local SEQ_TEXT = { [":"] = ";", ["("] = "[", [")"] = "]" } -- a comment's text on a sequence line's own options
 
     function Hekili:ImportSimcAPL( name, source, apl, pack )
 
@@ -2620,10 +2644,21 @@ do
                         caption = caption:gsub( "%[h:(.-)%]", "|TInterface\\AddOns\\Hekili\\Textures\\%1:0|t" )
                         -- Replace "[<text>:<height>:<width>]" in the caption with the escape sequence for the atlas.
                         caption = caption:gsub( "%[(.-):(%d+):(%d+)%]", "|A:%1:%2:%3|a" )
-                        action = action .. ',caption=' .. caption .. ',description=' .. description
+                        comment = ',caption=' .. caption .. ',description=' .. description
                     else
                         -- Change commas to semicolons.
-                        action = action .. ',description=' .. comment:gsub( ",", ";" )
+                        comment = ',description=' .. comment:gsub( ",", ";" )
+                    end
+                    local head = action:match( "^([%w_]+)" )
+                    local at = ( head == "sequence" or head == "strict_sequence" ) and action:find( ":", 1, true )
+                    if at then
+                        -- (windows design §3.3) a sequence's own options sit before its first colon; a colon splits
+                        -- members and an unclosed ( hides the colons after it, so the text carries neither.
+                        -- shortcut: a caption's texture or atlas escape loses its colons here; keep them if sequence
+                        -- captions with icons are wanted.
+                        action = action:sub( 1, at - 1 ) .. comment:gsub( "[:()]", SEQ_TEXT ) .. action:sub( at )
+                    else
+                        action = action .. comment
                     end
                     comment = nil
                 end
@@ -2639,7 +2674,7 @@ do
         local output = {}
 
         for name, list in pairs( lists ) do
-            local import, warnings = self:ParseActionList( list )
+            local import, warnings = self:ParseActionList( list, true )
 
             if warnings then
                 AddWarning( format( L["The import for '%s' required some automated changes."], name ) )
@@ -2661,6 +2696,12 @@ do
 
                 count = count + 1
             end
+        end
+
+        -- (windows design v6 §3.4) the whole priority's windows: each error disables its line, with a warning
+        for _, e in ipairs( self.Scripts.CheckWindows( output, name ).errors ) do
+            e.entry.enabled = false
+            AddWarning( format( L["List '%s' line %d: %s: %s; entry disabled."], e.list, e.line, e.code, e.text ) )
         end
 
         local use_items_found = false
@@ -3066,7 +3107,7 @@ self:ForceUpdate( "SPEC_PACKAGE_CHANGED" )
                     table.wipe( toggles )
 
                     local t = Registry.Abilities()[ v ].toggle or "none"
-                    if t == "minor_cooldowns" then t = L["Minor CDs"] end
+                    t = toggleLabel( t )
 
                     toggles.none = L["None"]
                     toggles.default = format( L["Default |cffffd100(%s)|r"], t )
@@ -3201,7 +3242,7 @@ self:ForceUpdate( "SPEC_PACKAGE_CHANGED" )
                             table.wipe( toggles )
 
                             local t = Registry.Abilities()[ v ].toggle or "none"
-                            if t == "minor_cooldowns" then t = L["Minor CDs"] end
+                            t = toggleLabel( t )
 
                             toggles.none = L["None"]
                             toggles.default = format( L["Default |cffffd100(%s)|r"], t )
@@ -3488,7 +3529,7 @@ found = true end
                     table.wipe( toggles )
 
                     toggles.none = L["None"]
-                    toggles.default = ( Registry.Abilities()[ v ].toggle and format( L["Default |cffffd100(%s)|r"], Registry.Abilities()[ v ].toggle ) or L["Default |cffffd100(none)|r"] )
+                    toggles.default = ( Registry.Abilities()[ v ].toggle and format( L["Default |cffffd100(%s)|r"], toggleLabel( Registry.Abilities()[ v ].toggle ) ) or L["Default |cffffd100(none)|r"] )
                     toggles.cooldowns = L["Cooldowns"]
                     toggles.minor_cooldowns = L["Minor CDs"]
                     toggles.defensives = L["Defensives"]
@@ -3605,7 +3646,7 @@ found = true end
                             table.wipe( toggles )
 
                             toggles.none = L["None"]
-                            toggles.default = ( Registry.Abilities()[ v ].toggle and format( L["Default |cffffd100(%s)|r"], Registry.Abilities()[ v ].toggle ) or L["Default |cffffd100(none)|r"] )
+                            toggles.default = ( Registry.Abilities()[ v ].toggle and format( L["Default |cffffd100(%s)|r"], toggleLabel( Registry.Abilities()[ v ].toggle ) ) or L["Default |cffffd100(none)|r"] )
                             toggles.cooldowns = L["Cooldowns"]
                             toggles.minor_cooldowns = L["Minor CDs"]
                             toggles.defensives = L["Defensives"]
@@ -4437,6 +4478,8 @@ found = true end
 
                                             "|cFF00B4FFDefault|r: |cFFFFD10015 s|r\n\n"] ..
 
+                                            L["A separate Cooldowns, Defensives or Interrupts display with a longer Forecast Period makes the resource forecast run that far."] .. "\n\n" ..
+
                                             format( L["Current window: |cFF00FF00%s s|r"], window )
                                     end,
                                     fontSize = "medium",
@@ -4550,6 +4593,10 @@ found = true end
         newPackName = "",
         newPackSpec = "",
     }
+
+    local windowLine = { window = true, open_window = true, close_window = true, sequence = true, strict_sequence = true,
+        call_action_list = true, run_action_list = true,
+        restart_sequence = true }
 
     local nameMap = {
         call_action_list = "list_name",
@@ -4699,7 +4746,9 @@ found = true end
             data.use_while_casting = nil
         end
 
-        if option == "action" then
+        -- a window or sequence line, or the `windows` list, changes what the priority declares: a full load checks the
+        -- windows again (Scripts.lua CheckWindows)
+        if option == "action" or windowLine[ data.action ] or packControl.listName == "windows" then
             self:LoadScripts()
         else
             self:LoadScript( pack, packControl.listName, actionID )
@@ -5296,8 +5345,7 @@ found = true end
                                     desc = L["Copy Priority"],
                                     order = 0.26,
                                     width = 0.15,
-                                    image = GetAtlasFile( "communities-icon-addgroupplus" ),
-                                    imageCoords = GetAtlasCoords( "communities-icon-addgroupplus" ),
+                                    image = "Interface\\Addons\\Hekili\\Textures\\WhiteCopy",
                                     imageHeight = 20,
                                     imageWidth = 20,
                                     confirm = function () return L["Create a copy of this priority pack?"] end,
@@ -6083,7 +6131,7 @@ packControl.actionID = format( "%04d", id ) end
                                     desc = L["Captions are |cFFFF0000very|r short descriptions that can appear on the icon of a recommended ability.\n\n" ..
                                         "This can be useful for understanding why an ability was recommended at a particular time.\n\n" ..
                                         "Requires Captions to be enabled on each display."],
-                                    order = 3.202,
+                                    order = 3.71,
                                     width = 1.5,
                                     validate = function( info, val )
                                         val = val:trim()
@@ -6103,7 +6151,7 @@ packControl.actionID = format( "%04d", id ) end
                                     type = "input",
                                     name = L["Label"],
                                     desc = L["Text shown on the recommendation while the Label Condition (if any) holds, e.g. a downranking note."],
-                                    order = 3.203,
+                                    order = 3.72,
                                     width = 1.5,
                                     hidden = function() return hideNoAbility( pack ) end,
                                 },
@@ -6112,7 +6160,7 @@ packControl.actionID = format( "%04d", id ) end
                                     type = "input",
                                     name = L["Label Condition"],
                                     desc = L["If entered, the Label shows only while this is true."],
-                                    order = 3.2031,
+                                    order = 3.73,
                                     width = "full",
                                     multiline = 2,
                                     dialogControl = "HekiliCustomEditor",
@@ -6126,7 +6174,7 @@ packControl.actionID = format( "%04d", id ) end
                                     type = "input",
                                     name = L["Icon"],
                                     desc = L["A texture file ID or path to show on the recommendation in place of the ability's icon while the Icon Condition (if any) holds. A path is resolved when the list loads; a bare file ID is not checked."],
-                                    order = 3.2032,
+                                    order = 3.74,
                                     width = 1.5,
                                     hidden = function() return hideNoAbility( pack ) end,
                                 },
@@ -6144,7 +6192,7 @@ packControl.actionID = format( "%04d", id ) end
                                     end,
                                     imageWidth = 24,
                                     imageHeight = 24,
-                                    order = 3.2033,
+                                    order = 3.75,
                                     width = 1.5,
                                     hidden = function() return hideNoAbility( pack ) or not GetListEntry( pack ).icon end,
                                 },
@@ -6153,7 +6201,7 @@ packControl.actionID = format( "%04d", id ) end
                                     type = "input",
                                     name = L["Icon Condition"],
                                     desc = L["If entered, the Icon shows only while this is true."],
-                                    order = 3.2034,
+                                    order = 3.76,
                                     width = "full",
                                     multiline = 2,
                                     dialogControl = "HekiliCustomEditor",
@@ -6161,6 +6209,12 @@ packControl.actionID = format( "%04d", id ) end
                                         return Hekili.Engine.Evaluate( pack, packControl.listName, tonumber( packControl.actionID ), "icon_if", {} )
                                     end,
                                     hidden = function() return hideNoAbility( pack ) end,
+                                },
+
+                                condHeader = {
+                                    type = "header",
+                                    name = L["Condition"],
+                                    order = 3.204,
                                 },
 
                                 description = {
@@ -6331,6 +6385,13 @@ n = tonumber( n ) + 1
                                         local e = GetListEntry( pack )
                                         return e.action ~= "variable" or e.op == "reset" or e.op == "ceil" or e.op == "floor"
                                     end,
+                                },
+
+                                displayHeader = {
+                                    type = "header",
+                                    name = L["Display"],
+                                    order = 3.7,
+                                    hidden = function() return hideNoAbility( pack ) end,
                                 },
 
                                 showModifiers = {
@@ -6785,16 +6846,20 @@ do
 
         if option == 'value' then
             if bind == 'pause' then self:TogglePause()
-            elseif bind == 'mode' then toggle.value = val
+            elseif bind == 'mode' then
+                toggle.value = val
+                if WeakAuras and WeakAuras.ScanEvents then WeakAuras.ScanEvents( "HEKILI_TOGGLE", "mode", val ) end
             else self:FireToggle( bind ) end
 
         elseif option == 'type' then
             toggle.type = val
+            local was = toggle.value
 
             if val == "AutoSingle" and not ( toggle.value == "automatic" or toggle.value == "single" ) then toggle.value = "automatic" end
             if val == "AutoDual" and not ( toggle.value == "automatic" or toggle.value == "dual" ) then toggle.value = "automatic" end
             if val == "SingleAOE" and not ( toggle.value == "single" or toggle.value == "aoe" ) then toggle.value = "single" end
             if val == "ReactiveDual" and toggle.value ~= "reactive" then toggle.value = "reactive" end
+            if toggle.value ~= was and WeakAuras and WeakAuras.ScanEvents then WeakAuras.ScanEvents( "HEKILI_TOGGLE", bind, toggle.value ) end
 
         elseif option == 'key' then
             for t, data in pairs( p.toggles ) do
@@ -7898,7 +7963,7 @@ do
                         type = "execute",
                         name = L["Reset"],
                         order = 4,
-                        width = 0.6,
+                        width = 0.8,
                         func = function()
                             local spec = Status.specID and Hekili.DB.profile.specs[ Status.specID ]
                             if type( spec ) == "table" then spec.cdm = nil end
@@ -7994,7 +8059,7 @@ do
                                 type = "description",
                                 name = function()
                                 return format( L["|cFFFFD100When should I do it|r\n" ..
-                                "You should generate the snapshot when the issue is actively happening. If you look at the recommendations and think \"this seems wrong\", that's when you should do it. Most of the time, issues can be recreated at training dummies." ..
+                                "You should generate the snapshot when the issue is actively happening. If you look at the recommendations and think \"this seems wrong\", that's when you should do it. Most of the time, issues can be recreated on an enemy in the open world." ..
                                 "\n\nFor example, if the issue usually happens 20 seconds into your rotation, then an out-of-combat prepull snapshot isn't going to help the Dev or other community members diagnose and fix the issue." ..
                                 "\n\n|cFFFFD100How do I do it|r\n" ..
                                 "You can generate a snapshot one of 2 ways:\n" ..
@@ -8122,8 +8187,9 @@ function Hekili:TotalRefresh( noOptions )
     self:OverrideBinds()
 
     if WeakAuras and WeakAuras.ScanEvents then
-        for name, toggle in pairs( Hekili.DB.profile.toggles ) do
-            WeakAuras.ScanEvents( "HEKILI_TOGGLE", name, toggle.value )
+        for name in pairs( Hekili.DB.profile.toggles ) do
+            local value = self:GetToggleState( name ) -- snapshot (a keybinding, no state) has none: not sent
+            if value ~= nil then WeakAuras.ScanEvents( "HEKILI_TOGGLE", name, value ) end
         end
     end
 
@@ -8614,8 +8680,15 @@ do
         cancel_buff = "buff_name",
         open_window = "window_name",
         close_window = "window_name",
+        window = "window_name", -- the `windows` list's declarations (windows design v6 §3.1)
+        sequence = "window_name", -- a sequence names its own window (windows design v6 §3.3)
+        strict_sequence = "window_name",
+        restart_sequence = "window_name",
         op = "op",
     }
+
+    -- (windows design v6 §3.3) the sequence entries: not abilities, handled by the walk (Engine/Sim/Core.lua)
+    local SEQ_LINE = { sequence = true, strict_sequence = true, restart_sequence = true }
 
     -- (re-pin design §3a) a window line's name: one any spec of the loaded class registered (RegisterWindow)
     local function knownWindow( name )
@@ -8626,7 +8699,174 @@ do
         return false
     end
 
-    function Hekili:ParseActionList( list )
+    -- One entry's text (after `actions...=/`) into its table; `line`: its line number for the warnings.
+    local function parseEntry( i, line, warnings, whole )
+        local components, unclosed = splitOptions( i )
+        local result = {}
+
+        if unclosed then
+            insert( warnings, format( L["Line %s: Unclosed '(' in '%s'; split at every comma."], line, i ) )
+        end
+
+        for a, str in ipairs( components ) do
+            -- First element is the action, if supported.
+            if a == 1 then
+                local ability = str:trim()
+
+                if ability and ( ability == "use_item" or ability == "window" or SEQ_LINE[ ability ] or Registry.Abilities()[ ability ] ) then
+                    result.action = ability
+                elseif not ignore_actions[ ability ] then
+                    insert( warnings, format( L["Line %s: Unsupported action '%s'."], line, ability ) )
+                    result.action = ability
+                end
+
+            else
+                local key, value = str:match( "^(.-)=(.-)$" )
+
+                if key and value then
+                    -- TODO:  Automerge multiple criteria.
+                    if key == 'if' or key == 'condition' then key = 'criteria' end
+
+                    if key == 'criteria' or key == 'target_if' or key == 'value' or key == 'value_else' or key == 'sec' or key == 'wait' or key == 'strict_if' or key == 'label_if' or key == 'icon_if' then
+                        value = Sanitize( 'c', value, line, warnings )
+                        value = SpaceOut( value )
+                    end
+
+                    -- an empty value is no option: label= would draw nothing, icon= would name no file, and an
+                    -- empty label_if= or icon_if= would compile `return ` (Scripts.lua)
+                    if value == "" and ( key == 'label' or key == 'label_if' or key == 'icon' or key == 'icon_if' ) then value = nil end
+
+                    if key == 'caption' then
+                        value = value:gsub( "||", "|" ):gsub( ";", "," )
+                    end
+
+                    if key == 'description' then
+                        value = value:gsub( ";", "," )
+                    end
+
+                    result[ key ] = value
+                end
+            end
+        end
+
+        if nameMap[ result.action ] then
+            result[ nameMap[ result.action ] ] = result.name
+            result.name = nil
+        end
+
+        if not whole and ( result.action == "open_window" or result.action == "close_window" ) and not knownWindow( result.window_name ) then
+            insert( warnings, format( L["Line %s: Unknown window '%s'; entry disabled."], line, tostring( result.window_name ) ) )
+            result.enabled = false
+        end
+
+        if result.target_if then result.target_if = result.target_if:gsub( "min:", "" ):gsub( "max:", "" ) end
+
+        if result.for_next then result.for_next = tonumber( result.for_next ) end
+        if result.cycle_targets then result.cycle_targets = tonumber( result.cycle_targets ) end
+        if result.other_target then result.other_target = tonumber( result.other_target ) end
+        if result.max_energy then result.max_energy = tonumber( result.max_energy ) end
+        if result.interrupt_global then result.interrupt_global = tonumber( result.interrupt_global ) end
+
+        if result.use_off_gcd then result.use_off_gcd = tonumber( result.use_off_gcd ) end
+        if result.display_below then
+            local percent = tonumber( result.display_below )
+            if not percent or percent <= 0 or percent >= 100 or percent % 1 ~= 0 then
+                result.enabled = false
+                result.display_below = nil
+            else
+                result.display_below = percent
+            end
+        end
+        if result.focus then
+            local tier = tonumber( result.focus )
+            if not tier or tier < 0 or tier % 1 ~= 0 then
+                insert( warnings, format( L["Line %s: focus=%s is not a tier (a whole number, 1 highest); ignored."], line, result.focus ) )
+                tier = nil
+            elseif tier == 0 then
+                tier = nil -- focus=0 is off
+            end
+            result.focus = tier
+        end
+        if result.use_while_casting then result.use_while_casting = tonumber( result.use_while_casting ) end
+        if result.strict then result.strict = tonumber( result.strict ) end
+        if result.moving then
+            result.enable_moving = true
+            result.moving = tonumber( result.moving )
+        end
+
+        if result.target_if and not result.criteria then
+            result.criteria = result.target_if
+            result.target_if = nil
+        end
+
+        if result.action == "use_item" then
+            if result.effect_name and Registry.Abilities()[ result.effect_name ] then
+                result.action = Registry.Abilities()[ result.effect_name ].key
+            elseif result.name and Registry.Abilities()[ result.name ] then
+                result.action = result.name
+            elseif ( result.slot or result.slots ) and Registry.Abilities()[ result.slot or result.slots ] then
+                result.action = result.slot or result.slots
+            end
+
+            if result.action == "use_item" then
+                insert( warnings, format( L["Line %s: Unsupported use_item action [ %s]; entry disabled."], line, ( result.effect_name or result.name or L["unknown"] ) ) )
+                result.action = nil
+                result.enabled = false
+            end
+        end
+
+        if result.action == "wait_for_cooldown" then
+            if result.name then
+                result.action = "wait"
+                result.sec = "cooldown." .. result.name .. ".remains"
+                result.name = nil
+            else
+                insert( warnings, format( L["Line %s: Unable to convert wait_for_cooldown,name=X to wait,sec=cooldown.X.remains; entry disabled."], line ) )
+                result.action = "wait"
+                result.enabled = false
+            end
+        end
+
+        if result.action == 'use_items' and ( result.slot or result.slots ) then
+            result.action = result.slot or result.slots
+        end
+
+        if result.action == 'variable' and not result.op then
+            result.op = 'set'
+        end
+
+        if result.cancel_if and not result.interrupt_if then
+            result.interrupt_if = result.cancel_if
+            result.cancel_if = nil
+        end
+
+        return result
+    end
+
+    -- (windows design v6 §3.3) `sequence` / `strict_sequence` take their options in the first colon-separated token
+    -- and one member per further token, each with its own options after a comma (SimC's syntax). Colons inside
+    -- parentheses stay. Returns nil for any other line.
+    local SEQ_ACTION = { sequence = true, strict_sequence = true }
+    local function splitSequence( i )
+        local head = i:match( "^%s*([%w_]+)" )
+        if not SEQ_ACTION[ head ] then return nil end
+        local out, depth, from = {}, 0, 1
+        for k = 1, #i do
+            local c = i:sub( k, k )
+            if c == "(" then depth = depth + 1
+            elseif c == ")" then depth = depth - 1
+            elseif c == ":" and depth == 0 then
+                insert( out, i:sub( from, k - 1 ) )
+                from = k + 1
+            end
+        end
+        insert( out, i:sub( from ) )
+        return out
+    end
+
+    -- `whole`: the caller checks the whole priority's windows afterwards (Scripts.lua CheckWindows: a name the
+    -- `windows` list declares is known there), so a window line's name is not checked against the class here.
+    function Hekili:ParseActionList( list, whole )
         local line, times = 0, 0
         local output, warnings, missing = {}, parseData.warnings, parseData.missing
 
@@ -8695,143 +8935,24 @@ do
                 end
             end
 
-            local components, unclosed = splitOptions( i )
-            local result = {}
-
-            if unclosed then
-                insert( warnings, format( L["Line %s: Unclosed '(' in '%s'; split at every comma."], line, i ) )
-            end
-
-            for a, str in ipairs( components ) do
-                -- First element is the action, if supported.
-                if a == 1 then
-                    local ability = str:trim()
-
-                    if ability and ( ability == "use_item" or Registry.Abilities()[ ability ] ) then
-                        result.action = ability
-                    elseif not ignore_actions[ ability ] then
-                        insert( warnings, format( L["Line %s: Unsupported action '%s'."], line, ability ) )
-                        result.action = ability
+            local tokens = splitSequence( i )
+            local result = parseEntry( tokens and tokens[ 1 ] or i, line, warnings, whole )
+            if tokens then
+                -- the members: abilities only (an item, a potion, a trinket slot or `wait` is no step, §9)
+                result.steps = {}
+                for k = 2, #tokens do
+                    local m = parseEntry( tokens[ k ], line, warnings, whole )
+                    local ab = m.action and Registry.Abilities()[ m.action ]
+                    if not ab or ab.item or m.action == "potion" or m.action == "wait" or m.action == "trinket1" or m.action == "trinket2" or SEQ_ACTION[ m.action ] then
+                        insert( warnings, format( L["Line %s: sequence member '%s' is not an ability; entry disabled."], line, tostring( m.action ) ) )
+                        result.enabled = false
                     end
-
-                else
-                    local key, value = str:match( "^(.-)=(.-)$" )
-
-                    if key and value then
-                        -- TODO:  Automerge multiple criteria.
-                        if key == 'if' or key == 'condition' then key = 'criteria' end
-
-                        if key == 'criteria' or key == 'target_if' or key == 'value' or key == 'value_else' or key == 'sec' or key == 'wait' or key == 'strict_if' or key == 'label_if' or key == 'icon_if' then
-                            value = Sanitize( 'c', value, line, warnings )
-                            value = SpaceOut( value )
-                        end
-
-                        -- an empty value is no option: label= would draw nothing, icon= would name no file, and an
-                        -- empty label_if= or icon_if= would compile `return ` (Scripts.lua)
-                        if value == "" and ( key == 'label' or key == 'label_if' or key == 'icon' or key == 'icon_if' ) then value = nil end
-
-                        if key == 'caption' then
-                            value = value:gsub( "||", "|" ):gsub( ";", "," )
-                        end
-
-                        if key == 'description' then
-                            value = value:gsub( ";", "," )
-                        end
-
-                        result[ key ] = value
-                    end
+                    insert( result.steps, m )
                 end
-            end
-
-            if nameMap[ result.action ] then
-                result[ nameMap[ result.action ] ] = result.name
-                result.name = nil
-            end
-
-            if ( result.action == "open_window" or result.action == "close_window" ) and not knownWindow( result.window_name ) then
-                insert( warnings, format( L["Line %s: Unknown window '%s'; entry disabled."], line, tostring( result.window_name ) ) )
-                result.enabled = false
-            end
-
-            if result.target_if then result.target_if = result.target_if:gsub( "min:", "" ):gsub( "max:", "" ) end
-
-            if result.for_next then result.for_next = tonumber( result.for_next ) end
-            if result.cycle_targets then result.cycle_targets = tonumber( result.cycle_targets ) end
-            if result.other_target then result.other_target = tonumber( result.other_target ) end
-            if result.max_energy then result.max_energy = tonumber( result.max_energy ) end
-            if result.interrupt_global then result.interrupt_global = tonumber( result.interrupt_global ) end
-
-            if result.use_off_gcd then result.use_off_gcd = tonumber( result.use_off_gcd ) end
-            if result.display_below then
-                local percent = tonumber( result.display_below )
-                if not percent or percent <= 0 or percent >= 100 or percent % 1 ~= 0 then
-                    result.enabled = false
-                    result.display_below = nil
-                else
-                    result.display_below = percent
-                end
-            end
-            if result.focus then
-                local tier = tonumber( result.focus )
-                if not tier or tier < 0 or tier % 1 ~= 0 then
-                    insert( warnings, format( L["Line %s: focus=%s is not a tier (a whole number, 1 highest); ignored."], line, result.focus ) )
-                    tier = nil
-                elseif tier == 0 then
-                    tier = nil -- focus=0 is off
-                end
-                result.focus = tier
-            end
-            if result.use_while_casting then result.use_while_casting = tonumber( result.use_while_casting ) end
-            if result.strict then result.strict = tonumber( result.strict ) end
-            if result.moving then
-                result.enable_moving = true
-                result.moving = tonumber( result.moving )
-            end
-
-            if result.target_if and not result.criteria then
-                result.criteria = result.target_if
-                result.target_if = nil
-            end
-
-            if result.action == "use_item" then
-                if result.effect_name and Registry.Abilities()[ result.effect_name ] then
-                    result.action = Registry.Abilities()[ result.effect_name ].key
-                elseif result.name and Registry.Abilities()[ result.name ] then
-                    result.action = result.name
-                elseif ( result.slot or result.slots ) and Registry.Abilities()[ result.slot or result.slots ] then
-                    result.action = result.slot or result.slots
-                end
-
-                if result.action == "use_item" then
-                    insert( warnings, format( L["Line %s: Unsupported use_item action [ %s]; entry disabled."], line, ( result.effect_name or result.name or L["unknown"] ) ) )
-                    result.action = nil
+                if #result.steps == 0 then
+                    insert( warnings, format( L["Line %s: a sequence needs at least one member; entry disabled."], line ) )
                     result.enabled = false
                 end
-            end
-
-            if result.action == "wait_for_cooldown" then
-                if result.name then
-                    result.action = "wait"
-                    result.sec = "cooldown." .. result.name .. ".remains"
-                    result.name = nil
-                else
-                    insert( warnings, format( L["Line %s: Unable to convert wait_for_cooldown,name=X to wait,sec=cooldown.X.remains; entry disabled."], line ) )
-                    result.action = "wait"
-                    result.enabled = false
-                end
-            end
-
-            if result.action == 'use_items' and ( result.slot or result.slots ) then
-                result.action = result.slot or result.slots
-            end
-
-            if result.action == 'variable' and not result.op then
-                result.op = 'set'
-            end
-
-            if result.cancel_if and not result.interrupt_if then
-                result.interrupt_if = result.cancel_if
-                result.cancel_if = nil
             end
 
             insert( output, result )
@@ -8881,6 +9002,7 @@ function Hekili:TogglePause( ... )
 
     self:Print( not self.Pause and L["UNPAUSED."] or L["PAUSED."] )
     if Hekili.DB.profile.notifications.enabled then self:Notify( not self.Pause and L["UNPAUSED"] or L["PAUSED"] ) end
+    if WeakAuras and WeakAuras.ScanEvents then WeakAuras.ScanEvents( "HEKILI_TOGGLE", "pause", self.Pause ) end
 
 end
 
@@ -8946,12 +9068,13 @@ do
         end,
     } )
 
+    --- Sets the display mode; returns true when `mode` is a mode (else prints why and changes nothing).
     function Hekili:SetMode( mode )
         mode = lower( mode:trim() )
 
         if not modeIndex[ mode ] then
             Hekili:Print( L["SetMode failed:  '%s' is not a valid mode.\nTry |cFFFFD100automatic|r, |cFFFFD100single|r, |cFFFFD100aoe|r, |cFFFFD100dual|r, or |cFFFFD100reactive|r."] )
-            return
+            return false
         end
 
         self.DB.profile.toggles.mode.value = mode
@@ -8961,6 +9084,7 @@ do
         else
             self:Print( format( L["%s mode activated."], modeIndex[ mode ][2] ) )
         end
+        return true
     end
 
     function Hekili:FireToggle( name, explicitState )
@@ -8971,7 +9095,7 @@ do
         -- Handle mode toggle with explicitState if provided
         if name == 'mode' then
             if explicitState then
-                self:SetMode( explicitState )
+                if not self:SetMode( explicitState ) then return end -- rejected: no event, nothing changed
             else
                 -- If no explicit state, cycle through available modes
                 local current = toggle.value
@@ -9035,7 +9159,10 @@ do
         self:ForceUpdate( "HEKILI_TOGGLE", true )
     end
 
+    --- A toggle's value: the mode's name for `mode`, true while paused for `pause`, else the toggle's on/off (nil for
+    --- `snapshot` and unknown names). Public, read-only; HEKILI_TOGGLE sends the same value.
     function Hekili:GetToggleState( name, class )
+        if name == "pause" then return self.Pause and true or false end
         local t = name and self.DB.profile.toggles[ name ]
 
         return t and t.value

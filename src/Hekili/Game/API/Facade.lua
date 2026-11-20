@@ -408,7 +408,7 @@ kept("UnitHealth", "virtual", function(unit)
         return 0
     end
     return 100 -- keeps the enemy scan's UnitHealth( unit ) > 1 (Targets.lua:407, 484) meaningful
-end, "target secret always [W PR14]; Health()")
+end, "target secret always [W PR14], player secret in combat (owner L1461); Health()")
 
 -- The player's maximum: the raw read while plain, the belief's when secret; another unit's (secret always) the belief's,
 -- without a call. Allocates nothing.
@@ -1119,9 +1119,9 @@ kept("C_Spell.GetSpellCharges", "hybrid", function(spellID)
 end, "times secret in combat [W §4 cooldowns]; Charges()")
 
 -- Range by the known rank (audit H10): the engine asks by an ability's ID; the client is asked by the rank the
--- spellbook knows (an unknown rank or a spell without a range answers nil, read as in range). A secret answer is nil
--- with a second value true, so a reader can tell it from the client's plain nil (which also answers a target of a type
--- the spell cannot hit while the type reads secret, L238).
+-- spellbook knows (an unknown rank or a spell without a range answers nil: in range for the range filter, a wrong
+-- target for usable_on). A secret answer is nil with a second value true, so a reader can tell it from the client's
+-- plain nil (which also answers a target of a type the spell cannot hit while the type reads secret, L238).
 local realIsSpellInRange = resolve("C_Spell.IsSpellInRange")
 kept("C_Spell.IsSpellInRange", "hybrid", function(spellID, unit)
     local r = realIsSpellInRange and realIsSpellInRange(VS.KnownID(spellID), unit)
@@ -1130,7 +1130,7 @@ kept("C_Spell.IsSpellInRange", "hybrid", function(spellID, unit)
         return nil, true
     end
     return r
-end, "plain [W PR7]; asked by the known rank's ID (KnownID); a secret answer is nil, true (in range)")
+end, "plain [W PR7]; by the known rank (KnownID); secret: nil, true (filter: in range; usable_on: unconfirmed)")
 
 kept("C_Spell.GetSpellCastCount", "virtual", zero, "flagged SecretWhenCooldownsRestricted; unprobed, unused")
 kept("C_Spell.GetSpellLossOfControlCooldown", "virtual", nothing, "absent on Forever")

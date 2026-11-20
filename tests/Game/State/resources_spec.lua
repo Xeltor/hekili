@@ -579,6 +579,55 @@ describe("resources", function()
             poll(105)
             assert.are.equal(0, VS.Regen(RAGE, 105).est)
         end)
+
+        -- ledger L1289: a read equal to the seed is still news for the band (the build's +- REGEN_SPREAD)
+        for _, rate in ipairs({ 10, 12 }) do
+            it(("narrows the seed's band to a read of %s (seed 10)"):format(rate), function()
+                api.ctl.regen[ENERGY] = { rate, rate }
+                poll(105)
+                local g = VS.Regen(ENERGY, 105)
+                assert.are.same({ rate, rate, rate }, { g.lo, g.est, g.hi })
+                poll(110) -- the same rate on a closed band is no news: not taken again
+                assert.are.equal(105, I.res.readT[1])
+            end)
+        end
+
+        for _, read in ipairs({ { 15, 3 }, { 17, 4 } }) do
+            it(
+                ("narrows an `fsr` slot's two bands to a read of %s / %s (seed 15 / 3)"):format(read[1], read[2]),
+                function()
+                    boot({
+                        abilities = {},
+                        abilityIds = {},
+                        abilitySlot = {},
+                        resources = {
+                            {
+                                key = "mana",
+                                type = 0,
+                                token = "MANA",
+                                max = 1000,
+                                rest = true,
+                                fsr = { spirit = 12, mp5 = 3 },
+                            },
+                        },
+                        auras = {},
+                        auraIds = {},
+                        talents = {},
+                        units = { "player", "target" },
+                    })
+                    api = I.api
+                    VS.Start(api)
+                    api.ctl.regen[0] = read
+                    poll(105)
+                    local R = I.res
+                    local sp = read[1] - read[2]
+                    assert.are.same(
+                        { read[2], read[2], read[2], sp, sp, sp },
+                        { R.regL[1], R.regE[1], R.regH[1], R.spL[1], R.spE[1], R.spH[1] }
+                    )
+                end
+            )
+        end
     end)
 
     describe("a swing-paid resource (rage, 9 a main-hand swing)", function()
@@ -987,6 +1036,102 @@ describe("resources", function()
                 obs(Obs.Swing, 5, 1, 0, 3)
                 I.Fold(5, false)
                 within(9 * 1.2, VS.Power(fs.RAGE, 5).est)
+            end)
+        end)
+
+        -- L1456 (i): a swing entry's `width` is the half-width of its value, a random part the belief cannot see (a
+        -- proc's expected gain): the floor steps without it, the top with it, the estimate on the value.
+        describe("a swing value's width (swingWidth)", function()
+            local function widths(main, off)
+                local def = fs.def(fs.new(9))
+                def.resources[1].swingWidth, def.resources[1].swingOff = main, off and 4.5 or nil
+                def.resources[1].swingOffWidth = off
+                boot(def)
+                I.res.scale[1] = 1.2
+                I.res.hi0[1] = 0 -- the top from 0 too (it starts at the maximum)
+            end
+
+            it("steps lo by (value - width) and hi by (value + width), each scaled; est by the value", function()
+                widths(2, 1)
+                local sp = I.res.spread[1]
+                obs(Obs.Swing, 5, 1, 2.6, 1)
+                I.Fold(5, false)
+                local r = VS.Power(fs.RAGE, 5)
+                within(9 * 1.2, r.est)
+                within(7 * (1.2 - sp), r.lo)
+                within(11 * (1.2 + sp), r.hi)
+                obs(Obs.Swing, 5.5, 2, 2.6, 1) -- the off hand: its own width
+                I.Fold(5.5, false)
+                r = VS.Power(fs.RAGE, 5.5)
+                within((9 + 4.5) * 1.2, r.est)
+                within((7 + 3.5) * (1.2 - sp), r.lo)
+            end)
+
+            it("lifts lo by the step without the width when a provider's assumed hit is confirmed", function()
+                widths(2)
+                local R, sp = I.res, I.res.spread[1]
+                obs(Obs.Swing, 5, 1, 3, 5) -- record 3: assumed (est and hi only)
+                I.Fold(5, false)
+                assert.are.equal(0, R.lo0[1])
+                obs(Obs.Swing, 5, 1, 3, 7) -- its row
+                I.Fold(5.1, false)
+                within(7 * (1.2 - sp), R.lo0[1])
+                within(9 * 1.2, R.est0[1])
+            end)
+
+            it("judges a landed swing missed only by a short answer under the floor without the width", function()
+                local function missed(w)
+                    widths(w)
+                    local R = I.res
+                    R.scale[1] = 1
+                    R.est0[1], R.lo0[1], R.hi0[1] = 5, 5, 5
+                    obs(Obs.Swing, 10, 1, 2.6, 4) -- the swing: its floor before, 5
+                    obs(Obs.Usable, 10.5, I.ab.bySpell[fs.SPENDER_A], 0, 1) -- short of 10, once the swing shows
+                    I.Fold(10.5, false)
+                    return I.Missed(1, 10)
+                end
+                assert.is_true(missed(nil)) -- 5 + 9 x 0.98 > 10: a landed swing would have made it usable
+                assert.is_false(missed(4)) -- 5 + 5 x 0.98 < 10: a landed swing without the proc stays short
+            end)
+
+            it("judges a yes a hand's gain only past the other hand's step with its proc", function()
+                -- floor 6; main 9 +-2 at 5.1, off 4.5 +-1 at 4.8, both pending. A yes at spender_a's 10 is past 6 + the
+                -- off hand's proc-free step (3.5) but not past 6 + its step with the proc (5.5): the off hand alone may
+                -- have paid it (main avoided), so no hand's low step lifts the floor (L1456 i, review I2)
+                widths(2, 1)
+                local R, A = I.res, I.ab.bySpell[fs.SPENDER_A]
+                R.scale[1] = 1
+                R.est0[1], R.lo0[1], R.hi0[1] = 6, 6, 30
+                obs(Obs.Swing, 4.8, 2, 1.8, 4)
+                obs(Obs.Swing, 5.1, 1, 2.6, 4)
+                I.Fold(5.1, false)
+                obs(Obs.Usable, 5.3, A, 1, 0)
+                I.Fold(5.3, false)
+                assert.is_true(R.lo0[1] <= 10 + I.EPS, "lo " .. R.lo0[1]) -- the rung, not 6 + 7 x 0.98
+            end)
+
+            it("pins a swing's crossing to one value step, measured at its midpoint: no width (review M1)", function()
+                widths(2)
+                local R, A = I.res, I.ab.bySpell[fs.SPENDER_A]
+                R.scale[1] = 1
+                R.est0[1], R.lo0[1], R.hi0[1] = 5, 5, 20
+                obs(Obs.Usable, 10, A, 0, 1) -- short of 10
+                I.Fold(10, false)
+                obs(Obs.Usable, 11, A, 1, 0) -- usable at the same cost, no gain of ours: a swing crossed it
+                I.Fold(11, false)
+                local step = 9 * (1 + R.spread[1])
+                within(10, R.lo0[1])
+                within(10 + step, R.hi0[1])
+                within(10 + step / 2, R.pinV[1])
+            end)
+
+            it("changes nothing for a swing entry without `width`", function()
+                widths(nil)
+                obs(Obs.Swing, 5, 1, 2.6, 1)
+                I.Fold(5, false)
+                local r = VS.Power(fs.RAGE, 5)
+                within(9 * (1.2 - I.res.spread[1]), r.lo)
+                within(9 * (1.2 + I.res.spread[1]), r.hi)
             end)
         end)
 
@@ -2126,6 +2271,47 @@ describe("resources", function()
             read(20, 400 + 5 * 24 + 5 * 44) -- the model's own answer: no news for either part
             within(12, I.res.regE[1])
             within(10, I.res.spE[1])
+        end)
+
+        -- CN23: an `mp5Mult` entry multiplies the gear and buff MP5 (the learned mp5 part and every other entry's `mp5`)
+        -- but not an `energize` entry's mp5, which ticks its own amount (wowsims e4ef929e54 mana.go:176-183
+        -- multipliedManaRegen: ((MP5 + spirit) x I - EnergizeMP5 / 5 x (I - 1)) x mult).
+        it("multiplies the gear and buff MP5 by an `mp5Mult` entry, an `energize` entry's mp5 at x 1", function()
+            shaped({ spirit = 10, mp5 = 12, share = 0.5 }, {
+                { aura = "surge", spirit = 5, share = 1, mp5Mult = 5 },
+                { aura = "focus", mp5 = 2 },
+                { aura = "spring", mp5 = 3, energize = true },
+            })
+            read(10, 500)
+            I.ResourceShift(1, -100, 10, Obs.CastSuccess) -- the window to 15
+            I.AuraModel(1, 2, 10, 50, 1, 10, 0) -- focus up 10 to 50
+            I.AuraModel(1, 3, 10, 50, 1, 10, 0) -- spring up 10 to 50
+            -- without surge: M + focus + spring + c x S inside, M + focus + spring + S outside
+            assert.are.same({ 17, 27 }, { VS.Regen(MANA, 12).est, VS.Regen(MANA, 16).est })
+            I.AuraModel(1, 1, 20, 40, 1, 20, 0) -- surge up 20 to 40
+            I.ResourceShift(1, -10, 20, Obs.CastSuccess) -- the window to 25
+            -- 5 x (M + focus + S) + spring, in and out of the window: 5 x (2 + 2 + 20) + 3
+            assert.are.same({ 123, 123 }, { VS.Regen(MANA, 22).est, VS.Regen(MANA, 26).est })
+            assert.are.same({ 17, 27 }, { VS.Regen(MANA, 41, VS.CASTING).est, VS.Regen(MANA, 41).est }) -- surge gone
+        end)
+
+        it("multiplies the learned mp5 part alone by an `mp5Mult` entry with no `spirit`", function()
+            shaped({ spirit = 10, mp5 = 12, share = 0.5 }, { { aura = "surge", mp5Mult = 2 } })
+            read(10, 500)
+            I.ResourceShift(1, -100, 10, Obs.CastSuccess) -- the window to 15
+            I.AuraModel(1, 1, 10, 40, 1, 10, 0) -- surge up 10 to 40
+            -- inside 2 x M + c x S = 4 + 10, outside 2 x M + S = 4 + 20
+            assert.are.same({ 14, 24 }, { VS.Regen(MANA, 12).est, VS.Regen(MANA, 16).est })
+        end)
+
+        it("keeps the stored regen split when an out-of-combat read lands under an `mp5Mult` aura", function()
+            shaped({ spirit = 10, mp5 = 12, share = 0.5 }, { { aura = "surge", mp5Mult = 2 } })
+            I.AuraModel(1, 1, 10, 30, 1, 10, 0) -- up 10 to 30
+            local before = { I.res.regE[1], I.res.spE[1], I.res.decl[1], I.res.spDecl[1] }
+            obs(Obs.Read, 12, 1, 24, I.ReadOf.Regen) -- the game's pair scales the mp5 part: no news
+            obs(Obs.Read, 12, 1, 10, I.ReadOf.RegenSpirit)
+            I.Fold(12, false)
+            assert.are.same(before, { I.res.regE[1], I.res.spE[1], I.res.decl[1], I.res.spDecl[1] })
         end)
 
         it("runs a function that raised at the build again at the next combat edge, counted once", function()

@@ -228,7 +228,7 @@ describe("Forever Warlock leveling and PvE", function()
             { instanceType = "raid", group = 10 },
             { boss = true, classification = "worldboss" },
         }) do
-            local H = warlock("Affliction", 60, { 11661, 603 }, options)
+            local H = warlock("Demonology", 60, { 11661, 603 }, options)
             assert.are.equal("bane_of_doom", pick(H))
         end
     end)

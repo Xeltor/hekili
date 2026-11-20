@@ -1,5 +1,5 @@
 # Arms (wowsims.com): the wowsims/forever default APL for Arms (ui/specs/warrior/dps/apls/arms.apl.json), translated to this addon's keys.
-# Data: wowsims/forever (MIT, https://github.com/wowsims/forever) at e5a9cd2a2dfc.
+# Data: wowsims/forever (MIT, https://github.com/wowsims/forever) at ab0f00e4fc83.
 # Cooldowns toggle hides: Death Wish, Recklessness (also behind its pack setting, off by default), Sweeping Strikes and the racials (Blood Fury, Berserking, Eureka, Elune's Light).
 # The endgame priority adapts as you learn abilities. Open-world pulls use earlier Rend and spend less rage on armor stacks.
 # While leveling or fighting outdoors, Bloodrage favors low rage. Readable health must be at least 65%; hidden health in combat leaves it eligible.
@@ -33,6 +33,8 @@
 # Omitted: cd_trinkets #6: spell 29602
 # Omitted: cd_trinkets #7: item 21891
 # Omitted: cd_trinkets #8: item 274759
+# Omitted: cd_trinkets #9: item 13965
+# Omitted: cd_trinkets #10: item 13965
 # Omitted: default: empty group engineering
 # Omitted: default: empty group cd_trinkets
 

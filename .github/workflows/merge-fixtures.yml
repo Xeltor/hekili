@@ -1,0 +1,28 @@
+name: merge fixtures
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - uses: actions/cache@v4
+        with:
+          path: .lua
+          key: lua-${{ runner.os }}-${{ hashFiles('scripts/bootstrap.sh') }}
+      - run: make bootstrap
+      - run: ARMS_RECS=record .lua/bin/busted tests/Forever/arms_recs_spec.lua
+      - run: TIMING=record .lua/bin/busted tests/Forever/wowsims_warrior_spec.lua
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: merge-fixtures
+          path: |
+            tests/Forever/fixtures/arms_recs_seeds1-3.lua
+            tests/Forever/fixtures/timing_warrior_*.lua

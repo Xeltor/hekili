@@ -69,6 +69,10 @@ local CAST = {
     frostfire_bolt = 3,
 }
 
+-- Arcane Concentration's chance split over an Arcane Missiles channel: its start and each of its 5 missiles take a sixth
+-- (wowsims 5ad9515c15, arcane_missiles.go's book rank: 5 s over a 1 s period + 1).
+local MISSILES_SHARE = 1 / 6
+
 -- UNMEASURED: the hits' amounts.
 local AMOUNT = {
     arcane_missiles = 250, -- a missile
@@ -105,6 +109,9 @@ local POWERED = CLEARCAST
 local BARRAGE = { arcane_blast = 1, fireball = 0.5, frostbolt = 0.5, frostfire_bolt = 0.5, arcane_wrath = 0.5 }
 local HEATING = { fireball = true, frostfire_bolt = true, fire_blast = true, scorch = true }
 local FIRE = { fireball = true, frostfire_bolt = true, fire_blast = true, scorch = true, pyroblast = true }
+-- The DoT a landed Fireball (10151) or Pyroblast (18809) leaves: { every, ticks, amount } (wowsims pin spelldata; the
+-- amounts the Fire log's ticks show)
+local DOT = { fireball = { 2, 4, 18 }, pyroblast = { 3, 4, 120 } }
 -- Permafrost's mask's (wowsims's chillFlags) the kit casts
 local CHILL = { frostbolt = true, frostfire_bolt = true, cone_of_cold = true }
 -- DB2 11160 effect 0's mask
@@ -380,7 +387,8 @@ end
 local function costOf(key, ids, H, up, stacks)
     local c
     if key == "arcane_blast" then
-        c = math.floor(0.15 * (1 + stacks("arcane_blast")) * BASE) -- as the kit's spendBase: floor(fraction x base)
+        -- as the kit's spendBase: fraction x base to the nearest whole (wowsims e4ef929e54 rounds)
+        c = math.floor(0.15 * (1 + stacks("arcane_blast")) * BASE + 0.5 + 1e-6)
     else
         c = COST[key] or 0
         if type(c) == "table" then
@@ -437,7 +445,9 @@ local function spell(key, extra)
                 drop(W, e, X, "presence_of_mind")
             end
             unstack(W, e, X, "fingers_of_frost") -- spent at the cast, before this cast's own grant
-            local hit = W.hit(e, e.target, AMOUNT[key], FIRE[key] and 4 or 64)
+            -- the class file's declared school; one declaring none: the fire set's 4, else arcane
+            local school = H.Hekili.SCHOOL[H.Hekili.Class.abilities[key].school]
+            local hit = W.hit(e, e.target, AMOUNT[key], school or (FIRE[key] and 4 or 64))
             local landed, crit = hit.act == "WOUND", hit.flag == "CRITICAL"
             local fof = CHILL[key] and talentRank(H, T.fingers_of_frost) or 0
             if landed and fof > 0 and W.rng.chance(0.15) then -- the charges set to the rank's (1 / 2), refreshed
@@ -458,6 +468,9 @@ local function spell(key, extra)
                 if n > 0 and talentRank(H, T.heating_up) > 0 then
                     aura(W, X, e, "heating_up", n)
                 end
+            end
+            if landed and DOT[key] then -- a recast's replaces it; W.dot's ticks never crit
+                W.dot(e, e.target, DOT[key][1], DOT[key][2], DOT[key][3], 4, key)
             end
             if extra then
                 extra(W, e, X, H, landed, instant)
@@ -586,9 +599,9 @@ M.MAP = {
                 drop(W, e, X, "clearcasting")
             end
             drop(W, e, X, "missile_barrage")
-            -- the channel start rolls Arcane Concentration too (53b0b6a80e), after the spend
+            -- the channel start rolls Arcane Concentration too (53b0b6a80e), after the spend, at a sixth of the chance
             local ac = talentRank(H, T.arcane_concentration)
-            if ac > 0 and W.t >= (e.clearcastingIcd or 0) and W.rng.chance(0.02 * ac) then
+            if ac > 0 and W.t >= (e.clearcastingIcd or 0) and W.rng.chance(0.02 * ac * MISSILES_SHARE) then
                 e.clearcastingIcd = W.t + 1
                 aura(W, X, e, "clearcasting")
             end
@@ -609,9 +622,9 @@ M.MAP = {
                     -- each missile rolls its own hit; a landed one spends a Fingers of Frost charge
                     if W.hit(e, e.target, AMOUNT.arcane_missiles, 64, "spell").act == "WOUND" then
                         unstack(W, e, X, "fingers_of_frost")
-                        -- each landed missile rolls Arcane Concentration under the row's 1 s ICD (ef6fb99ee1)
+                        -- each landed missile rolls a sixth of Arcane Concentration under the row's 1 s ICD (ef6fb99ee1, 5ad9515c15)
                         local ac = talentRank(H, T.arcane_concentration)
-                        if ac > 0 and W.t >= (e.clearcastingIcd or 0) and W.rng.chance(0.02 * ac) then
+                        if ac > 0 and W.t >= (e.clearcastingIcd or 0) and W.rng.chance(0.02 * ac * MISSILES_SHARE) then
                             e.clearcastingIcd = W.t + 1
                             aura(W, X, e, "clearcasting")
                         end
@@ -635,6 +648,38 @@ M.MAP = {
 -- Mage registers the last trainer rank (sim/mage/fireball.go:11-12, frostbolt.go:11-12, arcane_missiles.go:11-12; its
 -- logs cast 10151, 10181 and 10212), so the worlds' character has not learned them.
 local BOOK = { [25306] = true, [25304] = true, [25345] = true }
+
+-- The ranges in yards (DB2 70707 SpellMisc.RangeIndex -> SpellRange, every rank alike): GetSpellInfo's, so a travelling
+-- cast's flight window (Events/Tickets.lua: max range / velocity) is the client's, not the fake's 5 yd default.
+-- Medium-Long 0-35, Medium 0-30, Short 0-20 (Fire Blast), Self Only 0 (no range check).
+local RANGE = { fire_blast = { 0, 20 } }
+for _, key in ipairs({ "fireball", "frostfire_bolt", "pyroblast" }) do
+    RANGE[key] = { 0, 35 }
+end
+for _, key in ipairs({
+    "arcane_blast",
+    "arcane_missiles",
+    "arcane_wrath",
+    "blizzard",
+    "counterspell",
+    "frost_blast", -- 1326053: DB2 70707 RangeIndex 4, Medium 0-30 (as Frostbolt's); not in the pin
+    "frostbolt",
+    "ice_lance",
+    "scorch",
+}) do
+    RANGE[key] = { 0, 30 }
+end
+for _, key in ipairs({
+    "arcane_power",
+    "cold_snap",
+    "combustion",
+    "cone_of_cold",
+    "evocation",
+    "ice_barrier",
+    "presence_of_mind",
+}) do
+    RANGE[key] = { 0, 0 }
+end
 
 local function content(name)
     local P = PACKS[name]
@@ -662,6 +707,15 @@ local function content(name)
                 known[#known + 1] = id
             end
         end
+        local ranges = {}
+        for key, r in pairs(RANGE) do -- every ability's ranks, known or not (the client's spell data)
+            local a = w.abilities[key]
+            if a then
+                for _, id in ipairs({ a.id, unpack(type(a.copy) == "table" and a.copy or { a.copy }) }) do
+                    ranges[id] = r
+                end
+            end
+        end
         return {
             class = "MAGE",
             classID = M.CLASS_ID,
@@ -671,6 +725,7 @@ local function content(name)
             talents = P.talents,
             power = { type = MANA, token = "MANA", max = MAX },
             speed = { 3.0 },
+            ranges = ranges,
         }
     end
 
@@ -739,6 +794,11 @@ local function content(name)
         }
         if m.channel then
             p.channel = m.channel(H, ids, up)
+        end
+        if p.cast > 0 then -- a cast bar pays at its landing with the world's auras then (owner, L1383); checked at `cost`
+            p.price = function(W, e)
+                return costOf(key, ids, H, onEntity(e, X))
+            end
         end
         -- Evocation clipped at 99% mana (the oracle's true belief: its channel and its mana)
         local I = H.ns.VirtualStateInternal

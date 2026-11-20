@@ -21,7 +21,7 @@ local KIT = {
     corruption = { { 172, 6222, 6223, 7648, 11671, 11672, 25311 }, 340, 0, "spell" },
     bane_of_agony = { { 980, 1014, 6217, 11711, 11712, 11713 }, 215, 0, "spell" },
     bane_of_doom = { { 603 }, 300, 60, "spell" },
-    bane_of_havoc = { { 1225228 }, 0.05, 0, "off" }, -- 5% of base mana; off the GCD as wowsims (its TODO)
+    bane_of_havoc = { { 1225228 }, 0.05, 0, "spell" }, -- 5% of base mana; wowsims e4ef929e54: GCD 1500, category 133
     curse_of_the_elements = { { 440892, 1311676, 1311677, 1311680 }, 200, 0, "spell" },
     curse_of_recklessness = { { 704, 7658, 7659, 11717 }, 115, 0, "spell" },
     curse_of_weakness = { { 702, 1108, 6205, 7646, 11707, 11708 }, 175, 0, "spell" },
@@ -168,7 +168,7 @@ describe("Forever Warlock", function()
     it("declares mana under the five-second rule, base 1373, from wowsims's logs", function()
         assert.are.same({ 0 }, w.order)
         local r = w.resources[0]
-        assert.are.same({ spirit = 38.13, mp5 = 15.2 }, r.meta.fsr)
+        assert.are.same({ spirit = 27.5, mp5 = 12 }, r.meta.fsr)
         assert.are.equal(1373, r.meta.base)
     end)
 
@@ -1020,6 +1020,8 @@ describe("Forever Warlock through the engine", function()
         H.ctl.inRange.target, H.ctl.level.target = true, 60
         H.Fire("PLAYER_TARGET_CHANGED")
         assert.is_true(H.Hekili.Engine.Subscribe("Primary", function() end))
+        -- Havoc takes the GCD (wowsims e4ef929e54), so it queues behind the curse and Bane of Doom lines: fifth
+        H.Hekili.DB.profile.displays.Primary.numIcons = 8
         H.ns.getNumberTargets = function()
             return 2, 2
         end
@@ -1151,11 +1153,12 @@ describe("Forever Warlock priorities", function()
             healthstone = true,
             healing_potion = true,
         }
+        local pe = require("Forever.helpers.pack_entries") -- a sequence's members walked too
         for _, p in ipairs(assert(loadfile("tools/make_pack.lua"))("lists", "warlock")) do
             for list, entries in pairs(p.lists) do
-                for i, e in ipairs(entries) do
+                for i, e in ipairs(pe.flat(entries)) do
                     local where = p.name .. " " .. list .. " " .. i
-                    assert.is_true(cls.abilities[e.action] ~= nil or shared[e.action], where)
+                    assert.is_true(cls.abilities[e.action] ~= nil or shared[e.action] or pe.LINE[e.action], where)
                     for kind, key in (e.criteria or ""):gmatch("(%a+)%.([%w_]+)") do
                         if kinds[kind] then
                             assert.is_true(kinds[kind][key] ~= nil or shared[key], where .. ": " .. key)

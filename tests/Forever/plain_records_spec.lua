@@ -8,7 +8,7 @@ local WORLDS = {
     { "Forever.helpers.warrior_world" },
     { "Forever.helpers.rogue_world", "Combat" },
     { "Forever.helpers.mage_world", "Arcane" },
-    { "Forever.helpers.hunter_world", "BeastMastery" },
+    { "Forever.helpers.hunter_world", "Survival" },
     { "Forever.helpers.paladin_world", "Retribution" },
     { "Forever.helpers.priest_world", "Smite" },
     { "Forever.helpers.shaman_world", "Enhancement" },
@@ -18,7 +18,18 @@ local WORLDS = {
 -- the function fields the belief evaluates, by record kind (Casts.lua, Resources.lua, Expect.lua)
 local ABILITY = { "cooldown", "spend", "gcdTime", "usable", "now", "onCrit", "onLand", "onAvoid", "now_finish" }
 local AURA = { "duration", "tick_time", "base_tick_time" }
-local RESOURCE = { "max", "decay", "decayInterval", "swingValue", "swingOff", "swingCrit", "swingOffCrit", "taken" }
+local RESOURCE = {
+    "max",
+    "decay",
+    "decayInterval",
+    "swingValue",
+    "swingOff",
+    "swingCrit",
+    "swingOffCrit",
+    "swingWidth",
+    "swingOffWidth",
+    "taken",
+}
 local ENTRY = { "spirit", "mp5", "share", "value", "mult", "when" }
 local WINDOW = { "evaluator" } -- a window's (Families/Windows.lua), run once per Drain in the same context
 local REACTION = { "now" } -- a reaction's (RegisterReaction, Families/Now.lua), run at a settled outcome
@@ -178,7 +189,7 @@ end
 local KNOWN_MISSING = {
     ["warrior_world"] = with(),
     ["rogue_world Combat"] = with(),
-    ["hunter_world BeastMastery"] = with(),
+    ["hunter_world Survival"] = with(),
     ["shaman_world Enhancement"] = with(),
     ["druid_loop_world Feral"] = with(),
     -- removeStack is a `now` verb since aura audit C4, so the `now`s that share Mage.lua casts(spends)'s closure no
@@ -245,6 +256,15 @@ local KNOWN_MISSING = {
             "summon_incubus.now reads pet",
             "summon_succubus.now reads pet",
             "summon_voidwalker.now reads pet",
+            -- The fork's forecast table is simulation-only; these shared handlers guard its absence in the belief.
+            "life_tap.now reads warlock_forecast",
+            "shadowburn.now reads warlock_forecast",
+            "shoot.now reads warlock_forecast",
+            "summon_felhunter.now reads warlock_forecast",
+            "summon_imp.now reads warlock_forecast",
+            "summon_incubus.now reads warlock_forecast",
+            "summon_succubus.now reads warlock_forecast",
+            "summon_voidwalker.now reads warlock_forecast",
         },
         locked(
             { "bane_of_agony", "shadow" },
@@ -301,7 +321,7 @@ local KNOWN_MISSING = {
 local ENGINE_ONLY = {
     -- the strikes queued on the next swing, timed from the core's state.mainhand_remains / mainhand_speed, no id
     ["warrior_world"] = { "cleave.duration", "heroic_strike.duration" },
-    ["hunter_world BeastMastery"] = { "raptor_strike.duration" },
+    ["hunter_world Survival"] = { "raptor_strike.duration" },
     ["druid_loop_world Feral"] = { "maul.duration" },
 }
 

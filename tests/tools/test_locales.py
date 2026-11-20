@@ -33,6 +33,13 @@ class Repository(unittest.TestCase):
                 first_code = lines.index("Hekili.lua")
             self.assertLess(start + len(block) - 1, first_code, name)
 
+    def test_every_language_of_the_core_has_a_file_in_each_pack(self):
+        core = set(locales.languages(locales.CORE))
+        self.assertTrue({"deDE", "esES", "frFR", "itIT", "zhCN"} <= core)
+        for name, (grouped, _, _) in ((n, locales.collect(t)) for n, t in locales.addons()):
+            if grouped:
+                self.assertEqual(set(locales.languages(name)), core, name)
+
     def test_the_shared_content_has_no_text(self):
         self.assertFalse(os.path.isdir(locales.locales_dir("Hekili_Shared")))
 
@@ -74,6 +81,37 @@ class Render(unittest.TestCase):
         self.assertIn('L["Arms"] = "武器"\n-- L["Fury"] = ""\n', text)
 
 
+class Alias(unittest.TestCase):
+    def test_one_spanish_file_registers_for_both_clients(self):
+        text = locales.render("Hekili", "esES", {"src/Hekili/A.lua": ["Reset"]}, {})
+        self.assertIn('local Locale = LibStub("AceLocale-3.0")\n', text)
+        self.assertIn('local L = Locale:NewLocale("Hekili", "esES") or Locale:NewLocale("Hekili", "esMX")\n', text)
+        self.assertIn("(esES, esMX)", text)
+
+    def test_the_alias_is_not_a_missing_file(self):
+        self.assertEqual(locales.client_locales("esES"), ["esES", "esMX"])
+        self.assertEqual(locales.client_locales("deDE"), ["deDE"])
+
+
+class Length(unittest.TestCase):
+    def test_a_short_label_over_one_and_a_half_times_its_english_warns(self):
+        self.assertTrue(locales.length_warning("Reset", "Zurücksetzen"))
+        self.assertIsNone(locales.length_warning("Reset", "Zurück"))
+        self.assertIsNone(locales.length_warning("A key of more than twenty-four characters", "x" * 90))
+
+    def test_the_repository_reports_without_failing(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = locales.main(["--report"])
+        self.assertEqual(rc, 0)
+        self.assertIn("itIT", out.getvalue())
+
+    def test_missing_counts(self):
+        cov = locales.coverage()
+        done, total, missing = cov["deDE"]["Hekili"]
+        self.assertEqual(done + len(missing), total)  # holds for any translation state (deDE is now translated)
+
+
 class Adopt(unittest.TestCase):
     def test_a_new_pack_file_takes_every_key_the_core_translates(self):
         core = {"Arms": "武器", "Combat": "战斗", "Other": "x"}
@@ -112,6 +150,12 @@ class Codes(unittest.TestCase):
         self.assertEqual(locales.code_problems("%s has %d", "%2$d 有 %1$s"), [])
         self.assertEqual(locales.code_problems("%s has %d", "%s 有 %d"), [])
         self.assertTrue(locales.code_problems("%s has %d", "%1$s 有 %1$d"))
+
+    def test_edge_whitespace_must_match_the_key(self):
+        self.assertEqual(locales.code_problems(" x ", " 好 "), [])
+        self.assertTrue(locales.code_problems("x ", "好"))
+        self.assertTrue(locales.code_problems("x", " 好"))
+        self.assertTrue(locales.code_problems(" x", "好 "))
 
 
 class Sinks(unittest.TestCase):

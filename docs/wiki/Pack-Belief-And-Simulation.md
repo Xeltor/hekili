@@ -11,7 +11,7 @@ Hekili Forever keeps two models of the game, the **belief** and the **simulation
 | Belief | What the addon believes happened, from observed events. Written by `now`. |
 | Simulation | The forecast of future casts. Written by `handler`. |
 | Read by both | The ability's declared fields: cost, cooldown, cast time, GCD, auras |
-| Belief only | `now`, `onCrit`, `onLand`, `onAvoid`, `now_finish`, `refundOnAvoid`, reactions |
+| Belief only | `now`, `onCrit`, `onLand`, `onAvoid`, `now_finish`, `refundOnAvoid`, `refundNowOnAvoid`, reactions |
 | Simulation only | `handler`, `start`, `tick`, `finish`, state functions and expressions |
 | Source | `src/Hekili/Game/` (belief), `src/Hekili/Engine/Sim/` (simulation) |
 
@@ -54,6 +54,8 @@ barkskin = {
 ```
 
 The two functions look the same here, but they run in different places, at different times, with different names in scope.
+
+Where the two bodies are the same code, the ability may declare it once as `effect = function() return function() ... end end`: the core calls the factory for each missing one of `handler` and `now`, so each layer still gets its own function ([Pack abilities reference](Pack-Abilities-Reference#effect)).
 
 | | `now` | `handler` |
 |---|---|---|
@@ -114,6 +116,7 @@ Some effects only the belief can see, because they depend on what happened: a cr
 - `onAvoid`: what a dodged, parried or missed cast takes back, run at the latest cast's own avoid (a buff only the landing gives, which the cast's `now` granted).
 - `now_finish`: a channel's twin of the simulation's `finish`, run when the channel ran to its end.
 - `refundOnAvoid`: the share of the cost given back when the target dodges, parries or misses.
+- `refundNowOnAvoid`: on that avoid, what the cast's `now` spent from the ability's resource also comes back.
 - Reactions (`RegisterReaction`): a `now` function run by an observed outcome instead of a cast ([Pack windows and reactions](Pack-Windows-And-Reactions)).
 
 The simulation's `start`, `tick` and `finish` (a channel in progress) and its state functions and expressions have no belief twin, except `finish` through `now_finish`. Each field is described on [Pack abilities reference](Pack-Abilities-Reference).

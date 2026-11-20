@@ -572,6 +572,21 @@ describe("Forever Mage through the engine", function()
         end
     )
 
+    -- (ledger L1415 as reworded L1418, part a) Fireball's and Pyroblast's DoTs are tick schedules the belief composes
+    -- (wowsims pin spelldata: Fireball 2 s ticks over 4/6/8 s by rank, Pyroblast 3 s over 12 s), so a tick's crit row
+    -- is a candidate beside a direct ticket (Events/Tickets.lua T.Divergent) and never reads as a cast's own crit.
+    it("composes Fireball's and Pyroblast's DoT tick schedules in the belief", function()
+        local H = headless.new({ character = character() })
+        local I = H.ns.VirtualStateInternal
+        local out = {}
+        for _, id in ipairs({ 25306, 18809 }) do
+            local a = I.ab.bySpell[id]
+            local period, count = I.Expect.Tick(a)
+            out[#out + 1] = { I.ab.ticking[a], period, count }
+        end
+        assert.are.same({ { true, 2, 4 }, { true, 3, 4 } }, out)
+    end)
+
     -- The belief's charges and their price at the cast, in both layers: `spendBase` prices every declared fraction of
     -- base, the 1.2 at 4 charges included (central fix 22, gap BB).
     it("counts Arcane Blast's charges in the belief and the simulation, four at most, each pricing the next", function()
@@ -588,9 +603,9 @@ describe("Forever Mage through the engine", function()
             S.reset("Primary", true)
             out[#out + 1] = { n, S.buff.arcane_blast.stack, I.CostOf(a), S.action.arcane_blast.cost }
         end
-        -- each the declared fraction x 1213, floored (0.3, 0.45, 0.6, 0.75)
+        -- each the declared fraction x 1213 to the nearest whole (0.3, 0.45, 0.6, 0.75; CN22: wowsims e4ef929e54 rounds)
         assert.are.same(
-            { { 1, 1, 363, 363 }, { 2, 2, 545, 545 }, { 3, 3, 727, 727 }, { 4, 4, 909, 909 }, { 4, 4, 909, 909 } },
+            { { 1, 1, 364, 364 }, { 2, 2, 546, 546 }, { 3, 3, 728, 728 }, { 4, 4, 910, 910 }, { 4, 4, 910, 910 } },
             out
         )
         assert.are.same({}, H.errors)
@@ -781,10 +796,12 @@ describe("Forever Mage priorities", function()
         local cls = ld.load(nil, FILE, "MAGE")
         local kinds = { buff = cls.auras, debuff = cls.auras, cooldown = cls.abilities, action = cls.abilities }
         -- Hekili's `all`: Hekili_Shared/Shared/Items.lua's use_items and the mana gem, and the High Order Skyborne race
-        -- file's Read Ley Line and Energized, and the racials rule 13 adds (Hekili_Shared/Races/)
+        -- file's Read Ley Line and Energized, and the racials rule 13 adds (Hekili_Shared/Races/); Robe of the Archmage
+        -- (Hekili_Shared/Shared/Consumables.lua, rule 13's autocastOtherCooldowns line)
         local shared = {
             use_items = true,
             mana_gem = true,
+            robe_of_the_archmage = true,
             call_action_list = true,
             read_ley_line = true,
             energized = true,
@@ -792,11 +809,12 @@ describe("Forever Mage priorities", function()
             blood_fury = true,
             berserking = true,
         }
+        local pe = require("Forever.helpers.pack_entries") -- a sequence's members walked too
         for _, p in ipairs(assert(loadfile("tools/make_pack.lua"))("lists", "mage")) do
             for list, entries in pairs(p.lists) do
-                for i, e in ipairs(entries) do
+                for i, e in ipairs(pe.flat(entries)) do
                     local where = p.name .. " " .. list .. " " .. i
-                    assert.is_true(cls.abilities[e.action] ~= nil or shared[e.action], where)
+                    assert.is_true(cls.abilities[e.action] ~= nil or shared[e.action] or pe.LINE[e.action], where)
                     for kind, key in (e.criteria or ""):gmatch("(%a+)%.([%w_]+)") do
                         if kinds[kind] then
                             assert.is_true(kinds[kind][key] ~= nil or shared[key], where .. ": " .. key)

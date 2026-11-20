@@ -9,6 +9,11 @@ local function boot()
     return H
 end
 
+-- a stepped window's evaluator (L773: steps need one); never true, so nothing here opens from it
+local function noEval()
+    return false
+end
+
 describe("RegisterWindow", function()
     local H, kit
     before_each(function()
@@ -45,6 +50,20 @@ describe("RegisterWindow", function()
             assert.are.equal(key, def.abilities[rec.steps[k]].key)
         end
         assert.is_nil(getmetatable(rec))
+        assert.is_false(rec.reset_on_target_change) -- off unless the class asks (windows design v6 ruling 33)
+    end)
+
+    it("carries reset_on_target_change = true into the record", function()
+        kit:RegisterWindow("reset_window", { evaluator = noEval, duration = 6, reset_on_target_change = true })
+        H.Hekili:SpecializationChanged()
+        local def = H.ns.VirtualStateInternal.def
+        local rec
+        for w = 1, #def.windows do
+            if def.windows[w].key == "reset_window" then
+                rec = def.windows[w]
+            end
+        end
+        assert.is_true(rec.reset_on_target_change)
     end)
 
     it("raises at load on a second name, a bad field or an unregistered step key", function()
@@ -59,11 +78,22 @@ describe("RegisterWindow", function()
             kit:RegisterWindow("bad_eval", { duration = 6, evaluator = 1 })
         end)
         assert.has_error(function()
-            kit:RegisterWindow("bad_dev", { duration = 6, steps = steps(), on_deviation = "wander" })
-        end)
+            kit:RegisterWindow(
+                "bad_dev",
+                { duration = 6, evaluator = noEval, steps = steps(), on_deviation = "wander" }
+            )
+        end, "RegisterWindow: bad_dev's on_deviation")
         assert.has_error(function()
-            kit:RegisterWindow("bad_step", { duration = 6, steps = { "no_such_ability" } })
-        end)
+            kit:RegisterWindow("bad_step", { duration = 6, evaluator = noEval, steps = { "no_such_ability" } })
+        end, "RegisterWindow: bad_step's step no_such_ability is no registered ability")
+        -- L773 (windows design v6 ruling 1): a stepped window needs an evaluator; no window opens on its first step's cast
+        assert.has_error(function()
+            kit:RegisterWindow("no_eval_steps", { duration = 6, steps = steps() })
+        end, "RegisterWindow: no_eval_steps has steps but no evaluator")
+        -- ruling 33: reset_on_target_change is a boolean or nil
+        assert.has_error(function()
+            kit:RegisterWindow("bad_reset", { duration = 6, reset_on_target_change = 1 })
+        end, "RegisterWindow: bad_reset's reset_on_target_change is not a boolean")
         assert.has_error(function() -- spec 0's windows merge beside the spec's
             H.Hekili.Class.specs[0]:RegisterWindow("twice", { duration = 6 })
         end)
@@ -208,7 +238,8 @@ describe("the core's windows", function()
     end
 
     -- Loads `apl` (simc lines) as the pack's default list and runs one cycle; returns the Primary display's slots.
-    local function run(apl)
+    -- `flap`: the priority flaps a window (opened and closed by lines in one slot): its one-time warning (L1205)
+    local function run(apl, flap)
         local lines, warnings = H.Hekili:ParseActionList(apl)
         assert.are.same({}, warnings or {})
         for _, l in ipairs(lines) do
@@ -219,6 +250,11 @@ describe("the core's windows", function()
         H.Fire("PLAYER_REGEN_DISABLED")
         assert.is_true(H.Hekili.Engine.Subscribe("Primary", function() end))
         assert(headless.cycle(H, H.ctl.now + 0.2))
+        if flap then
+            assert.are.equal(1, #H.errors)
+            assert.is_truthy(H.errors[1]:find("opened and closed by lines in the same recommendation", 1, true))
+            table.remove(H.errors, 1)
+        end
         assert.are.same({}, H.errors)
         return H.Hekili.Engine.Output.Primary.recs
     end
@@ -392,10 +428,12 @@ describe("the core's windows", function()
         assert.is_false(S.window.w.up)
     end)
 
-    it("runs open_window lines in list order: a line above the open reads it down", function()
+    -- windows design v6 §4.3 (R01): the open restarts the walk, so a line above it reads it up in the same slot
+    it("runs open_window lines as commands: a line above the open reads it after the restart", function()
         core({ w = { duration = 6 } })
         local recs = run("actions+=/bloodrage,if=window.w.up\nactions+=/open_window,name=w\nactions+=/berserker_stance")
-        assert.are.equal("berserker_stance", recs[1] and recs[1].actionName)
+        assert.are.equal("bloodrage", recs[1] and recs[1].actionName)
+        assert.are.equal(1, recs[1].restarts)
         recs = run("actions+=/open_window,name=w\nactions+=/bloodrage,if=window.w.up\nactions+=/berserker_stance")
         assert.are.equal("bloodrage", recs[1] and recs[1].actionName)
         assert.is_false((VS.Window("w"))) -- never written back
@@ -404,25 +442,26 @@ describe("the core's windows", function()
     it("closes with close_window", function()
         core({ w = { duration = 6 } })
         local recs = run(
-            "actions+=/open_window,name=w\nactions+=/close_window,name=w\nactions+=/bloodrage,if=window.w.up\nactions+=/berserker_stance"
+            "actions+=/open_window,name=w\nactions+=/close_window,name=w\nactions+=/bloodrage,if=window.w.up\nactions+=/berserker_stance",
+            true
         )
         assert.are.equal("berserker_stance", recs[1] and recs[1].actionName)
     end)
 
-    it("opens once on a held condition, even with refresh=1, across the cycle's slots", function()
+    -- windows design v6 §4.3, ruling 20: the line runs in every slot (the mark is per slot); a window with no
+    -- registered refresh changes the copy once, and later slots find it open
+    it("opens once on a held condition across the cycle's slots", function()
         core({ w = { duration = 6 } })
         local opens, lines = 0, 0
-        local openWindow, line = S.openWindow, S.WindowLine
+        local openWindow = S.openWindow
         S.openWindow = function(...)
-            opens = opens + 1
-            return openWindow(...)
-        end
-        S.WindowLine = function(...)
             lines = lines + 1
-            return line(...)
+            local changed = openWindow(...)
+            opens = opens + (changed and 1 or 0)
+            return changed
         end
-        run("actions+=/open_window,name=w,if=1,refresh=1\nactions+=/berserker_stance\nactions+=/bloodrage")
-        S.openWindow, S.WindowLine = openWindow, line
+        run("actions+=/open_window,name=w,if=1\nactions+=/berserker_stance\nactions+=/bloodrage")
+        S.openWindow = openWindow
         assert.is_true(lines >= 2, tostring(lines)) -- the line ran at every slot of the cycle
         assert.are.equal(1, opens)
     end)
@@ -493,6 +532,7 @@ describe("the core's windows", function()
     describe("steps (forecast)", function()
         local function stepped(data, step)
             data.duration, data.steps = 6, data.steps or { "bloodrage", "berserker_stance", "battle_stance" }
+            data.evaluator = noEval
             core({ w = data })
             VS.Window = function(name)
                 if name == "w" then
@@ -556,7 +596,10 @@ describe("the core's windows", function()
     end)
 
     it("allocates nothing copying, reading and changing windows", function()
-        core({ w = { duration = 6, steps = { "bloodrage", "berserker_stance" } }, v = { duration = 6 } })
+        core({
+            w = { duration = 6, evaluator = noEval, steps = { "bloodrage", "berserker_stance" } },
+            v = { duration = 6 },
+        })
         local copy = S.CopyWindows
         local function once()
             copy()

@@ -23,7 +23,7 @@ local function addPvE(recipe)
         "summon_voidwalker,if=warlock_can_summon&warlock_outdoors&solo",
         "summon_imp,if=warlock_can_summon",
         "demon_armor,if=warlock_can_prepare&buff.demon_armor.down",
-        "demon_skin,if=warlock_can_prepare&!action.demon_armor.known&buff.demon_skin.down&buff.demon_armor.down",
+        "demon_skin,if=warlock_can_prepare&!action.demon_armor.known&buff.demon_skin.down&(!action.demon_armor.known|buff.demon_armor.down)",
         "death_coil,if=" .. fighting .. "&toggle.defensives&warlock_health_low",
         "drain_life,if=" .. fighting .. "&toggle.defensives&warlock_health_low&warlock_drain_life_in_range",
         "shadow_bolt,focus=1,if=" .. field .. "&buff.shadow_trance.up",
@@ -68,7 +68,7 @@ local function addPvE(recipe)
         add(
             "conflagrate",
             field
-                .. "&debuff.immolate.up&(warlock_short_pull|talent.shadow_and_flame.rank=5|debuff.immolate.remains<=3)"
+                .. "&action.immolate.known&(!action.immolate.known|(debuff.immolate.up&(warlock_short_pull|talent.shadow_and_flame.rank=5|debuff.immolate.remains<=3)))"
         )
         add(
             "immolate,focus=2",
@@ -83,7 +83,10 @@ local function addPvE(recipe)
         "corruption,focus=2",
         durable .. "&debuff.corruption.remains<=action.corruption.cast&!action.corruption.executing"
     )
-    add("bane_of_agony,focus=2", durable .. "&debuff.bane_of_agony.down&debuff.bane_of_doom.down")
+    add(
+        "bane_of_agony,focus=2",
+        durable .. "&debuff.bane_of_agony.down&(!action.bane_of_doom.known|debuff.bane_of_doom.down)"
+    )
     if recipe.spec == "affliction" then
         add("siphon_life,focus=2", durable .. "&debuff.siphon_life.down")
     end
@@ -104,7 +107,7 @@ local function addPvE(recipe)
         "drain_soul",
         short
             .. "&combat>0&warlock_outdoors&solo&warlock_shard_count<2&!warlock_wanding&!warlock_health_low"
-            .. "&(warlock_shard_window|warlock_shard_target&warlock_pet_tanking&(debuff.corruption.up|debuff.immolate.up))"
+            .. "&(warlock_shard_window|warlock_shard_target&warlock_pet_tanking&(action.corruption.known&debuff.corruption.up|action.immolate.known&debuff.immolate.up))"
     )
     local wand = destruction and "(warlock_short_pull&(level<20|mana.pct_lo<55))" or "warlock_short_pull"
     add("shoot,use_off_gcd=1", field .. "&" .. wand)

@@ -4,12 +4,18 @@ local ab = require("Game.harness.ab")
 local ws = require("Forever.helpers.wowsims")
 local W = require("Forever.helpers.hunter_world")
 
+-- the learn levels without the book ranks (W.BOOK: wowsims's character is trainer-taught; no level teaches them)
+local LEARN = ws.learn("HUNTER")
+for id in pairs(W.BOOK) do
+    LEARN[id] = math.huge
+end
+
 local function content(spec, base, pack, level, extra)
     local o = {
         pack = pack,
         level = level,
         talents = ws.header(spec).talents,
-        learn = ws.learn("HUNTER"),
+        learn = LEARN,
         race = ws.race(spec),
     }
     for k, v in pairs(extra or {}) do
@@ -78,38 +84,14 @@ local REPLAY = { hidden = { [1310726] = true } }
 -- SV Melee L40 10.0 -> 10.2. Cause: the R41 mana-dry regen wait from a lower pool. Serpent Sting now lands after its
 -- travel time (W.distance / 40, belief and world), which moves its recasts and so the one 120 s fight's mana timeline:
 -- the worst streak dries out at 12.1 (was 14.5), 1.8 (14.7) and 1.8 (4.8) mana and waits for Arcane Shot's cost.
+-- Live L40 at the re-pin e5a9cd2a2d -> e4ef929e54 (TRACED: a probe over ws.live's idle test, the worst streak of the
+-- first fight, with the spend by key; every row below names its numbers): the R41 mana-dry wait, from a pool the 11%
+-- shots drain faster. Arcane Shot and Summon Hawk now cost 11% of base mana at every rank, and the world prices it off
+-- the level-60 base (1720: 189 at L40, where the old rank cost was 105 for Arcane Shot); no by-level base mana source
+-- exists (deferral: a leveling-bracket world pass). The waits themselves are on the next cost (Aimed Shot, Serpent
+-- Sting, Immolation Trap, Hunter's Mark), not on Arcane Shot.
 local PACKS = {
-    {
-        "hunter_beast_mastery",
-        "BeastMastery",
-        "Beast Mastery (wowsims.com)",
-        0.95,
-        { [10] = 6, [40] = 7.8, [60] = 12.2 },
-        -- ON flicker 0 -> 1.0 (CN8 D2, 1.00 measured, the same with steady icons off): the not-ready flag keeps the
-        -- modelled end, so Multi-Shot (n147) and Blood Fury (n631) lead for the tick before the log casts them; under the
-        -- old probe their last 0.5 s read 0.50 and never led. A replay has no press exclusion (the log presses)
-        -- 0.7 floors (e5a9cd2a2d, steady icons on): 1.0 -> 3.4 (3.33 measured = 10 flips in the 180 s fight, the same with
-        -- the v0.6.2 melee-range fix merged). Traced per tick (ticks 37, 127, 146, 169, 227, 249, 374, 729, 769, 791): the
-        -- first icon sits on the weave filler (wing_clip, immolation_trap) and bounces for ONE tick to the ability the log
-        -- casts within the next 1-2 ticks (summon_hawk x5, multi_shot x3, immolation_trap/wing_clip x2), then back until the
-        -- log's press lands: the same lead-before-the-log-casts mechanism as the CN8 note above (a replay has no press
-        -- exclusion); the new weave's strike/filler lines make it more often than the old weave's
-        3.4,
-    },
-    {
-        "hunter_marksmanship",
-        "Marksmanship",
-        "Marksmanship (wowsims.com)",
-        0.98,
-        -- live L40 7.6 -> 10.0 (Lane R2, controller-accepted): Resourcefulness opens only at an ability's crit now
-        -- (the export's crit share), so the fight's worst OOM wait can start with it down: 5 s at 0 regen while casting,
-        -- then the outside rate to the next shot's cost; the belief tracks the truth within 3 mana throughout (traced)
-        { [10] = 6, [40] = 10.0, [60] = 15.4 },
-        -- 0 -> 1.0 (1.00 measured = 3 flips; same with the v0.6.2 range fix): traced per tick (131, 429, 469): one-tick
-        -- bounce of the filler (wing_clip, immolation_trap) to arcane_shot / strider_kick, which the log casts 1-2 ticks
-        -- later: the replay's no-press-exclusion lead (BM's note)
-        1.0,
-    },
+    -- (the Beast Mastery and Marksmanship weave rows: retired with their packs, L1154)
     {
         "hunter_survival",
         "Survival",
@@ -124,16 +106,20 @@ local PACKS = {
         -- cooldown.
         -- 0.93 -> 0.96 (0.967 of 92 measured on integ/0.8.5-w2, the merged tree): the Serpent Sting debuff now starts at
         -- its landing (startsAtLanding, L1103) and flicker-085 and the timing merges are in (L1037); 3 misses remain.
-        0.96,
+        0.97, -- 0.96 -> 0.97 (0.977 of 86; re-pin e4ef929e54 -> ab0f00e4fc: set to the measurement on the new log)
         -- live L40 7.6 -> 10.0, L60 14.0 -> 15.4 (Lane R2, controller-accepted): as Marksmanship's (above); at L60
         -- the OOM wait runs to a 190-mana shot with the aura down
-        { [10] = 6, [40] = 10.0, [60] = 15.4 },
+        -- live L40 10.0 -> 13.8, the re-pin's L40 cause (above, traced): Arcane Shot 12 x 189
+        -- and Multi-Shot 9 x 239 are 4419 of the fight's 5414 mana; the streak (t 106.4-120.0) runs the pool 3.3 -> 165.3
+        -- waiting on Serpent Sting 115, then Hunter's Mark 60.
+        { [10] = 6, [40] = 13.8, [60] = 15.4 },
         -- 2.4 -> 0.7 (0.67 measured): R51's weave position bounces (above) are gone with the new weave
         -- 0.7 -> 1.1 (1.00 measured, 3 flips, was 2; flicker-085 P1, L755 / ruling L960: a mana pool with no tick seen
         -- pads nothing, at the gap BT cost crossing; not traced per tick).
         -- 1.1 -> 1.0 (1.00 measured on integ/0.8.5-w2, the merged tree, L1037/L1103): the Serpent Sting debuff at its
         -- landing, flicker-085 and the timing merges are all in; one flip a minute remains.
-        1.0,
+        -- 1.0 -> 0.4 (0.33 measured at the batch): replay-flips-09 ade4d6379 (L1317)
+        0.4,
         "SurvivalRanged",
     },
     -- wowsims's non-weave builds (owner 2026-11-12, ledger L661): new rows, first measured on this lane (R6; the
@@ -171,9 +157,19 @@ local PACKS = {
         "hunter_beast_mastery_turret",
         "BeastMasteryTurret",
         "Beast Mastery Turret (wowsims.com)",
-        1.00, -- 1.000 (59)
-        { [10] = 6, [40] = 6, [60] = 13.0 }, -- 4.4 / 4.4 / 12.8
-        0, -- 0.00
+        -- 1.00 -> 0.98 (0.980 of 51; re-pin e5a9cd2a2d -> e4ef929e54: wowsims's hawk rotation, turret_hawk.apl.siml,
+        -- traced per tick): the one miss is the Serpent Sting refresh against Summon Hawk at 84.41 s: our sting comes due
+        -- 0.07 s after the decision tick and outranks the hawk (0.01 s), wowsims's sting is still up for its hawk (the
+        -- Turret rows' Serpent Sting class; the old list had no hawk at that refresh)
+        1.0, -- 0.98 -> 1.00 (1.000 of 55; re-pin ab0f00e4fc: the new log's hawk rotation has no sting miss)
+        -- live L40 6 -> 11.0 (4.4 before: the old list cast neither shot at 40), the re-pin's L40 cause (above, traced): Summon Hawk 10 x 189 and
+        -- Arcane Shot 5 x 189 are 2835 of 6006 mana; the streak (t 99.8-110.6) runs the pool 15.2 -> 159.7 waiting on
+        -- Aimed Shot 160.
+        { [10] = 6, [40] = 11.0, [60] = 13.0 }, -- 4.4 / 11.0 / 12.8
+        -- 0 -> 0.7 (0.67 measured, 2 flips; re-pin, the hawk rotation, traced per tick): both are aimed_shot ->
+        -- summon_hawk -> aimed_shot at the tick the log presses Summon Hawk (48.0 s, 173.4 s): "shown, then cast", which a
+        -- replay counts because it passes no press array (the MM / SV Turret note below)
+        0, -- 0.7 -> 0 (0.00 measured at the batch): replay-flips-09 ade4d6379 (L1317)
         nil,
         {},
         {},
@@ -182,9 +178,22 @@ local PACKS = {
         "hunter_marksmanship_turret",
         "MarksmanshipTurret",
         "Marksmanship Turret (wowsims.com)",
-        0.95, -- 0.955 (66)
-        { [10] = 6, [40] = 9.4, [60] = 14.0 }, -- 4.4 / 9.4 / 14.0
-        1.7, -- 1.66
+        -- 0.95 -> 0.98 (0.983 of 60; re-pin ab0f00e4fc; 0.982 (56) before). The one miss, located per decision (fix
+        -- round): 155.96, wowsims casts Arcane Shot at its GCD end with the sting fading 0.03 s later (155.99); our
+        -- sting ends 156.00, so serpent_sting 0.04 s off outranks it (the Turret rows' Serpent Sting near-tie class)
+        0.98,
+        -- live L40 9.4 -> 9.8, the re-pin's L40 cause (above, traced): Arcane Shot 14 x 166.3
+        -- (Efficiency 4/5) are 2328 of 6020 mana; the streak (t 96.2-105.8) runs the pool 14.4 -> 139.8 waiting on Aimed
+        -- Shot 140.8.
+        { [10] = 6, [40] = 9.8, [60] = 14.0 }, -- 4.4 / 9.8 / 13.8
+        -- 0 -> 0.34 (0.333 measured: 1 flip in 180 s, above 0.33; re-pin e4ef929e54 -> ab0f00e4fc, traced per tick):
+        -- arcane_shot -> aimed_shot -> arcane_shot at 58.10-58.50. During Sniper Shot's cast (321.2, paid at 58.24) the
+        -- belief's mana lo sits 464 under the truth (530 vs 994) since the build's new Demonic Rune (23.72: +1377.6, a
+        -- 900-1500 roll the secret pool never shows); on lo Aimed Shot (272.8) is short after Sniper's spend, so Arcane
+        -- Shot shows (its 58.57 cooldown end); at 58.30 the spend is seen, Aimed shows (its GCD end 58.40); at 58.50
+        -- Arcane, 0.07 s off, outranks it again, as wowsims's own re-queue (58.16 Aimed -> 58.36 Arcane). On the true
+        -- pool Aimed shows at 58.10 too: no flip
+        0.34,
         nil,
         {},
         {},
@@ -193,9 +202,12 @@ local PACKS = {
         "hunter_survival_turret",
         "SurvivalTurret",
         "Survival Turret (wowsims.com)",
-        0.96, -- 0.962 (53)
-        { [10] = 6, [40] = 6, [60] = 15.4 }, -- 4.4 / 4.4 / 15.4
-        1.0, -- 1.00
+        1.0, -- 0.96 -> 1.00 (1.000 of 55; re-pin ab0f00e4fc, set to the measurement)
+        -- live L40 6 -> 10.2, the re-pin's L40 cause (above, traced): Arcane Shot 14 x 189 are
+        -- 2646 of 5661 mana; the streak (t 110.0-120.0) runs the pool 33.4 -> 112.8 waiting on Hunter's Mark 60 to the
+        -- fight's end.
+        { [10] = 6, [40] = 10.2, [60] = 15.4 }, -- 4.4 / 10.2 / 15.4
+        0, -- 1.0 -> 0 (0.00 measured at the batch; 1.00 before): replay-flips-09 ade4d6379 (L1317)
         nil,
         {},
         {},
@@ -204,10 +216,16 @@ local PACKS = {
         "hunter_survival_melee",
         "SurvivalMelee",
         "Survival Melee (wowsims.com)",
-        0.94, -- 0.942 (86)
+        1.0, -- 0.94 -> 1.00 (1.000 of 81; re-pin ab0f00e4fc, set to the measurement)
         -- in melee 116.8 / 7.2 / 8.6: the live bars run W.SurvivalMeleeRanged (R63, hunter_world.lua): 4.4 / 10.0 / 15.4
-        { [10] = 6, [40] = 10.2, [60] = 15.4 },
-        0, -- 0.00
+        -- live L40 10.2 -> 12.0, the re-pin's L40 cause (above, traced): Arcane Shot 10 x 189
+        -- and Multi-Shot 8 x 239 are 3802 of 5552 mana; the streak (t 69.8-81.6) runs the pool 2.0 -> 135.4 waiting on
+        -- Immolation Trap 135.
+        { [10] = 6, [40] = 12.0, [60] = 15.4 },
+        -- 0 -> 0.4 (0.33 measured, 1 flip; re-pin, the Pre-BiS gear and the run-out line re-time the fight; traced per
+        -- tick): summon_hawk -> mongoose_bite -> summon_hawk at 59.0 s, the tick the log presses Mongoose Bite (its
+        -- Expose Prey window just open): "shown, then cast", counted because a replay passes no press array
+        0, -- 0.4 -> 0 (0.00 measured at the batch): replay-flips-09 ade4d6379 (L1317)
         "SurvivalMeleeRanged",
     },
 }
@@ -229,6 +247,33 @@ describe("the Hunter wowsims.com packs #slow #wowsims", function()
     end
 end)
 
+-- The replay and live characters learn the kit's ranks by level (ws.content's learn levels), so the book ranks wowsims's
+-- character never casts (hunter_world.lua BOOK) must stay unlearned there too: Serpent Sting at rank 8's 230 (202.4
+-- under Marksmanship's Efficiency 4/5), as every log pays.
+describe("the Hunter replay characters", function()
+    it("know no book rank at 60: Serpent Sting is rank 8's price", function()
+        local headless = require("Game.harness.headless")
+        local out = {}
+        for _, p in ipairs(PACKS) do
+            local C = content(p[1], W[p[2]], p[3], 60, p[8] or REPLAY_EXTRA)
+            local H = headless.new({ character = C.character(), pack = C.PACK })
+            out[p[1]] = {
+                ("%.2f"):format(H.Hekili.State.action.serpent_sting.cost),
+                H.ctl.known[25295] or false,
+                H.ctl.known[25296] or false,
+            }
+        end
+        local rank8 = { "230.00", false, false }
+        assert.are.same({
+            hunter_survival = rank8,
+            hunter_beast_mastery_turret = rank8,
+            hunter_marksmanship_turret = { "202.40", false, false },
+            hunter_survival_turret = rank8,
+            hunter_survival_melee = rank8,
+        }, out)
+    end)
+end)
+
 -- Task 9 (S2's unknown-bracket pin, the real client path): a replay world at 20 yd (beyond melee, inside the shots'
 -- band) gives the belief a plain range bracket at the pull, so the bracket's unknown "both sides" answer is gone and
 -- an on-next-swing melee strike reads out of range there. Here, not in tests/Game/harness/replay_spec.lua: the boundary
@@ -237,8 +282,8 @@ describe("the Hunter replay at 20 yd #slow #wowsims", function()
     it("knows the target's range at the pull and reads the melee strike out of range", function()
         local loop = require("Game.harness.loop")
         local replay = require("Game.harness.replay")
-        local spec, pack = "hunter_beast_mastery", "Beast Mastery (wowsims.com)"
-        local C = ws.logged(content(spec, W.BeastMastery, pack, 60, REPLAY_EXTRA), spec)
+        local spec, pack = "hunter_survival", "Survival (wowsims.com)"
+        local C = ws.logged(content(spec, W.Survival, pack, 60, REPLAY_EXTRA), spec)
         local L = loop.new(C)
         local o = ws.replayOptions(C, spec, REPLAY)
         o.distance = 20
@@ -247,7 +292,7 @@ describe("the Hunter replay at 20 yd #slow #wowsims", function()
         loop.replay(L, R, {
             duration = 2,
             on = function(_, _, t)
-                if not seen and t >= R.pull and t < R.pull + 0.5 then -- the log's first move is 0.51 s in
+                if not seen and t >= R.pull and t < R.pull + 0.5 then -- the log's first move is 0.71 s in
                     seen = {
                         H.ns.VirtualState.TargetRange().basis ~= "unknown",
                         H.Hekili.State.action.raptor_strike.in_range,

@@ -8,7 +8,8 @@ The **priority editor** is the part of the options where a priority is viewed, c
 
 A built-in priority is replaced by the shipped version whenever the addon updates, so changes made to it are not kept, and its name and specialization are locked. To change one, copy it first ([APL tutorial: your first custom priority](APL-Tutorial-Your-First-Custom-Priority)).
 
-<!-- TODO-SCREENSHOT: the Action Lists tab of a copied Feral priority, one entry selected -->
+![The Action Lists tab of a copied Feral priority with entry 6, Ferocious Bite, selected: Enabled checked, its condition shown in the Conditions box](images/APL-Priority-Editor-1.png)
+<!-- Hekili Forever 0.11.0; Druid Feral; options, Priorities, Feral copy, Action Lists tab -->
 
 ## The tabs
 
@@ -37,6 +38,7 @@ Each **Action Lists** field stores one line option. [APL line options](APL-Line-
 - Choose the list in **Action List** and the line in **Entry**. A new list is added with **Add List** and a new line with **Create New Entry**.
 - A change to a field takes effect at once, without an import. The **Conditions** box keeps the text exactly as typed, so the importer's conversions do not apply there ([Line edge cases](APL-Syntax-Reference#line-edge-cases)).
 - **Enabled** switches one line off without deleting it.
+- An entry's fields come in this order: the action and its parameters, a **Condition** section (**Description**, then the variable fields on a `variable` line, the pooling fields on a `pool_resource` line, **Conditions**, and the variable's **Value** fields), then a **Display** section (**Caption**, **Label**, **Label Condition**, **Icon**, **Icon Condition**), then the modifiers.
 
 ### Importing text
 

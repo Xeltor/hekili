@@ -40,6 +40,8 @@ How the layers and the engine port fit together: `docs/dev/architecture.md`.
       reactions, options, state expressions, hooks, pets, totems, settings), `ns.SCHOOL`, `specTemplate`, `ns.callHook`;
     - `Spec/Regen.lua`: RegisterResource and the sim's generated regen entries;
     - `Spec/Auras.lua`: RegisterAura(s), RegisterPower(s);
+    - `Spec/Ranks.lua`: an ability's derived fields (`ranks`, `{ byRank = values }`, `effect`), pure, also run by the
+      recording test loaders;
     - `Spec/Abilities.lua`: RegisterAbility(ies), missable DoTs;
     - `Spec/Kits.lua`: spec records: `NewClass` (the class kit), `NewSpecialization` (spec 0), `GetSpecialization`;
     - `Spec/All.lua`: spec 0 (`all`): the engine keys core reads by name;
@@ -142,12 +144,14 @@ spec file at one tag: `.lua/bin/busted --tags=druid tests/Forever/loop_druid_fer
 experimental options and their Snapshot audit lines.
 The CPU budget (`pack_gate.health`) is process CPU time (`os.clock` around each Update in
 `tests/Game/harness/loop.lua`; a traced fight, every tally's first, adds no sample: its debug pass formats a line per
-APL entry, Feral 3-fight 6.25 / 27.55 -> 4.47 / 6.80 ms mean / p99 when it left the metric), so other processes
-waiting for a core do not count; shared cores (SMT, cache) still raise it: Arms read 4.1 ms alone and 6.1-6.7 ms in
-`make check`'s 16-wide run. So the bar is on a ratio: each tick's ms over `loop.calibrate`'s (a fixed pure-Lua
-workload, about 7 ms alone, timed once per counted fight in the same process), `r.cpuRatio <= pack_gate.CPU_RATIO`
-(1.0, 20-fight lines stay under 0.6; `pack_gate.CPU_RATIO_ONE_FIGHT` 1.2 for a one-fight line, a replay, whose single calibration moves the whole ratio: Feral's replay reads median 0.50, p90 0.81, worst 0.909; the bar began at 1.4, the old 10 ms bar on a quiet run, 10 / ~7 ms; Arms reads 0.555), the ms mean and p99 reported beside it. Under a 16-wide `make test` Feral's 3-fight mean
-rose 4.25 -> 5.82 ms while its ratio moved 0.634 -> 0.494 (Arms 3.78 -> 5.92 ms, 0.624 -> 0.547). Each line also reports
+APL entry, which would inflate the mean and p99), so other processes waiting for a core do not count; shared cores
+(SMT, cache) still raise it: a line's ms read higher in `make check`'s 16-wide run than alone. So the bar is on a
+ratio: each tick's ms over `loop.calibrate`'s (a fixed pure-Lua workload, about 6 ms alone, re-timed in the same
+process before every `loop.CAL_EVERY` (50) counted ticks, so a load that changes during a fight changes the calibration of the ticks it slows; `loop.ratios`),
+`r.cpuRatio <= pack_gate.CPU_RATIO` (1.0, 20-fight lines stay under 0.6; `pack_gate.CPU_RATIO_ONE_FIGHT` 1.2 for a
+one-fight line, a replay, whose ratios read 0.23-0.60 quiet over about 20 calibration windows), the ms mean and p99
+reported beside it. Load moves a line's ratio by under 0.1: Feral's 3-fight
+line reads about 0.61 quiet and 0.63-0.70 under a 16-wide `make test`. Each line also reports
 `bytes N per Update` (`collectgarbage("count")` around every 8th counted cycle, the collector stopped for that cycle:
 a running sweep makes the delta negative), a noisy indicator rather than a measurement (it can still read slightly
 negative: a sample's cycle can free what it did not allocate), not gated: every pack allocates a little per Update (gaps.md CD; only Arms has an allocation test).
@@ -251,7 +255,7 @@ Paladin.lua's `holy_shock` selector: Hammer of Wrath at tier 1, the seal and Con
 `loop_paladin_holy_shock_spec.lua`, its world `HolyShock` with wowsims's builds/holy_shock.siml talents, pool 4667).
 The mob swings at us in every world: Holy Shield raises the block chance and
 each block spends a charge (the world's class-neutral `taking`/`took`); our landed swing spends an Echo (`landed`); mana
-runs under the five-second rule (`fsr`: wowsims's logs, Retribution 13.65 spirit / 8.25 mp5, Protection 17.38 / 0, an
+runs under the five-second rule (`fsr`: wowsims's logs, Retribution 11.9 spirit / 5.1 mp5, Protection 16.5 / 0, an
 empty pool; Task 7 floored Retribution 0.9 and Protection 0.8 for gap AB, 0.6 and 0.2 since gap CE). Both packs are gated by `pack_gate.gate`; both
 are wowsims.com packs since the wowsims packs plan, Task 9 (the hand-built lists retired). Retribution (wowsims.com)'s
 swing-gap fillers carry wowsims's own `mana.pct>=10`, judged on the secret-mana belief; each fight starts with the mana
@@ -310,20 +314,20 @@ wowsims's logs measure it per spec (Mindfulness inside Elemental's, Improved Sto
 Enhancement's; Mana Spring Totem's 5 a second as its own aura entry (10494) while the water totem stands, in both),
 UNMEASURED pool, no Water Shield or potions), so most in-combat ticks show no icon on either side.
 The imbues are not in the solo world's kit (it has no weapon enchant read). The world's costs are each rank's (DB2),
-with Shamanistic Focus when the build has it, Stormstrike's 121 (wowsims/forever's), and the shocks' cooldown and Flame
+with Shamanistic Focus when the build has it, Stormstrike's 122 (wowsims/forever's, to the nearest mana), and the shocks' cooldown and Flame
 Shock's duration from the booted talents. The lines below run Enhancement (wowsims.com) (wowsims packs plan, Task 10,
 the forever gate on 51a0b1ac: Fire Nova at the DB2's 520). `tests/Forever/wowsims_shaman_spec.lua` replays wowsims's
 own fight (floor 0.96, the table below) and runs the levels 10, 40 and 60 (40 pending: GAP AB, the secret-mana floor's last mana).
-Elemental (wowsims.com) (Task 14) runs the same gates on the Elemental world (20 yd, wowsims's 5650 mana and regen:
-26.13 a second casting without Mana Spring Totem's buff, 31.13 with it, 45.25 outside the five-second rule; re-pin
-e2842f0a78): replay floor 0.89 (the table below), live L10 0.2,
+Elemental (wowsims.com) (Task 14) runs the same gates on the Elemental world (20 yd, wowsims's 5950 mana and regen:
+26.31 a second casting without Mana Spring Totem's buff, 31.31 with it, 45.62 outside the five-second rule; re-pin
+e4ef929e54): replay floor 0.93 (the table below), live L10 0.2,
 L40 0.0, L60 5.0 s (LIVE60 5.0), flicker floor 0.6. The lines:
 
 ```
-Enhancement solo: fights=3 agreement 0.997 (2706 ticks); react median 0 p90 0 never 0.000; refused per 100 [], episodes 0.00/min; dps A/B 1.027; ... [seeds 1-3]
-Enhancement solo: fights=20 agreement 0.912 (18040 ticks); react median 0 p90 8 never 0.016; ready while short 0; held while ready 152; refused per 100 [], episodes 0.00/min; dps A/B 0.996; ...
-Elemental solo: fights=3 agreement 0.985 (2706 ticks); react median 0 p90 1 never 0.000; refused per 100 [casting 4.2 (oracle 3.8, unmatched 0.0)], episodes 0.67/min; dps A/B 0.990; ... [seeds 1-3]
-Elemental solo: fights=20 agreement 0.993 (18040 ticks); react median 0 p90 1 never 0.013; ready while short 0; held while ready 284; refused per 100 [casting 0.5 (oracle 0.2, unmatched 0.0)], episodes 0.07/min; dps A/B 0.997; ...
+Enhancement solo: fights=3 agreement 0.999 (2703 ticks); react median 0 p90 0 never 0.000; ready while short 0; held while ready 22; refused per 100 [], episodes 0.00/min; dps A/B 1.032; ... [seeds 1-3]
+Enhancement solo: fights=20 agreement 0.990 (18020 ticks); react median 0 p90 0 never 0.001; ready while short 0; held while ready 146; refused per 100 [], episodes 0.00/min; dps A/B 1.019; ...
+Elemental solo: fights=3 agreement 0.999 (2703 ticks); react median 0 p90 0 never 0.000; ready while short 0; held while ready 39; refused per 100 [], episodes 0.00/min; dps A/B 1.013; ... [seeds 1-3]
+Elemental solo: fights=20 agreement 0.997 (18020 ticks); react median 0 p90 1 never 0.000; ready while short 0; held while ready 277; refused per 100 [], episodes 0.00/min; dps A/B 1.026; ...
 ```
 
 Shaman checkpoint (in game, a level 60 Shaman; provisional until answered):
@@ -375,7 +379,8 @@ under Aspect of the Hawk (10%); they run the same pack text and kit, so their li
 distance (every check in range), swings a two-hander and keeps the pack's Aspect of the Hawk up. Its Mongoose Bite
 window never opens: our dodge is meant to open it for 5 s, but `dodged()` in `tests/Forever/helpers/hunter_world.lua`
 reads `W.t`/`W.truth`, which a batched list answer sees at the finished world. Each world prices the known rank under
-the character's Resourcefulness and Efficiency (the leveling brackets; the replay's builds). Their mana regen is wowsims's logs' (Beast Mastery 7.94 casting / 15.88 outside; Marksmanship and Survival 0 / 15.88, Resourcefulness adding half the 15.88 while casting for 30 s, rolled on a landed ability at the crit rate counted in the logs; the Marksmanship and Survival loop worlds take the exports' Resourcefulness 2/2, so its cost cut applies there too, gap BV). Raptor Strike's cooldown
+the character's Resourcefulness and Efficiency (the leveling brackets; the replay's builds). The character is
+trainer-taught (no book ranks, as wowsims's: Serpent Sting rank 8 at 230, Aspect of the Hawk rank 6). Their mana pool and regen are each wowsims log's (the turret builds 3750 mana, 15.40 a second casting and 32.90 outside, Beast Mastery 24.15 casting under Bestial Discipline; Survival 3975 and 12.00 / 29.50; Survival Melee 3915 and 12.00 / 28.75; Resourcefulness and Rapid Recuperation adding half the 17.50 spirit regen while casting, rolled on a landed ability at the crit rate counted in the logs; the Marksmanship and Survival loop worlds take the exports' Resourcefulness 2/2, so its cost cut applies there too, gap BV). Raptor Strike's cooldown
 starts at its swing (class-neutral: a queued strike's cooldown). Each fight's fresh world gets the pack's aspect at the
 pull (the character keeps a permanent buff between fights). Neither side dies (shaman_world's workaround for the loop's
 missing kill). The kit's ranges are DB2's (`RANGE`: Hunter Range 8-35, Combat Range 0-5). "The Hunter at range, then
@@ -393,17 +398,21 @@ Marksmanship solo: fights=20 agreement 1.000 (16624 ticks); react median 0 p90 1
 Survival solo: fights=20 agreement 0.958 (18040 ticks); react median 0 p90 1 never 0.007; ready while short 0; held while ready 323; refused per 100 [cost 0.0 (oracle 0.4, unmatched 0.0)], episodes 0.00/min; dps A/B 1.013; ...
 ```
 
-wowsims's non-weave Hunter builds (owner 2026-11-12, ledger L661) ship beside the weave packs: Beast Mastery Turret,
-Marksmanship Turret and Survival Turret (wowsims's `bm`, `mm` and `sv` builds on `turret.apl.siml`: Hunter's Mark,
-Serpent Sting, Arcane Shot, Aimed Shot, Sniper Shot as the filler and the pull's opener, no melee) and Survival Melee
-(`sv_melee.siml` on `melee.apl.siml`). The Turret packs are each Hunter spec's default (owner 2026-11-13, L859: `package` in Hunter.lua; the weave packs and Survival
-Melee are picked by hand). The weave was the default before, so each spec lists it in `formerPackages`: a profile that
-names it without a hand pick (`packManual`) moves to the Turret (`ns.SelectPack`), one picked by hand stays.
+wowsims's non-weave Hunter builds (owner 2026-11-12, ledger L661): Beast Mastery Turret (wowsims's hawk rotation,
+`turret_hawk.apl.siml`: Summon Hawk twice, then Arcane Shot, through the class's `hha` window), Marksmanship Turret and
+Survival Turret (`turret.apl.siml`: Hunter's Mark, Serpent Sting, Arcane Shot, Aimed Shot, Sniper Shot, no melee) and
+Survival Melee (`sv_melee.siml` on `melee.apl.siml`). The Turret packs are each Hunter spec's default (owner
+2026-11-13, L859: `package` in Hunter.lua; Survival's weave and Survival Melee are picked by hand); the Beast Mastery
+and Marksmanship weave packs are retired (L1154: `spec:RetirePacks`, a profile that had one selected moves to the
+Turret with a one-time notice). Survival's weave was its default before, so Survival lists it in `formerPackages`.
 Their worlds take the export's whole talent string; the Turret worlds stand at 12 yd shooting, Survival Melee at 5 yd
-with two one-handers (its live bars at 11 yd, R63, `W.SurvivalMeleeRanged`). Replay decisions on-GCD: 1.000 (59),
-0.955 (66), 0.962 (53), 0.942 (86); the 20-fight lines (seeds 1-20, after the seeded regen phase) read agreement 0.998 / 1.000 /
-1.000 / 0.994, flicker 0, held while ready 121 / 118 / 104 / 173 (rows in `pack_gate.FLICKER`: floors at or above the worst of
-three seed sets, 127 / 118 / 105 / 174 measured).
+with two one-handers (its live bars at 11 yd, R63, `W.SurvivalMeleeRanged`). At the re-pin ab0f00e4fc (Pre-BiS gear),
+replay decisions on-GCD: 1.000 (55), 0.983 (60), 1.000 (55), 1.000 (81); the 20-fight lines (seeds 1-20 / 21-40 /
+41-60), with each world's pool and regen from its log, read held while ready 239 / 237 / 241, 203 / 225 / 219, 253 /
+253 / 255 and 280 / 285 / 290, flicker 0 (Beast Mastery Turret 0.02; rows in `pack_gate.FLICKER`: floors at the worst of the three seed sets).
+The held ticks are the near-cost edge (a dry pool at a cost, our estimate a few mana under the truth), plus, in the
+Beast Mastery and Survival Turret worlds, Rapid Fire behind an Aimed Shot paid at the cast's end, its wait paced from
+the belief's floor at an unpinned fight-opening pool.
 
 Hunter checkpoint (in game, a level 60 Hunter with a ranged weapon and a pet; provisional until answered): the Hunter
 research's §7 questions (`docs/research/2026-10-15-forever-hunter/research.md`), plus:
@@ -518,19 +527,20 @@ Soul Fire on Decimation at tier 1). The packs are Affliction, SM Ruin (Afflictio
 (Demonology's second) and Destruction (wowsims.com), Task 13 of the wowsims packs plan, from wowsims/forever's five
 Warlock builds; their replay and leveling gates `tests/Forever/wowsims_warlock_spec.lua`. The worlds
 (`tests/Forever/helpers/warlock_world.lua`) cast at 25 yd with cast bars and channels, the build's demon out from the
-pull (its mana and regen from the logs), the Soul Shards in the bags; the pools are the logs' (5353, Demonology's 6156).
+pull (its mana and regen from the logs; Affliction's Imp sacrificed, none out), the Soul Shards in the bags; the pools
+are the logs' (Affliction 6277, Demonology 6328).
 Flicker floors (pack_gate `FLICKER`, 20 fights): Affliction 0 (0 / 0 / 0 over seeds 1-20 / 21-40 / 41-60, oracle 0;
 0.4 -> 0 on the mana-regen plan's Task 10: Wrack's 6 s paid channel holds the casting rate to its end), SM Ruin 0.3,
 Demonology 0.1, Shadow Brand 0.1, Destruction 0.4 (their measured values beside them in pack_gate), retracted 0 each.
-The lines (the mana regen plan's gate on 0ce56d64f):
+The lines (the mana regen plan's gate on 0ce56d64f; Affliction's on wowsims's e4ef929e54 build):
 
 ```
-Affliction solo: fights=3 agreement 1.000 (2706 ticks); react median 0 p90 0 never 0.000; refused per 100 [casting 3.6 (oracle 3.6, unmatched 0.0)], episodes 1.00/min; dps A/B 1.000; ... [seeds 1-3]
+Affliction solo: fights=3 agreement 0.997 (2703 ticks); react median 0 p90 0 never 0.000; refused per 100 [], episodes 0.00/min; dps A/B 1.000; ... [seeds 1-3]
 SM Ruin solo: fights=3 agreement 0.992 (2706 ticks); react median 0 p90 0 never 0.000; refused per 100 [], episodes 0.00/min; dps A/B 0.976; ... [seeds 1-3]
 Demonology solo: fights=3 agreement 0.997 (2706 ticks); react median 0 p90 0 never 0.000; refused per 100 [casting 3.4 (oracle 3.4, unmatched 0.0)], episodes 1.33/min; dps A/B 0.993; ... [seeds 1-3]
 Shadow Brand solo: fights=3 agreement 0.996 (2706 ticks); react median 0 p90 0 never 0.000; refused per 100 [casting 3.4 (oracle 3.4, unmatched 0.0)], episodes 1.11/min; dps A/B 1.000; ... [seeds 1-3]
 Destruction solo: fights=3 agreement 0.980 (2706 ticks); react median 0 p90 0 never 0.003; refused per 100 [casting 12.2 (oracle 12.1, unmatched 0.6)], episodes 4.77/min; dps A/B 1.028; ... [seeds 1-3]
-Affliction solo: fights=20 agreement 0.995 (18040 ticks); react median 0 p90 0 never 0.001; ready while short 0; held while ready 0; refused per 100 [casting 11.4 (oracle 11.1, unmatched 0.0)], episodes 2.44/min; dps A/B 0.991; ...
+Affliction solo: fights=20 agreement 0.995 (18020 ticks); react median 0 p90 0 never 0.001; ready while short 0; held while ready 0; refused per 100 [casting 0.8 (oracle 0.7, unmatched 0.0)], episodes 0.17/min; dps A/B 1.008; ...
 SM Ruin solo: fights=20 agreement 0.979 (18040 ticks); react median 0 p90 0 never 0.001; ready while short 0; held while ready 3; refused per 100 [], episodes 0.00/min; dps A/B 0.995; ...
 Demonology solo: fights=20 agreement 0.953 (18040 ticks); react median 0 p90 0 never 0.000; ready while short 0; held while ready 0; refused per 100 [casting 4.2 (oracle 4.2, unmatched 0.3)], episodes 1.63/min; dps A/B 1.002; ...
 Shadow Brand solo: fights=20 agreement 0.987 (18040 ticks); react median 0 p90 0 never 0.000; ready while short 0; held while ready 7; refused per 100 [casting 4.5 (oracle 4.1, unmatched 0.0)], episodes 1.48/min; dps A/B 0.995; ...
@@ -577,7 +587,7 @@ the author's guide, the user's binding rules and the translator's rules: `docs/d
   checkout needed, so `packs-check` runs it) -> `make packs` (the RegisterPack blocks). `make wowsims-learn
   CLASS=<TOKEN>` writes the class's learn levels (`tests/Forever/wowsims/learn_<class>.lua`, from wowdb).
 - **The pin.** Per spec: `M.SPEC_PIN` in `tools/wowsims/export.lua` (`M.pin(spec)`) names the wowsims/forever
-  commit each spec's recipe, request and log come from (OLD e2842f0a78 or NEW e5a9cd2a2d while the 0.7 re-pin moves
+  commit each spec's recipe, request and log come from (OLD e4ef929e54 or NEW ab0f00e4fc while the re-pin moves
   them; `tests/Forever/wowsims_pin_spec.lua`); the export refuses a checkout at another commit. To move a spec: the
   flip procedure in `docs/dev/wowsims-packs.md` ("Moving the pin"), then `make wowsims-packs && make packs` and
   re-measure its floors and LIVE60 (each move named in the floor's comment).
@@ -622,31 +632,33 @@ beside the number (DEVELOPMENT.md).
 | Arms (wowsims.com) | 0.88 | 1.81, 2 |
 | Fury (wowsims.com) | 0.86 | 0.42, 14 |
 | Protection (wowsims.com), Warrior | 0.92 | 0.37, 4 |
-| Feral (wowsims.com) | 0.96 | 0.40, 10 |
+| Feral (wowsims.com) | 0.96 | 0.12, 3 |
 | Guardian (wowsims.com) | 0.63 | 1.76, 55 |
 | Balance (wowsims.com) | 0.97 | 0.26, 22 |
-| Assassination (wowsims.com) | 0.97 | 0.20, 35 |
-| Combat (wowsims.com) | 0.99 | 0.24, 21 |
-| Subtlety (wowsims.com) | 0.98 | 0.17, 40 |
+| Assassination (wowsims.com) | 0.96 | 0.20, 13 |
+| Combat (wowsims.com) | 0.98 | 0, 0 |
+| Subtlety (wowsims.com) | 1.00 | 0.07, 5 |
 | Retribution (wowsims.com) | 0.93 | 0.10, 7 |
 | Holy Shock (wowsims.com) | 0.97 | 0.24, 5 |
 | Protection (wowsims.com), Paladin | 0.95 | 0.43, 1 |
-| Enhancement (wowsims.com) | 0.96 | 0.38, 34 |
-| Elemental (wowsims.com) | 0.89 | 2.20, 3 |
-| Beast Mastery (wowsims.com) | 0.95 | 0.46, 28 |
-| Marksmanship (wowsims.com) | 0.98 | 0.32, 22 |
-| Survival (wowsims.com) | 0.94 | 0.29, 22 |
+| Enhancement (wowsims.com) | 0.96 | 1.05, 7 |
+| Elemental (wowsims.com) | 0.93 | 1.22, 2 |
+| Survival (wowsims.com) | 0.96 | 0.41, 23 |
+| Beast Mastery Turret (wowsims.com) | 0.98 | 0.24, 5 |
+| Marksmanship Turret (wowsims.com) | 0.95 | 0.15, 2 |
+| Survival Turret (wowsims.com) | 0.96 | 0.27, 2 |
+| Survival Melee (wowsims.com) | 0.94 | 0.23, 3 |
 | Arcane (wowsims.com) | 0.95 | 0.76, 9 |
 | Fire (wowsims.com) | 0.96 | 0.45, 10 |
 | Frostfire (wowsims.com) | 0.96 | 0.42, 9 |
 | Frost (wowsims.com) | 0.93 | 0.23, 3 |
 | Shadow (wowsims.com) | 1.00 | 1.50, 36 |
 | Smite (wowsims.com) | 0.93 | 0.70, 11 |
-| Affliction (wowsims.com) | 0.83 | 0.00, 0 |
-| SM Ruin (wowsims.com) | 0.78 | 0.20, 8 |
-| Demonology (wowsims.com) | 0.87 | 0.00, 0 |
+| Affliction (wowsims.com) | 0.93 | 0.00, 0 |
+| SM Ruin (wowsims.com) | 0.85 | 0.00, 0 |
+| Demonology (wowsims.com) | 0.94 | 0.00, 0 |
 | Shadow Brand (wowsims.com) | 0.71 | 0.20, 1 |
-| Destruction (wowsims.com) | 0.90 | 0.00, 0 |
+| Destruction (wowsims.com) | 0.95 | 0.00, 0 |
 
 Recorded deviations (each one's reason in the named file):
 - Every pack (API-forced, `tools/wowsims/apl.lua` rules 10, 11, 13): `fight_remains` answers unknown (target health

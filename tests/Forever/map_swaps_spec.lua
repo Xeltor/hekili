@@ -20,6 +20,7 @@ local function character(file, class, classID, specID)
         class = class,
         classID = classID,
         specID = specID,
+        instanceType = class == "WARLOCK" and "raid" or nil, -- these cases exercise the sustained cycling lists
         level = 60,
         known = known,
         talents = {},

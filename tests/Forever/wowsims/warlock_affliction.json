@@ -19,6 +19,8 @@
         "players":[{
             "profession1":"Engineering",
             "distanceFromTarget":20,
+            "profession2":"Tailoring",
+            "class":"ClassWarlock",
             "rotation":{
               "type":"TypeAPL",
               "groups":[{
@@ -502,46 +504,22 @@
                                   "val":{
                                     "dotIsActive":{
                                       "spellId":{
-                                        "spellId":603
+                                        "spellId":11713,
+                                        "rank":6
                                       }
                                     }
                                   }
                                 }
                               },{
-                                "or":{
-                                  "vals":[{
-                                      "not":{
-                                        "val":{
-                                          "spellIsReady":{
-                                            "spellId":{
-                                              "spellId":603
-                                            }
-                                          }
-                                        }
-                                      }
-                                    },{
-                                      "cmp":{
-                                        "op":"OpLt",
-                                        "rhs":{
-                                          "variableRef":{
-                                            "name":"Doom tick"
-                                          }
-                                        },
-                                        "lhs":{
-                                          "remainingTime":{
-                                          }
-                                        }
-                                      }
-                                    }]
-                                }
-                              },{
-                                "not":{
-                                  "val":{
-                                    "dotIsActive":{
-                                      "spellId":{
-                                        "spellId":11713,
-                                        "rank":6
-                                      }
+                                "cmp":{
+                                  "op":"OpGt",
+                                  "rhs":{
+                                    "const":{
+                                      "val":"12"
+                                    }
+                                  },
+                                  "lhs":{
+                                    "remainingTime":{
                                     }
                                   }
                                 }
@@ -559,16 +537,6 @@
                         "condition":{
                           "and":{
                             "vals":[{
-                                "not":{
-                                  "val":{
-                                    "dotIsActive":{
-                                      "spellId":{
-                                        "spellId":603
-                                      }
-                                    }
-                                  }
-                                }
-                              },{
                                 "not":{
                                   "val":{
                                     "dotIsActive":{
@@ -719,19 +687,45 @@
                   "actions":[{
                       "action":{
                         "condition":{
-                          "or":{
+                          "and":{
                             "vals":[{
-                                "and":{
+                                "or":{
                                   "vals":[{
-                                      "cmp":{
-                                        "op":"OpLt",
-                                        "rhs":{
-                                          "const":{
-                                            "val":"15s"
-                                          }
-                                        },
-                                        "lhs":{
-                                          "dotRemainingTime":{
+                                      "and":{
+                                        "vals":[{
+                                            "cmp":{
+                                              "op":"OpLt",
+                                              "rhs":{
+                                                "const":{
+                                                  "val":"15s"
+                                                }
+                                              },
+                                              "lhs":{
+                                                "dotRemainingTime":{
+                                                  "spellId":{
+                                                    "spellId":603
+                                                  },
+                                                  "targetUnit":{
+                                                    "type":"Target"
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          },{
+                                            "dotIsActive":{
+                                              "spellId":{
+                                                "spellId":603
+                                              },
+                                              "targetUnit":{
+                                                "type":"Target"
+                                              }
+                                            }
+                                          }]
+                                      }
+                                    },{
+                                      "not":{
+                                        "val":{
+                                          "dotIsActive":{
                                             "spellId":{
                                               "spellId":603
                                             },
@@ -741,29 +735,44 @@
                                           }
                                         }
                                       }
-                                    },{
-                                      "dotIsActive":{
-                                        "spellId":{
-                                          "spellId":603
-                                        },
-                                        "targetUnit":{
-                                          "type":"Target"
-                                        }
-                                      }
                                     }]
                                 }
                               },{
-                                "not":{
-                                  "val":{
-                                    "dotIsActive":{
-                                      "spellId":{
-                                        "spellId":603
-                                      },
-                                      "targetUnit":{
-                                        "type":"Target"
+                                "or":{
+                                  "vals":[{
+                                      "cmp":{
+                                        "op":"OpGt",
+                                        "rhs":{
+                                          "const":{
+                                            "val":"1"
+                                          }
+                                        },
+                                        "lhs":{
+                                          "numberTargets":{
+                                          }
+                                        }
                                       }
-                                    }
-                                  }
+                                    },{
+                                      "and":{
+                                        "vals":[{
+                                            "variableRef":{
+                                              "name":"Wrack Dots Up"
+                                            }
+                                          },{
+                                            "or":{
+                                              "vals":[{
+                                                  "variableRef":{
+                                                    "name":"Amp Agony Up"
+                                                  }
+                                                },{
+                                                  "variableRef":{
+                                                    "name":"Waiting Costs Frozen Heart"
+                                                  }
+                                                }]
+                                            }
+                                          }]
+                                      }
+                                    }]
                                 }
                               }]
                           }
@@ -777,19 +786,45 @@
                     },{
                       "action":{
                         "condition":{
-                          "or":{
+                          "and":{
                             "vals":[{
-                                "and":{
+                                "or":{
                                   "vals":[{
-                                      "cmp":{
-                                        "op":"OpLt",
-                                        "rhs":{
-                                          "const":{
-                                            "val":"30s"
-                                          }
-                                        },
-                                        "lhs":{
-                                          "dotRemainingTime":{
+                                      "and":{
+                                        "vals":[{
+                                            "cmp":{
+                                              "op":"OpLt",
+                                              "rhs":{
+                                                "const":{
+                                                  "val":"30s"
+                                                }
+                                              },
+                                              "lhs":{
+                                                "dotRemainingTime":{
+                                                  "spellId":{
+                                                    "spellId":603
+                                                  },
+                                                  "targetUnit":{
+                                                    "type":"Target"
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          },{
+                                            "dotIsActive":{
+                                              "spellId":{
+                                                "spellId":603
+                                              },
+                                              "targetUnit":{
+                                                "type":"Target"
+                                              }
+                                            }
+                                          }]
+                                      }
+                                    },{
+                                      "not":{
+                                        "val":{
+                                          "dotIsActive":{
                                             "spellId":{
                                               "spellId":603
                                             },
@@ -799,29 +834,44 @@
                                           }
                                         }
                                       }
-                                    },{
-                                      "dotIsActive":{
-                                        "spellId":{
-                                          "spellId":603
-                                        },
-                                        "targetUnit":{
-                                          "type":"Target"
-                                        }
-                                      }
                                     }]
                                 }
                               },{
-                                "not":{
-                                  "val":{
-                                    "dotIsActive":{
-                                      "spellId":{
-                                        "spellId":603
-                                      },
-                                      "targetUnit":{
-                                        "type":"Target"
+                                "or":{
+                                  "vals":[{
+                                      "cmp":{
+                                        "op":"OpGt",
+                                        "rhs":{
+                                          "const":{
+                                            "val":"1"
+                                          }
+                                        },
+                                        "lhs":{
+                                          "numberTargets":{
+                                          }
+                                        }
                                       }
-                                    }
-                                  }
+                                    },{
+                                      "and":{
+                                        "vals":[{
+                                            "variableRef":{
+                                              "name":"Wrack Dots Up"
+                                            }
+                                          },{
+                                            "or":{
+                                              "vals":[{
+                                                  "variableRef":{
+                                                    "name":"Amp Agony Up"
+                                                  }
+                                                },{
+                                                  "variableRef":{
+                                                    "name":"Waiting Costs Potion"
+                                                  }
+                                                }]
+                                            }
+                                          }]
+                                      }
+                                    }]
                                 }
                               }]
                           }
@@ -835,19 +885,45 @@
                     },{
                       "action":{
                         "condition":{
-                          "or":{
+                          "and":{
                             "vals":[{
-                                "and":{
+                                "or":{
                                   "vals":[{
-                                      "cmp":{
-                                        "op":"OpLt",
-                                        "rhs":{
-                                          "const":{
-                                            "val":"8s"
-                                          }
-                                        },
-                                        "lhs":{
-                                          "dotRemainingTime":{
+                                      "and":{
+                                        "vals":[{
+                                            "cmp":{
+                                              "op":"OpLt",
+                                              "rhs":{
+                                                "const":{
+                                                  "val":"8s"
+                                                }
+                                              },
+                                              "lhs":{
+                                                "dotRemainingTime":{
+                                                  "spellId":{
+                                                    "spellId":603
+                                                  },
+                                                  "targetUnit":{
+                                                    "type":"Target"
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          },{
+                                            "dotIsActive":{
+                                              "spellId":{
+                                                "spellId":603
+                                              },
+                                              "targetUnit":{
+                                                "type":"Target"
+                                              }
+                                            }
+                                          }]
+                                      }
+                                    },{
+                                      "not":{
+                                        "val":{
+                                          "dotIsActive":{
                                             "spellId":{
                                               "spellId":603
                                             },
@@ -857,29 +933,44 @@
                                           }
                                         }
                                       }
-                                    },{
-                                      "dotIsActive":{
-                                        "spellId":{
-                                          "spellId":603
-                                        },
-                                        "targetUnit":{
-                                          "type":"Target"
-                                        }
-                                      }
                                     }]
                                 }
                               },{
-                                "not":{
-                                  "val":{
-                                    "dotIsActive":{
-                                      "spellId":{
-                                        "spellId":603
-                                      },
-                                      "targetUnit":{
-                                        "type":"Target"
+                                "or":{
+                                  "vals":[{
+                                      "cmp":{
+                                        "op":"OpGt",
+                                        "rhs":{
+                                          "const":{
+                                            "val":"1"
+                                          }
+                                        },
+                                        "lhs":{
+                                          "numberTargets":{
+                                          }
+                                        }
                                       }
-                                    }
-                                  }
+                                    },{
+                                      "and":{
+                                        "vals":[{
+                                            "variableRef":{
+                                              "name":"Wrack Dots Up"
+                                            }
+                                          },{
+                                            "or":{
+                                              "vals":[{
+                                                  "variableRef":{
+                                                    "name":"Amp Agony Up"
+                                                  }
+                                                },{
+                                                  "variableRef":{
+                                                    "name":"Waiting Costs Eureka"
+                                                  }
+                                                }]
+                                            }
+                                          }]
+                                      }
+                                    }]
                                 }
                               }]
                           }
@@ -893,19 +984,45 @@
                     },{
                       "action":{
                         "condition":{
-                          "or":{
+                          "and":{
                             "vals":[{
-                                "and":{
+                                "or":{
                                   "vals":[{
-                                      "cmp":{
-                                        "op":"OpLt",
-                                        "rhs":{
-                                          "const":{
-                                            "val":"15s"
-                                          }
-                                        },
-                                        "lhs":{
-                                          "dotRemainingTime":{
+                                      "and":{
+                                        "vals":[{
+                                            "cmp":{
+                                              "op":"OpLt",
+                                              "rhs":{
+                                                "const":{
+                                                  "val":"15s"
+                                                }
+                                              },
+                                              "lhs":{
+                                                "dotRemainingTime":{
+                                                  "spellId":{
+                                                    "spellId":603
+                                                  },
+                                                  "targetUnit":{
+                                                    "type":"Target"
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          },{
+                                            "dotIsActive":{
+                                              "spellId":{
+                                                "spellId":603
+                                              },
+                                              "targetUnit":{
+                                                "type":"Target"
+                                              }
+                                            }
+                                          }]
+                                      }
+                                    },{
+                                      "not":{
+                                        "val":{
+                                          "dotIsActive":{
                                             "spellId":{
                                               "spellId":603
                                             },
@@ -915,29 +1032,44 @@
                                           }
                                         }
                                       }
-                                    },{
-                                      "dotIsActive":{
-                                        "spellId":{
-                                          "spellId":603
-                                        },
-                                        "targetUnit":{
-                                          "type":"Target"
-                                        }
-                                      }
                                     }]
                                 }
                               },{
-                                "not":{
-                                  "val":{
-                                    "dotIsActive":{
-                                      "spellId":{
-                                        "spellId":603
-                                      },
-                                      "targetUnit":{
-                                        "type":"Target"
+                                "or":{
+                                  "vals":[{
+                                      "cmp":{
+                                        "op":"OpGt",
+                                        "rhs":{
+                                          "const":{
+                                            "val":"1"
+                                          }
+                                        },
+                                        "lhs":{
+                                          "numberTargets":{
+                                          }
+                                        }
                                       }
-                                    }
-                                  }
+                                    },{
+                                      "and":{
+                                        "vals":[{
+                                            "variableRef":{
+                                              "name":"Wrack Dots Up"
+                                            }
+                                          },{
+                                            "or":{
+                                              "vals":[{
+                                                  "variableRef":{
+                                                    "name":"Amp Agony Up"
+                                                  }
+                                                },{
+                                                  "variableRef":{
+                                                    "name":"Waiting Costs Blood Fury"
+                                                  }
+                                                }]
+                                            }
+                                          }]
+                                      }
+                                    }]
                                 }
                               }]
                           }
@@ -945,182 +1077,6 @@
                         "castSpell":{
                           "spellId":{
                             "spellId":20572
-                          }
-                        }
-                      }
-                    },{
-                      "action":{
-                        "condition":{
-                          "and":{
-                            "vals":[{
-                                "cmp":{
-                                  "op":"OpLt",
-                                  "rhs":{
-                                    "const":{
-                                      "val":"15"
-                                    }
-                                  },
-                                  "lhs":{
-                                    "dotRemainingTime":{
-                                      "spellId":{
-                                        "spellId":603
-                                      },
-                                      "targetUnit":{
-                                        "type":"Target"
-                                      }
-                                    }
-                                  }
-                                }
-                              },{
-                                "dotIsActive":{
-                                  "spellId":{
-                                    "spellId":603
-                                  },
-                                  "targetUnit":{
-                                    "type":"Target"
-                                  }
-                                }
-                              },{
-                                "cmp":{
-                                  "op":"OpEq",
-                                  "rhs":{
-                                    "const":{
-                                      "val":"1"
-                                    }
-                                  },
-                                  "lhs":{
-                                    "numberTargets":{
-                                    }
-                                  }
-                                }
-                              }]
-                          }
-                        },
-                        "channelSpell":{
-                          "spellId":{
-                            "spellId":1316697,
-                            "rank":1
-                          },
-                          "interruptIf":{
-                            "or":{
-                              "vals":[{
-                                  "and":{
-                                    "vals":[{
-                                        "cmp":{
-                                          "op":"OpGe",
-                                          "rhs":{
-                                            "const":{
-                                              "val":"2"
-                                            }
-                                          },
-                                          "lhs":{
-                                            "spellChanneledTicks":{
-                                              "spellId":{
-                                                "spellId":1316697,
-                                                "rank":1
-                                              }
-                                            }
-                                          }
-                                        }
-                                      },{
-                                        "auraIsInactive":{
-                                          "includeReactionTime":true,
-                                          "sourceUnit":{
-                                            "type":"Target"
-                                          },
-                                          "auraId":{
-                                            "spellId":25311
-                                          }
-                                        }
-                                      }]
-                                  }
-                                },{
-                                  "and":{
-                                    "vals":[{
-                                        "cmp":{
-                                          "op":"OpGe",
-                                          "rhs":{
-                                            "const":{
-                                              "val":"2"
-                                            }
-                                          },
-                                          "lhs":{
-                                            "spellChanneledTicks":{
-                                              "spellId":{
-                                                "spellId":1316697,
-                                                "rank":1
-                                              }
-                                            }
-                                          }
-                                        }
-                                      },{
-                                        "auraIsInactive":{
-                                          "includeReactionTime":true,
-                                          "sourceUnit":{
-                                            "type":"Target"
-                                          },
-                                          "auraId":{
-                                            "spellId":11713
-                                          }
-                                        }
-                                      },{
-                                        "auraIsInactive":{
-                                          "includeReactionTime":true,
-                                          "sourceUnit":{
-                                            "type":"Target"
-                                          },
-                                          "auraId":{
-                                            "spellId":603
-                                          }
-                                        }
-                                      }]
-                                  }
-                                },{
-                                  "and":{
-                                    "vals":[{
-                                        "cmp":{
-                                          "op":"OpGe",
-                                          "rhs":{
-                                            "const":{
-                                              "val":"2"
-                                            }
-                                          },
-                                          "lhs":{
-                                            "spellChanneledTicks":{
-                                              "spellId":{
-                                                "spellId":1316697,
-                                                "rank":1
-                                              }
-                                            }
-                                          }
-                                        }
-                                      },{
-                                        "variableRef":{
-                                          "name":"Blood Fury Ready"
-                                        }
-                                      },{
-                                        "cmp":{
-                                          "op":"OpLe",
-                                          "rhs":{
-                                            "const":{
-                                              "val":"15"
-                                            }
-                                          },
-                                          "lhs":{
-                                            "dotRemainingTime":{
-                                              "spellId":{
-                                                "spellId":603
-                                              },
-                                              "targetUnit":{
-                                                "type":"Target"
-                                              }
-                                            }
-                                          }
-                                        }
-                                      }]
-                                  }
-                                }]
-                            }
                           }
                         }
                       }
@@ -1220,17 +1176,34 @@
                 },{
                   "action":{
                     "condition":{
-                      "cmp":{
-                        "op":"OpGt",
-                        "rhs":{
-                          "variableRef":{
-                            "name":"Doom tick"
-                          }
-                        },
-                        "lhs":{
-                          "remainingTime":{
-                          }
-                        }
+                      "and":{
+                        "vals":[{
+                            "cmp":{
+                              "op":"OpGt",
+                              "rhs":{
+                                "variableRef":{
+                                  "name":"Doom tick"
+                                }
+                              },
+                              "lhs":{
+                                "remainingTime":{
+                                }
+                              }
+                            }
+                          },{
+                            "cmp":{
+                              "op":"OpGt",
+                              "rhs":{
+                                "const":{
+                                  "val":"1"
+                                }
+                              },
+                              "lhs":{
+                                "numberTargets":{
+                                }
+                              }
+                            }
+                          }]
                       }
                     },
                     "castSpell":{
@@ -1473,6 +1446,19 @@
                     "condition":{
                       "or":{
                         "vals":[{
+                            "cmp":{
+                              "op":"OpEq",
+                              "rhs":{
+                                "const":{
+                                  "val":"1"
+                                }
+                              },
+                              "lhs":{
+                                "numberTargets":{
+                                }
+                              }
+                            }
+                          },{
                             "and":{
                               "vals":[{
                                   "cmp":{
@@ -1703,23 +1689,40 @@
                                       "name":"Blood Fury Ready"
                                     }
                                   },{
-                                    "cmp":{
-                                      "op":"OpLe",
-                                      "rhs":{
-                                        "const":{
-                                          "val":"15"
-                                        }
-                                      },
-                                      "lhs":{
-                                        "dotRemainingTime":{
-                                          "spellId":{
-                                            "spellId":603
-                                          },
-                                          "targetUnit":{
-                                            "type":"Target"
+                                    "or":{
+                                      "vals":[{
+                                          "cmp":{
+                                            "op":"OpEq",
+                                            "rhs":{
+                                              "const":{
+                                                "val":"1"
+                                              }
+                                            },
+                                            "lhs":{
+                                              "numberTargets":{
+                                              }
+                                            }
                                           }
-                                        }
-                                      }
+                                        },{
+                                          "cmp":{
+                                            "op":"OpLe",
+                                            "rhs":{
+                                              "const":{
+                                                "val":"15"
+                                              }
+                                            },
+                                            "lhs":{
+                                              "dotRemainingTime":{
+                                                "spellId":{
+                                                  "spellId":603
+                                                },
+                                                "targetUnit":{
+                                                  "type":"Target"
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }]
                                     }
                                   }]
                               }
@@ -1925,49 +1928,922 @@
                         }]
                     }
                   }
-                }]
-            },
-            "class":"ClassWarlock",
-            "equipment":{
-              "items":[{
-                  "id":16698
                 },{
-                  "id":22149
+                  "name":"Wrack Dots Up",
+                  "value":{
+                    "and":{
+                      "vals":[{
+                          "dotIsActive":{
+                            "spellId":{
+                              "spellId":25311,
+                              "rank":7
+                            },
+                            "targetUnit":{
+                              "type":"Target"
+                            }
+                          }
+                        },{
+                          "dotIsActive":{
+                            "spellId":{
+                              "spellId":11713,
+                              "rank":6
+                            },
+                            "targetUnit":{
+                              "type":"Target"
+                            }
+                          }
+                        },{
+                          "or":{
+                            "vals":[{
+                                "dotIsActive":{
+                                  "spellId":{
+                                    "spellId":18881,
+                                    "rank":4
+                                  },
+                                  "targetUnit":{
+                                    "type":"Target"
+                                  }
+                                }
+                              },{
+                                "not":{
+                                  "val":{
+                                    "spellIsKnown":{
+                                      "spellId":{
+                                        "spellId":18881,
+                                        "rank":4
+                                      }
+                                    }
+                                  }
+                                }
+                              }]
+                          }
+                        }]
+                    }
+                  }
                 },{
-                  "id":16701
+                  "name":"Amp Agony Up",
+                  "value":{
+                    "and":{
+                      "vals":[{
+                          "dotIsActive":{
+                            "spellId":{
+                              "spellId":11713,
+                              "rank":6
+                            },
+                            "targetUnit":{
+                              "type":"Target"
+                            }
+                          }
+                        },{
+                          "not":{
+                            "val":{
+                              "spellIsReady":{
+                                "spellId":{
+                                  "spellId":18288
+                                }
+                              }
+                            }
+                          }
+                        },{
+                          "cmp":{
+                            "op":"OpLe",
+                            "rhs":{
+                              "math":{
+                                "op":"OpAdd",
+                                "rhs":{
+                                  "const":{
+                                    "val":"1.5s"
+                                  }
+                                },
+                                "lhs":{
+                                  "dotBaseDuration":{
+                                    "spellId":{
+                                      "spellId":11713,
+                                      "rank":6
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "lhs":{
+                              "math":{
+                                "op":"OpSub",
+                                "rhs":{
+                                  "spellTimeToReady":{
+                                    "spellId":{
+                                      "spellId":18288
+                                    }
+                                  }
+                                },
+                                "lhs":{
+                                  "spellFullCooldown":{
+                                    "spellId":{
+                                      "spellId":18288
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }]
+                    }
+                  }
                 },{
-                  "id":272413
+                  "name":"Amp Agony Wait",
+                  "value":{
+                    "math":{
+                      "op":"OpAdd",
+                      "rhs":{
+                        "dotBaseDuration":{
+                          "spellId":{
+                            "spellId":11713,
+                            "rank":6
+                          }
+                        }
+                      },
+                      "lhs":{
+                        "spellTimeToReady":{
+                          "spellId":{
+                            "spellId":18288
+                          }
+                        }
+                      }
+                    }
+                  }
                 },{
-                  "id":14153
+                  "name":"Waiting Costs Frozen Heart",
+                  "value":{
+                    "or":{
+                      "vals":[{
+                          "cmp":{
+                            "op":"OpLt",
+                            "rhs":{
+                              "variableRef":{
+                                "name":"Amp Agony Wait"
+                              }
+                            },
+                            "lhs":{
+                              "remainingTime":{
+                              }
+                            }
+                          }
+                        },{
+                          "and":{
+                            "vals":[{
+                                "cmp":{
+                                  "op":"OpGe",
+                                  "rhs":{
+                                    "spellFullCooldown":{
+                                      "spellId":{
+                                        "itemId":249469
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "remainingTime":{
+                                    }
+                                  }
+                                }
+                              },{
+                                "cmp":{
+                                  "op":"OpLt",
+                                  "rhs":{
+                                    "spellFullCooldown":{
+                                      "spellId":{
+                                        "itemId":249469
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "math":{
+                                      "op":"OpSub",
+                                      "rhs":{
+                                        "variableRef":{
+                                          "name":"Amp Agony Wait"
+                                        }
+                                      },
+                                      "lhs":{
+                                        "remainingTime":{
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }]
+                          }
+                        },{
+                          "and":{
+                            "vals":[{
+                                "cmp":{
+                                  "op":"OpGe",
+                                  "rhs":{
+                                    "math":{
+                                      "op":"OpMul",
+                                      "rhs":{
+                                        "spellFullCooldown":{
+                                          "spellId":{
+                                            "itemId":249469
+                                          }
+                                        }
+                                      },
+                                      "lhs":{
+                                        "const":{
+                                          "val":"2"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "remainingTime":{
+                                    }
+                                  }
+                                }
+                              },{
+                                "cmp":{
+                                  "op":"OpLt",
+                                  "rhs":{
+                                    "math":{
+                                      "op":"OpMul",
+                                      "rhs":{
+                                        "spellFullCooldown":{
+                                          "spellId":{
+                                            "itemId":249469
+                                          }
+                                        }
+                                      },
+                                      "lhs":{
+                                        "const":{
+                                          "val":"2"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "math":{
+                                      "op":"OpSub",
+                                      "rhs":{
+                                        "variableRef":{
+                                          "name":"Amp Agony Wait"
+                                        }
+                                      },
+                                      "lhs":{
+                                        "remainingTime":{
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }]
+                          }
+                        },{
+                          "and":{
+                            "vals":[{
+                                "cmp":{
+                                  "op":"OpGe",
+                                  "rhs":{
+                                    "math":{
+                                      "op":"OpMul",
+                                      "rhs":{
+                                        "spellFullCooldown":{
+                                          "spellId":{
+                                            "itemId":249469
+                                          }
+                                        }
+                                      },
+                                      "lhs":{
+                                        "const":{
+                                          "val":"3"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "remainingTime":{
+                                    }
+                                  }
+                                }
+                              },{
+                                "cmp":{
+                                  "op":"OpLt",
+                                  "rhs":{
+                                    "math":{
+                                      "op":"OpMul",
+                                      "rhs":{
+                                        "spellFullCooldown":{
+                                          "spellId":{
+                                            "itemId":249469
+                                          }
+                                        }
+                                      },
+                                      "lhs":{
+                                        "const":{
+                                          "val":"3"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "math":{
+                                      "op":"OpSub",
+                                      "rhs":{
+                                        "variableRef":{
+                                          "name":"Amp Agony Wait"
+                                        }
+                                      },
+                                      "lhs":{
+                                        "remainingTime":{
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }]
+                          }
+                        }]
+                    }
+                  }
                 },{
-                  "id":16703
+                  "name":"Waiting Costs Potion",
+                  "value":{
+                    "or":{
+                      "vals":[{
+                          "cmp":{
+                            "op":"OpLt",
+                            "rhs":{
+                              "variableRef":{
+                                "name":"Amp Agony Wait"
+                              }
+                            },
+                            "lhs":{
+                              "remainingTime":{
+                              }
+                            }
+                          }
+                        },{
+                          "and":{
+                            "vals":[{
+                                "cmp":{
+                                  "op":"OpGe",
+                                  "rhs":{
+                                    "spellFullCooldown":{
+                                      "spellId":{
+                                        "itemId":250937
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "remainingTime":{
+                                    }
+                                  }
+                                }
+                              },{
+                                "cmp":{
+                                  "op":"OpLt",
+                                  "rhs":{
+                                    "spellFullCooldown":{
+                                      "spellId":{
+                                        "itemId":250937
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "math":{
+                                      "op":"OpSub",
+                                      "rhs":{
+                                        "variableRef":{
+                                          "name":"Amp Agony Wait"
+                                        }
+                                      },
+                                      "lhs":{
+                                        "remainingTime":{
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }]
+                          }
+                        },{
+                          "and":{
+                            "vals":[{
+                                "cmp":{
+                                  "op":"OpGe",
+                                  "rhs":{
+                                    "math":{
+                                      "op":"OpMul",
+                                      "rhs":{
+                                        "spellFullCooldown":{
+                                          "spellId":{
+                                            "itemId":250937
+                                          }
+                                        }
+                                      },
+                                      "lhs":{
+                                        "const":{
+                                          "val":"2"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "remainingTime":{
+                                    }
+                                  }
+                                }
+                              },{
+                                "cmp":{
+                                  "op":"OpLt",
+                                  "rhs":{
+                                    "math":{
+                                      "op":"OpMul",
+                                      "rhs":{
+                                        "spellFullCooldown":{
+                                          "spellId":{
+                                            "itemId":250937
+                                          }
+                                        }
+                                      },
+                                      "lhs":{
+                                        "const":{
+                                          "val":"2"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "math":{
+                                      "op":"OpSub",
+                                      "rhs":{
+                                        "variableRef":{
+                                          "name":"Amp Agony Wait"
+                                        }
+                                      },
+                                      "lhs":{
+                                        "remainingTime":{
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }]
+                          }
+                        },{
+                          "and":{
+                            "vals":[{
+                                "cmp":{
+                                  "op":"OpGe",
+                                  "rhs":{
+                                    "math":{
+                                      "op":"OpMul",
+                                      "rhs":{
+                                        "spellFullCooldown":{
+                                          "spellId":{
+                                            "itemId":250937
+                                          }
+                                        }
+                                      },
+                                      "lhs":{
+                                        "const":{
+                                          "val":"3"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "remainingTime":{
+                                    }
+                                  }
+                                }
+                              },{
+                                "cmp":{
+                                  "op":"OpLt",
+                                  "rhs":{
+                                    "math":{
+                                      "op":"OpMul",
+                                      "rhs":{
+                                        "spellFullCooldown":{
+                                          "spellId":{
+                                            "itemId":250937
+                                          }
+                                        }
+                                      },
+                                      "lhs":{
+                                        "const":{
+                                          "val":"3"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "math":{
+                                      "op":"OpSub",
+                                      "rhs":{
+                                        "variableRef":{
+                                          "name":"Amp Agony Wait"
+                                        }
+                                      },
+                                      "lhs":{
+                                        "remainingTime":{
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }]
+                          }
+                        }]
+                    }
+                  }
                 },{
-                  "id":16705
+                  "name":"Waiting Costs Eureka",
+                  "value":{
+                    "or":{
+                      "vals":[{
+                          "cmp":{
+                            "op":"OpLt",
+                            "rhs":{
+                              "variableRef":{
+                                "name":"Amp Agony Wait"
+                              }
+                            },
+                            "lhs":{
+                              "remainingTime":{
+                              }
+                            }
+                          }
+                        },{
+                          "and":{
+                            "vals":[{
+                                "cmp":{
+                                  "op":"OpGe",
+                                  "rhs":{
+                                    "spellFullCooldown":{
+                                      "spellId":{
+                                        "spellId":1259821
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "remainingTime":{
+                                    }
+                                  }
+                                }
+                              },{
+                                "cmp":{
+                                  "op":"OpLt",
+                                  "rhs":{
+                                    "spellFullCooldown":{
+                                      "spellId":{
+                                        "spellId":1259821
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "math":{
+                                      "op":"OpSub",
+                                      "rhs":{
+                                        "variableRef":{
+                                          "name":"Amp Agony Wait"
+                                        }
+                                      },
+                                      "lhs":{
+                                        "remainingTime":{
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }]
+                          }
+                        },{
+                          "and":{
+                            "vals":[{
+                                "cmp":{
+                                  "op":"OpGe",
+                                  "rhs":{
+                                    "math":{
+                                      "op":"OpMul",
+                                      "rhs":{
+                                        "spellFullCooldown":{
+                                          "spellId":{
+                                            "spellId":1259821
+                                          }
+                                        }
+                                      },
+                                      "lhs":{
+                                        "const":{
+                                          "val":"2"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "remainingTime":{
+                                    }
+                                  }
+                                }
+                              },{
+                                "cmp":{
+                                  "op":"OpLt",
+                                  "rhs":{
+                                    "math":{
+                                      "op":"OpMul",
+                                      "rhs":{
+                                        "spellFullCooldown":{
+                                          "spellId":{
+                                            "spellId":1259821
+                                          }
+                                        }
+                                      },
+                                      "lhs":{
+                                        "const":{
+                                          "val":"2"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "math":{
+                                      "op":"OpSub",
+                                      "rhs":{
+                                        "variableRef":{
+                                          "name":"Amp Agony Wait"
+                                        }
+                                      },
+                                      "lhs":{
+                                        "remainingTime":{
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }]
+                          }
+                        },{
+                          "and":{
+                            "vals":[{
+                                "cmp":{
+                                  "op":"OpGe",
+                                  "rhs":{
+                                    "math":{
+                                      "op":"OpMul",
+                                      "rhs":{
+                                        "spellFullCooldown":{
+                                          "spellId":{
+                                            "spellId":1259821
+                                          }
+                                        }
+                                      },
+                                      "lhs":{
+                                        "const":{
+                                          "val":"3"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "remainingTime":{
+                                    }
+                                  }
+                                }
+                              },{
+                                "cmp":{
+                                  "op":"OpLt",
+                                  "rhs":{
+                                    "math":{
+                                      "op":"OpMul",
+                                      "rhs":{
+                                        "spellFullCooldown":{
+                                          "spellId":{
+                                            "spellId":1259821
+                                          }
+                                        }
+                                      },
+                                      "lhs":{
+                                        "const":{
+                                          "val":"3"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "math":{
+                                      "op":"OpSub",
+                                      "rhs":{
+                                        "variableRef":{
+                                          "name":"Amp Agony Wait"
+                                        }
+                                      },
+                                      "lhs":{
+                                        "remainingTime":{
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }]
+                          }
+                        }]
+                    }
+                  }
                 },{
-                  "id":16702
-                },{
-                  "id":16699
-                },{
-                  "id":16704
-                },{
-                  "id":275738
-                },{
-                  "id":19518
-                },{
-                  "id":272438
-                },{
-                  "id":270225
-                },{
-                  "id":22379
-                },{
-                  "id":249455
-                },{
-                  "id":15283
+                  "name":"Waiting Costs Blood Fury",
+                  "value":{
+                    "or":{
+                      "vals":[{
+                          "cmp":{
+                            "op":"OpLt",
+                            "rhs":{
+                              "variableRef":{
+                                "name":"Amp Agony Wait"
+                              }
+                            },
+                            "lhs":{
+                              "remainingTime":{
+                              }
+                            }
+                          }
+                        },{
+                          "and":{
+                            "vals":[{
+                                "cmp":{
+                                  "op":"OpGe",
+                                  "rhs":{
+                                    "spellFullCooldown":{
+                                      "spellId":{
+                                        "spellId":20572
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "remainingTime":{
+                                    }
+                                  }
+                                }
+                              },{
+                                "cmp":{
+                                  "op":"OpLt",
+                                  "rhs":{
+                                    "spellFullCooldown":{
+                                      "spellId":{
+                                        "spellId":20572
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "math":{
+                                      "op":"OpSub",
+                                      "rhs":{
+                                        "variableRef":{
+                                          "name":"Amp Agony Wait"
+                                        }
+                                      },
+                                      "lhs":{
+                                        "remainingTime":{
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }]
+                          }
+                        },{
+                          "and":{
+                            "vals":[{
+                                "cmp":{
+                                  "op":"OpGe",
+                                  "rhs":{
+                                    "math":{
+                                      "op":"OpMul",
+                                      "rhs":{
+                                        "spellFullCooldown":{
+                                          "spellId":{
+                                            "spellId":20572
+                                          }
+                                        }
+                                      },
+                                      "lhs":{
+                                        "const":{
+                                          "val":"2"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "remainingTime":{
+                                    }
+                                  }
+                                }
+                              },{
+                                "cmp":{
+                                  "op":"OpLt",
+                                  "rhs":{
+                                    "math":{
+                                      "op":"OpMul",
+                                      "rhs":{
+                                        "spellFullCooldown":{
+                                          "spellId":{
+                                            "spellId":20572
+                                          }
+                                        }
+                                      },
+                                      "lhs":{
+                                        "const":{
+                                          "val":"2"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "math":{
+                                      "op":"OpSub",
+                                      "rhs":{
+                                        "variableRef":{
+                                          "name":"Amp Agony Wait"
+                                        }
+                                      },
+                                      "lhs":{
+                                        "remainingTime":{
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }]
+                          }
+                        },{
+                          "and":{
+                            "vals":[{
+                                "cmp":{
+                                  "op":"OpGe",
+                                  "rhs":{
+                                    "math":{
+                                      "op":"OpMul",
+                                      "rhs":{
+                                        "spellFullCooldown":{
+                                          "spellId":{
+                                            "spellId":20572
+                                          }
+                                        }
+                                      },
+                                      "lhs":{
+                                        "const":{
+                                          "val":"3"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "remainingTime":{
+                                    }
+                                  }
+                                }
+                              },{
+                                "cmp":{
+                                  "op":"OpLt",
+                                  "rhs":{
+                                    "math":{
+                                      "op":"OpMul",
+                                      "rhs":{
+                                        "spellFullCooldown":{
+                                          "spellId":{
+                                            "spellId":20572
+                                          }
+                                        }
+                                      },
+                                      "lhs":{
+                                        "const":{
+                                          "val":"3"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "lhs":{
+                                    "math":{
+                                      "op":"OpSub",
+                                      "rhs":{
+                                        "variableRef":{
+                                          "name":"Amp Agony Wait"
+                                        }
+                                      },
+                                      "lhs":{
+                                        "remainingTime":{
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }]
+                          }
+                        }]
+                    }
+                  }
                 }]
             },
             "consumables":{
               "potions":[118,858,929,1072,1710,2455,2456,3087,3384,3385,3827,3928,6048,6049,6050,6051,6052,6149,9036,9144,13443,13444,13446,13456,13457,13458,13459,13460,13461,14894,17348,17349,17351,17352,18253,18839,18841,250932,250933,250934,250935,250936,250937,250951,250953,250954,255663,268881,268882,268883,274935,282011,282013],
               "conjuredItems":[1703,5509,5510,5511,5512,9421,11951,11952,12662,15723,17747],
+              "offensivePotId":250937,
               "conjuredId":12662,
               "flaskId":13512,
               "mhImbueId":20750,
@@ -1982,6 +2858,7 @@
                 "classOptions":{
                   "armor":"DemonArmor",
                   "soulShards":32,
+                  "summon":"Succubus",
                   "sacrificedDemon":"Imp"
                 }
               }
@@ -1993,7 +2870,52 @@
               "greaterBlessingOfWisdom":2,
               "greaterBlessingOfKings":true
             },
-            "profession2":"Tailoring",
+            "equipment":{
+              "items":[{
+                  "id":22267,
+                  "enchant":2544
+                },{
+                  "id":18691,
+                  "enchant":8218
+                },{
+                  "id":19050
+                },{
+                  "id":272411,
+                  "enchant":2621
+                },{
+                  "id":14136,
+                  "enchant":8492
+                },{
+                  "id":18497,
+                  "enchant":1901
+                },{
+                  "id":18407,
+                  "enchant":8492
+                },{
+                  "id":254087
+                },{
+                  "id":22342,
+                  "enchant":8492
+                },{
+                  "id":11822,
+                  "enchant":911
+                },{
+                  "id":22433
+                },{
+                  "id":12545
+                },{
+                  "id":18467
+                },{
+                  "id":272438
+                },{
+                  "id":18372,
+                  "enchant":2568
+                },{
+                  "id":18316
+                },{
+                  "id":13396
+                }]
+            },
             "race":"RaceOrc"
           }]
       }]

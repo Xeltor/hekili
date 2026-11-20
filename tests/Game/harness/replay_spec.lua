@@ -161,6 +161,67 @@ describe("the replay world", function()
         assert.is_true(flag)
     end)
 
+    it("keeps the GCD flag up when the last GCD's end prints a log step after the next cast's rise", function()
+        -- wowsims prints 10 ms: the shout's GCD (1.501 s, or 1.509 s, from 1.00) truly ends where the strike is cast,
+        -- printed 2.50; its end at 2.501 (2.509) must not clear the strike's GCD flag (risen at 2.500)
+        for _, gcd in ipairs({ "1.501", "1.509" }) do
+            local log = table.concat({
+                "# wowsims 0123456789abcdef0123456789abcdef01234567 test_spec seed 101 10 s target 63",
+                "[1.00] [Tester (#1)] Casting {SpellID: 900002} (Cost = 0.000, Cast Time = 0s, GCD = "
+                    .. gcd
+                    .. "s, Effective Time = 1.5s)",
+                "[1.00] [Tester (#1)] Completed cast {SpellID: 900002}",
+                "[2.50] [Tester (#1)] Casting {SpellID: 900001} (Cost = 0.000, Cast Time = 0s, GCD = 1.5s, Effective Time = 1.5s)",
+                "[2.50] [Tester (#1)] Completed cast {SpellID: 900001}",
+            }, "\n")
+            local R = replay.new(log, H, O)
+            local W = at(R.world(setmetatable({ tag = "-gcd" }, { __index = WO }), 1), R.pull + 5)
+            local GCD = 900
+            local s = observer.observe(W, setmetatable({ gcdSpell = GCD }, { __index = observer.DEFAULTS }))
+            local flag -- the GCD flag after the strike's rise, before its own end (4.00)
+            for i = 1, s.n do
+                if s.ev[i] == "@cooldown" and s.a1[i] == GCD and s.t[i] <= R.pull + 3.9 then
+                    flag = s.a2[i] ~= nil
+                end
+            end
+            assert.is_true(flag, gcd)
+        end
+    end)
+
+    -- the bridge is bounded: an end a log step or more past the rise is a real end and clears the flag
+    for _, case in ipairs({
+        { "1.511", true, "11 ms past the rise" },
+        { "1.525", true, "25 ms past the rise" },
+        { "1.501", false, "a world without W.logStep bridges only a float ulp (1 ms is not bridged)" },
+    }) do
+        it("clears the GCD flag when the last GCD's end trails the next rise: " .. case[3], function()
+            local log = table.concat({
+                "# wowsims 0123456789abcdef0123456789abcdef01234567 test_spec seed 101 10 s target 63",
+                "[1.00] [Tester (#1)] Casting {SpellID: 900002} (Cost = 0.000, Cast Time = 0s, GCD = "
+                    .. case[1]
+                    .. "s, Effective Time = 1.5s)",
+                "[1.00] [Tester (#1)] Completed cast {SpellID: 900002}",
+                "[2.50] [Tester (#1)] Casting {SpellID: 900001} (Cost = 0.000, Cast Time = 0s, GCD = 1.5s, Effective Time = 1.5s)",
+                "[2.50] [Tester (#1)] Completed cast {SpellID: 900001}",
+            }, "\n")
+            local R = replay.new(log, H, O)
+            local W = R.world(setmetatable({ tag = "-gcd" }, { __index = WO }), 1)
+            if not case[2] then
+                W.logStep = nil -- a loop world
+            end
+            at(W, R.pull + 5)
+            local GCD = 900
+            local s = observer.observe(W, setmetatable({ gcdSpell = GCD }, { __index = observer.DEFAULTS }))
+            local flag
+            for i = 1, s.n do
+                if s.ev[i] == "@cooldown" and s.a1[i] == GCD and s.t[i] <= R.pull + 2.6 then
+                    flag = s.a2[i] ~= nil
+                end
+            end
+            assert.is_false(flag)
+        end)
+    end
+
     it("scores a decision inside a reacted aura's reaction window as of just before its gain (o.reacted)", function()
         local log = table.concat({
             "# wowsims 0123456789abcdef0123456789abcdef01234567 test_spec seed 101 10 s target 63",
@@ -472,6 +533,13 @@ describe("the replay world", function()
             end
             assert.are.same({ { "queue", 200 }, { "unqueue", 390 }, { "cast", 390 } }, got)
             assert.are.equal("strike", R.next(R.pull + 2.5)) -- the landing is no press: the next is 8.10's strike
+            local landing = {} -- each lunge decision's flag: the landing excuses no flip (loop.flips)
+            for _, d in ipairs(R.decisions) do
+                if d.key == "lunge" then
+                    landing[#landing + 1] = d.landing or false
+                end
+            end
+            assert.are.same({ false, true }, landing)
         end
     end)
 
@@ -667,6 +735,48 @@ describe("the replay's casts: tags, items, pets, totems", function()
         end
         assert.is_truthy(use) -- the item with a named use spell: its success, as the client sends it
         assert.is_true(math.abs(us.cdUntil.tonic - (R.pull + 3 + 120)) < 1e-3)
+    end)
+end)
+
+-- A ranked item (one ability, its `items` and their use spells in `copy`, same order): a logged use of a rank emits that
+-- rank's use spell, so the belief credits the rank used (the mana gems).
+describe("the replay's ranked item use", function()
+    local LOG = table.concat({
+        "# wowsims 0123456789abcdef0123456789abcdef01234567 test_spec seed 101 10 s target 63",
+        "[1.00] [Tester (#1)] Casting {ItemID: 800005} (Cost = 0.000, Cast Time = 0s, GCD = 0s, Effective Time = 0s)",
+        "[1.00] [Tester (#1)] Completed cast {ItemID: 800005}",
+        "[3.00] [Tester (#1)] Casting {ItemID: 800004} (Cost = 0.000, Cast Time = 0s, GCD = 0s, Effective Time = 0s)",
+        "[3.00] [Tester (#1)] Completed cast {ItemID: 800004}",
+    }, "\n")
+    local HR = {
+        Hekili = {
+            Class = {
+                abilities = {
+                    strike = { key = "strike", id = 900001, gcd = "spell" },
+                    gem = {
+                        key = "gem",
+                        id = -103,
+                        copy = { 900078, 900079 },
+                        items = { 800004, 800005 },
+                        cooldown = 1,
+                        gcd = "off",
+                    },
+                },
+                auras = {},
+            },
+        },
+    }
+
+    it("emits the use spell of the rank the log used", function()
+        local R = replay.new(LOG, HR, {})
+        local W = at(R.world(setmetatable({ tag = "-rk" }, { __index = WO }), 1), R.pull + 4)
+        local got = {}
+        for _, ev in ipairs(W.truth) do
+            if ev.kind == "cast" then
+                got[#got + 1] = ev.spell
+            end
+        end
+        assert.are.same({ 900079, 900078 }, got)
     end)
 end)
 
@@ -902,6 +1012,118 @@ describe("the replay's cooldowns: the engine's, a shared category's, the log's",
             end
         end
         assert.is_nil(W.ents[1].cdUntil.shock_b)
+    end)
+
+    it("reads a state-dependent cooldown at each cast from the run's instance, reset to now first", function()
+        local log = table.concat({
+            "# wowsims 0123456789abcdef0123456789abcdef01234567 test_spec seed 101 20 s target 63",
+            "[0.00] [Tester (#1)] Aura gained: {SpellID: 900010}",
+            "[1.00] [Tester (#1)] Casting {SpellID: 900070} (Cost = 0.000, Cast Time = 0s, GCD = 1.5s, Effective Time = 1.5s)",
+            "[1.00] [Tester (#1)] Completed cast {SpellID: 900070}",
+            "[5.00] [Tester (#1)] Aura faded: {SpellID: 900010}",
+            "[11.00] [Tester (#1)] Casting {SpellID: 900070} (Cost = 0.000, Cast Time = 0s, GCD = 1.5s, Effective Time = 1.5s)",
+            "[11.00] [Tester (#1)] Completed cast {SpellID: 900070}",
+        }, "\n")
+        -- the engine's shape (Abilities.lua): the kit's function in `funcs`, `cooldown` its answer in the state now,
+        -- here the boot state's: not in the form yet, so the out-of-form 0
+        local gust = setmetatable({ key = "gust", id = 900070, gcd = "spell", funcs = {} }, {
+            __index = function(t, k)
+                return t.funcs[k] and t.funcs[k]()
+            end,
+        })
+        gust.funcs.cooldown = function()
+            return 0
+        end
+        local HF = {
+            Hekili = {
+                Class = { abilities = { gust = gust }, auras = {} },
+                State = { action = { gust = { cooldown = 0 } } },
+            },
+        }
+        local W
+        local fresh = false
+        local TH = { -- the run's instance: 6 s in the world's form 1, answered only after a reset to now
+            Hekili = {
+                State = {
+                    reset = function()
+                        fresh = true
+                    end,
+                    action = setmetatable({}, {
+                        __index = function()
+                            local v = fresh and W.ents[1].form == 1 and 6 or 0
+                            fresh = false
+                            return { cooldown = v }
+                        end,
+                    }),
+                },
+            },
+        }
+        local R = replay.new(log, HF, { forms = { 900010 } })
+        W = R.world(setmetatable({ tag = "-fn" }, { __index = WO }), 1, TH)
+        at(W, R.pull + 2)
+        local us = W.ents[1]
+        local function lastCast()
+            local last
+            for _, ev in ipairs(W.truth) do
+                last = ev.kind == "cast" and ev or last
+            end
+            return last
+        end
+        -- cast in the form: the in-form 6 s (the log's 10 s spacing caps nothing)
+        assert.are.equal(6, tonumber(("%.4f"):format(lastCast().cd)))
+        assert.is_true(math.abs(us.cdUntil.gust - (R.pull + 1 + 6)) < 1e-3)
+        at(W, R.pull + 12)
+        assert.are.equal(0, us.form)
+        assert.are.equal(0, lastCast().cd) -- out of the form: no cooldown
+        assert.is_true(math.abs(us.cdUntil.gust - (R.pull + 1 + 6)) < 1e-3)
+    end)
+
+    it("a form's higher rank (its copy ID) in the log enters the form: every rank maps", function()
+        local log = table.concat({
+            "# wowsims 0123456789abcdef0123456789abcdef01234567 test_spec seed 101 20 s target 63",
+            "[0.00] [Tester (#1)] Aura gained: {SpellID: 900081}",
+        }, "\n")
+        local HR = {
+            Hekili = {
+                Class = {
+                    abilities = { stance_r = { key = "stance_r", id = 900080, copy = { 900081 }, gcd = "off" } },
+                    auras = {},
+                },
+            },
+        }
+        local R = replay.new(log, HR, { forms = { 900080 } })
+        local W = R.world(setmetatable({ tag = "-rank" }, { __index = WO }), 1)
+        at(W, 0.05)
+        assert.are.equal(1, W.ents[1].form)
+    end)
+
+    it("caps the run instance's answer at the log's spacing (replay-fncd M3)", function()
+        local log = table.concat({
+            "# wowsims 0123456789abcdef0123456789abcdef01234567 test_spec seed 101 20 s target 63",
+            "[1.00] [Tester (#1)] Casting {SpellID: 900070} (Cost = 0.000, Cast Time = 0s, GCD = 1.5s, Effective Time = 1.5s)",
+            "[1.00] [Tester (#1)] Completed cast {SpellID: 900070}",
+            "[4.00] [Tester (#1)] Casting {SpellID: 900070} (Cost = 0.000, Cast Time = 0s, GCD = 1.5s, Effective Time = 1.5s)",
+            "[4.00] [Tester (#1)] Completed cast {SpellID: 900070}",
+        }, "\n")
+        local gust = { -- a raw function cooldown (a stand-in's): no boot value, the log's spacing is its cap
+            key = "gust",
+            id = 900070,
+            gcd = "spell",
+            cooldown = function()
+                return 6
+            end,
+        }
+        local HF = { Hekili = { Class = { abilities = { gust = gust }, auras = {} }, State = { action = {} } } }
+        local TH = { -- answers 6 s at every cast: wowsims cast it 3 s apart, so the log's spacing wins
+            Hekili = { State = { reset = function() end, action = { gust = { cooldown = 6 } } } },
+        }
+        local R = replay.new(log, HF)
+        local W = at(R.world(setmetatable({ tag = "-fn3" }, { __index = WO }), 1, TH), R.pull + 2)
+        local first
+        for _, ev in ipairs(W.truth) do
+            first = first or ev.kind == "cast" and ev
+        end
+        assert.are.equal(3, tonumber(("%.4f"):format(first.cd)))
     end)
 end)
 

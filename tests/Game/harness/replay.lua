@@ -28,6 +28,10 @@ local M = {}
 M.PULL = 5 -- the least world time of the log's 0 (a log whose prepull starts after -4.5)
 M.LEAD = 0.5 -- the world time of the log's first line at the latest: after the prepull read at 0.1
 M.EPS = 1e-6 -- a line's place within its timestamp, as time: a decision falls just before its Casting line
+M.STEP = 0.01 -- the log's time resolution: wowsims prints each line's time rounded to 10 ms
+-- The GCD-end bridge (observer.lua's cooldown) bound is safe because the log prints cast times in 10 ms steps AND each GCD
+-- in whole ms, so a rounding gap is GCD mod 10 ms (<= 9 ms, <= 10 ms with two roundings); a log format with finer GCD
+-- printing would need the bound re-derived.
 M.TAIL = 0.2 -- the exporter's execute proportion: the last 20% of the duration
 
 -- Our white swing's landing lag per hand: the main hand's median (P log 2, 474 ms) and the off hand's own-swing mode
@@ -308,11 +312,15 @@ end
 --- list out of combat (each line under its guard against recasting), so an on-GCD one is scored. creatureType: the mob's
 --- (`target.creature_type`'s key; the request's mobType: tests/Forever/helpers/wowsims.lua `creatureType`), distance (the request's distanceFromTarget: our yards from the target at the start,
 --- W.moveTo; the log's move lines step it; nil: no positions). An ItemID cast maps through the abilities' `item`/`items`:
---- a decision and a cooldown, no cast event (shortcut: the client is not shown the item's spell; emit it when a gate
---- reads an item's cast). notTargeted: the client answers our target's target as not us (UnitIsUnit("targettarget",
+--- a decision and a cooldown, and the success of the item's use spell when the kit names one (its `copy` in `items`
+--- order, L481). notTargeted: the client answers our target's target as not us (UnitIsUnit("targettarget",
 --- "player") false) though the mob still swings at us: wowsims's melee stands behind a mob that attacks the raid's tank.
 --- alias ({ [logged spell ID] = kit spell ID }): a cast (its Casting and Completed lines) wowsims logs under an ID the
 --- client does not cast, replayed as the kit's (a cast the log reports under another spell ID than the client's).
+local function readCooldown(S, key) -- module level: a per-cast read builds no closure
+    return S.action[key].cooldown
+end
+
 function M.new(text, H, o)
     o = o or {}
     local p = M.parse(text)
@@ -355,17 +363,14 @@ function M.new(text, H, o)
         end
     end
     -- a cooldown the kit computes (a function: talent-modified) as the booted engine answers it, or nil (an error
-    -- too: the log's spacing stands in). shortcut: read once at boot, so a state-dependent cooldown (a buff, haste)
-    -- keeps its boot value; read it at each cast when a kit's cooldown moves in a fight.
+    -- too: the log's spacing stands in); R.world's run instance answers it again at each cast (its state there)
     local function engineCooldown(key)
-        local S = H.Hekili.State
-        local ok, v = pcall(function()
-            return S.action[key].cooldown
-        end)
+        local ok, v = pcall(readCooldown, H.Hekili.State, key)
         return ok and tonumber(v) or nil
     end
     -- spell ID -> ability key (every rank), the key's IDs and cooldown; aura ID -> duration
     local keyOf, itemOf, rankIDs, cd, dur, form, spacing, engine, useOf = {}, {}, {}, {}, {}, {}, {}, {}, {}
+    local computed = {} -- keys whose cooldown the kit computes: R.world's run instance answers it at each cast
     local keys = {}
     for key, a in pairs(class.abilities) do
         if type(key) == "string" and type(a) == "table" and a.key == key then
@@ -383,21 +388,26 @@ function M.new(text, H, o)
         if cd[key] == nil then
             engine[key] = engineCooldown(key)
         end
+        -- computed: a raw function (a stand-in's), or the engine's (its field in `funcs`, read through __index: the
+        -- boot state's answer above)
+        computed[key] = cd[key] == nil or (type(rawget(a, "funcs")) == "table" and a.funcs.cooldown ~= nil) or nil
         for _, id in ipairs(list) do
             if type(id) == "number" then
                 keyOf[id] = keyOf[id] or key
                 table.insert(rankIDs[key], id)
             end
         end
-        for _, id in ipairs(type(a.items) == "table" and a.items or { rawget(a, "item") }) do
-            if type(id) == "number" then
-                itemOf[id] = itemOf[id] or key
+        -- an item's use spell (L481), by item: the kit's positive IDs (its `copy`; an item's own `id` is negative) in
+        -- `items` order, the first for an item past them (a ranked consumable: each item its own rank's spell)
+        local uses = {}
+        for _, id in ipairs(rankIDs[key]) do
+            if id > 0 then
+                uses[#uses + 1] = id
             end
         end
-        -- an item's use spell (L481): its first positive ID (the kit's `copy`; an item's own `id` is negative)
-        for _, id in ipairs(rankIDs[key]) do
-            if useOf[key] == nil and id > 0 and (a.items or rawget(a, "item")) then
-                useOf[key] = id
+        for i, id in ipairs(type(a.items) == "table" and a.items or { rawget(a, "item") }) do
+            if type(id) == "number" and not itemOf[id] then
+                itemOf[id], useOf[id] = key, uses[i] or uses[1]
             end
         end
     end
@@ -460,6 +470,9 @@ function M.new(text, H, o)
     end
     for i, id in ipairs(o.forms or {}) do
         form[id] = i
+        for _, r in ipairs(rankIDs[keyOf[id]] or {}) do -- every rank of the form ability (a log may open with a higher rank)
+            form[r] = form[r] or i
+        end
     end
     local hidden, procs, totems = o.hidden or {}, o.procs or {}, o.totems or {}
     -- the event's ability key, or nil (unmapped, or a proc)
@@ -607,6 +620,8 @@ function M.new(text, H, o)
             -- next cast for the agreement
             if not (a.movesOnly or a.onNextSwing and ((e.cost or 0) > 0 or e.landed)) then
                 presses[#presses + 1] = d
+            else
+                d.landing = true -- no press (a swing's landing or a move-only cast): excuses no flip either (loop.flips)
             end
         end
     end
@@ -711,9 +726,31 @@ function M.new(text, H, o)
         return presses[ci] and presses[ci].key or false
     end
 
-    --- The world of the log (loop.run's factory: `wo` the loop's knobs, `seed` the world's generator).
-    function R.world(wo, seed)
+    --- The world of the log (loop.run's factory: `wo` the loop's knobs, `seed` the world's generator, `TH` the run's
+    --- truth instance: it answers a computed cooldown at each cast; nil: the boot value).
+    function R.world(wo, seed, TH)
         ci = 1
+        local TS = TH and TH.Hekili.State
+        -- the key's cooldown at its cast: a computed one as TH answers it, reset to its now, capped at the log's spacing
+        -- where the boot value was (a raw function's; the boot value stands in when TH cannot say). shortcut: TH's
+        -- belief as of its last cycle (the decision's, just before the cast), not the world's entity; read the world
+        -- when a gate needs a cooldown on a state the belief does not see. The world follows the graded instance's
+        -- belief, so a cooldown that depends on an aura hidden in the live-auras-none arm would read differently
+        -- there; none today (Faerie Fire 6.000 x6, Shifting Power 7.500 x9; Berserk and Elemental Mastery windows
+        -- never hit).
+        local function cooldownOf(key)
+            if not (TS and computed[key]) then
+                return cd[key]
+            end
+            TS.reset("Primary", true) -- Update leaves its last prediction (loop.lua's press does the same)
+            local ok, v = pcall(readCooldown, TS, key)
+            v = ok and tonumber(v)
+            if not v then
+                return cd[key]
+            end
+            local sp = spacing[key]
+            return sp and math.min(v, sp) or v
+        end
         local W = world.new(seed)
         local w = wo.weapons and wo.weapons[1] or { 1, 2, R.speed or 2 }
         local us = W.add(entities.new({
@@ -813,15 +850,16 @@ function M.new(text, H, o)
             -- a cooldown ends at its cast's log timestamp plus the cooldown, as wowsims's does, not at the line's place
             -- within the timestamp (M.EPS each): else the next cast's decision, line 1 of its timestamp, still reads it
             -- running (the ready-time ruling, timing.lua)
-            local cdk = key and cd[key] > 0 and cd[key] - (T - (R.pull + e.t)) or 0
+            local c = key and e.kind == "completed" and cooldownOf(key) or 0 -- a hard cast's start uses none
+            local cdk = c > 0 and c - (T - (R.pull + e.t)) or 0
             -- the GCD likewise: else a GCD cast on a late line of its timestamp ends after the next cast's GCD rise (an
             -- earlier line of its own timestamp) and clears the client's GCD flag inside that GCD
             local gcdk = (e.gcd or 0) > 0 and e.gcd - (T - (R.pull + e.t)) or nil
             if key and not e.id then -- an item: its cooldown, and its use spell's success when the kit names one (L481)
-                if cd[key] > 0 then
+                if c > 0 then
                     us.cdUntil[key] = T + cdk
                 end
-                local use = useOf[key]
+                local use = useOf[e.item]
                 if use and e.kind == "completed" then
                     W.emit({ kind = "cast", src = us, dst = mob, spell = use })
                 end
@@ -869,7 +907,7 @@ function M.new(text, H, o)
                         W.emit({ kind = "channelStop", src = us, spell = e.id })
                     end)
                 end
-                if cd[key] > 0 then
+                if c > 0 then
                     us.cdUntil[key] = T + cdk
                     for _, k in ipairs(sh and sh.keys or {}) do
                         us.cdUntil[k] = T + cdk
@@ -1024,6 +1062,7 @@ function M.new(text, H, o)
             W.emit({ kind = "stop" })
         end)
         W.stopAt, W.after = R.pull + R.duration, 0
+        W.logStep = M.STEP -- a GCD's end (its cast's printed time plus the GCD) up to a step past the next cast's rise
         return W
     end
 

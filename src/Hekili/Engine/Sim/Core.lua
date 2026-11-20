@@ -562,16 +562,115 @@ local invalidActionWarnings = {}
 -- line out of combat, its guard against recasting written into the line (tools/wowsims/apl.lua rule 1).
 local inPrecombat = false
 
--- (re-pin design §3a) An `open_window`/`close_window` line, in list order like `variable` (no icon): it changes the
--- cycle's forecast copy only (State.lua's windows). An open line whose condition fails now is rechecked like any entry
--- (its BuildRecheck times), so "true in t" opens the window at t and a later line reading it waits for t (State.lua
--- state.WindowRecheck). Each open line remembers its last result in the cycle: a held condition opens (or, with
--- refresh=1, restarts) once. A close line acts at the line's time only. Task 8b: R6 (the `>`/`>=` wrap branch of a
--- decreasing clock, Scripts.lua) is what times the weave's open; here the `<`/`<=` direction.
-local function windowLine( self, scriptID, script, isOpen, debug, rWait, cap )
+-- (windows design v6 §4.3) A window line changed the copy: every list's walk unwinds (like `stop`) and
+-- GetNextPrediction walks again from the top with time unchanged. `slotRestarts`: the restarts in the current slot.
+local walkRestart, slotRestarts = false, 0
+
+-- (windows design v6 §4) An `open_window`/`close_window` line, in list order like `variable` (no icon): a command on the
+-- pass's copy of the window (State.lua). A true open line opens a closed window, or restarts an open one by its
+-- declared refresh rule; a true close line closes an open one. An open line whose condition fails now is rechecked
+-- like any entry (its BuildRecheck times), so "true in t" opens the window at t and a later line reading it waits for
+-- t (State.lua state.WindowRecheck). A line that changed the copy takes the slot's mark (it does nothing more in this
+-- slot, State.lua WindowSlot) and returns true: the walk restarts from the top (GetNextPrediction). A change made at now
+-- (offset and delay 0, not a recheck) in slot 1 of a display pass goes to the belief under the display's key (§5.1: an
+-- APL window only; a Lua window follows its evaluator). Task 8b: R6 (the `>`/`>=` wrap branch of a decreasing clock,
+-- Scripts.lua) is what times the weave's open; here the `<`/`<=` direction.
+local OP_OPEN, OP_CLOSE = 1, 2 -- VS.WindowOp's codes (Game/State/Families/Windows.lua)
+
+-- (L1205) pack -> window name -> true: the flapping-pair warning already given this session
+local flapWarned = {}
+
+-- (L1205, Fable L1286) Lines both closed and opened window `name` in one slot (a close_window line against an
+-- open_window line, a strict sequence's chosen OPEN or a plain sequence's open line): warned once per pack and window,
+-- the text by the window's kind; the message is built only then.
+local function flapWarn( packName, name )
+    local w = flapWarned[ packName ]
+    if w and w[ name ] then return end
+    if not w then
+        w = {}
+        flapWarned[ packName ] = w
+    end
+    w[ name ] = true
+    local d = scripts.appliedWindows.byName[ name ]
+    if d and d.seq then
+        Hekili:Error( "Priority '%s': sequence '%s' was closed by a close_window line and started again in the same recommendation; "
+            .. "while both stay true it starts over in every recommendation and each one walks the priority again (windows restart). "
+            .. "Add the opposite of the close_window condition to the sequence line's if=.", tostring( packName ), tostring( name ) )
+    else
+        Hekili:Error( "Priority '%s': window '%s' was opened and closed by lines in the same recommendation; every such "
+            .. "recommendation walks the priority again (windows restart). Check the open_window and close_window conditions.",
+            tostring( packName ), tostring( name ) )
+    end
+end
+
+-- (windows design v6 §15) the snapshot's two rolling numbers per key: the operations and the opens sent in the last
+-- 10 s, in one-second buckets, built for every key where the keys are applied (Scripts.lua ApplyWindows).
+local OP_NAME = { "OPEN", "CLOSE", "STEP" }
+local winCount = scripts.winCount
+
+local function count10( key )
+    local c = key and winCount[ key ]
+    if not c then return 0, 0 end
+    local now, ops, opens = math.floor( state.now ), 0, 0
+    for b = 1, 10 do
+        if c.sec[ b ] > now - 10 then ops, opens = ops + c.ops[ b ], opens + c.opens[ b ] end
+    end
+    return ops, opens
+end
+
+-- Every operation the core sends: to the belief under `key`, counted, and named in the debug log with the line that
+-- sent it (`lineID`, the entry's "pack:list:n"; window `name`, never the key).
+local function winSend( key, code, arg, name, lineID )
+    ns.VirtualState.WindowOp( key, code, arg )
+    local c = winCount[ key ] -- every sent key is an applied record's (State.lua WindowSendKey)
+    if c then
+        local sec = math.floor( state.now )
+        local b = sec % 10 + 1
+        if c.sec[ b ] ~= sec then c.sec[ b ], c.ops[ b ], c.opens[ b ] = sec, 0, 0 end
+        c.ops[ b ] = c.ops[ b ] + 1
+        if code == OP_OPEN then c.opens[ b ] = c.opens[ b ] + 1 end
+    end
+    if Hekili.ActiveDebug then
+        Hekili:Debug( "Windows: sent %s %s%s (line %s).", OP_NAME[ code ], tostring( name ), arg and ( " " .. arg ) or "", tostring( lineID ) )
+    end
+end
+
+-- (§15) The snapshot's Windows section of display `dispName` (debug only): its Sequences setting, then each window it
+-- has, as seeded from the belief: up or closed, the step, an open sequence's effective options (mode=wait: the member
+-- waited on) and the two rolling numbers.
+local function windowsSection( dispName )
+    local cw = scripts.appliedWindows
+    Hekili:Debug( "Windows (%s): Sequences %s.", dispName, scripts.SequencesOn( dispName ) and "on" or "off" )
+    for w = 1, state.WindowCount() do
+        local name, present, up, step, nSteps = state.WindowRow( w )
+        if present then
+            local d = cw.byName[ name ]
+            local ops, opens = count10( d and d.keys[ dispName ] )
+            local opt = ""
+            if up and d and d.seq then
+                if d.strict then
+                    opt = format( "; strict%s%s%s, step timeout %s", d.start_on_first and ", start_on_first" or "", d.allow_skip and ", allow_skip" or "",
+                        d.hold_off_gcd and ", hold_off_gcd" or "", tostring( d.step_timeout or 4 ) )
+                else
+                    opt = format( "; mode=%s%s", tostring( d.mode ), d.mode == "wait" and d.steps[ step ] and ( ", waiting on " .. d.steps[ step ] ) or "" )
+                end
+            end
+            Hekili:Debug( "  %s: %s%s%s; %d operations / 10 s, %d opens / 10 s.", name, up and "up" or "closed",
+                up and nSteps > 0 and format( ", step %d of %d", step, nSteps ) or "", opt, ops, opens )
+        end
+    end
+end
+
+local function windowLine( self, scriptID, script, isOpen, debug, rWait, cap, packName )
     local name = state.args.window_name
+    local verb = isOpen and "open_window" or "close_window"
+    if state.WindowFired( scriptID ) then
+        if debug then self:Debug( " - %s %s: already fired this slot.", verb, tostring( name ) ) end
+        return false
+    end
     local base = state.delay
-    local pass = scripts:CheckScript( scriptID )
+    local pass = self:CheckStack() and scripts:CheckScript( scriptID )
+    local atNow = pass and base == 0 and state.offset == 0
 
     if isOpen and not pass and script.Recheck then
         state.recheck( "open_window", script, Stack, Block )
@@ -587,15 +686,241 @@ local function windowLine( self, scriptID, script, isOpen, debug, rWait, cap )
         end
     end
 
-    if debug then self:Debug( " - %s %s: %s at +%.2f.", isOpen and "open_window" or "close_window", tostring( name ), pass and "PASS" or "FAIL", state.delay ) end
+    local changed = false
+    if pass then
+        if isOpen then changed = state.openWindow( name ) else changed = state.closeWindow( name ) end
+    end
+    local key = changed and atNow and state.WindowSendKey( name )
+    if key then winSend( key, isOpen and OP_OPEN or OP_CLOSE, nil, name, scriptID ) end
+    if changed then
+        state.WindowFired( scriptID, true )
+        -- (L1205) opened and closed by lines within one slot: the author's flapping pair, warned once per pack and window
+        if state.WindowFlap( name, isOpen ) then flapWarn( packName, name ) end
+    end
 
-    if not isOpen then
-        if pass then state.closeWindow( name ) end
-    elseif not state.WindowLine( scriptID, pass ) and pass then
-        state.openWindow( name, state.args.duration, state.args.refresh == 1 )
+    if debug then
+        self:Debug( " - %s %s: %s at +%.2f%s.", verb, tostring( name ), pass and "PASS" or "FAIL", state.delay,
+            not pass and "" or not changed and ( isOpen and ", already open" or ", already closed" )
+            or ( isOpen and ", opened" or ", closed" ) .. ( key and ", sent" or ", forecast only" ) .. ", restart" )
     end
 
     state.delay = base
+    return changed
+end
+
+-- (windows design v6 §6) Sequences: their lines are engine work, not abilities. `seqStartStep`: the member a strict
+-- start line walks (its `seqstart:` list, 0 otherwise); `holdOffOnly`: a strict hold walks the normal lists for the
+-- lines in `holdPass` (window lines abort or start sequences, ruling 23) and, 1 (the default, ruling 29), use_off_gcd=1
+-- off-GCD lines; 2 (hold_off_gcd=1) nothing else; 0 no hold.
+local seqAction = { sequence = true, strict_sequence = true, restart_sequence = true }
+local holdPass = { call_action_list = true, run_action_list = true, variable = true, open_window = true, close_window = true }
+local seqStartStep, holdOffOnly = 0, 0
+-- a mode=wait sequence ended its list's walk: cleared before each called list, read after it (§6: nothing below the line)
+local seqHalt = false
+local HOLD_LISTS = { "precombat", "default" }
+local OP_STEP = 3
+
+-- (§3.3, ruling 28) Member k of sequence d can be cast at the moment the player can next act (the GCD's end for an
+-- on-GCD member, now for an off-GCD one): enabled, known, ready by then, usable and its own if= true then. The walk's
+-- current entry (this_action, delay, scriptID, the near-cost marks) is kept.
+-- `start` (ruling 36, §3.6): a strict start test without start_on_first; for a member after the first its ability's
+-- `sequence_ignore` gates are skipped and its `sequence_ready`, when present, replaces the readiness (the time to
+-- ready and the usable test), with `ready()` the gate-skipped normal test during the call. Enabled, known and the
+-- member's own if= stay outside either.
+local seqAt = 0 -- the moment readiness is judged for, read by ready()
+local gateSet = { form = false, noform = false, buff = false, nobuff = false }
+
+local function ready()
+    state.delay = 0
+    if state:TimeToReady() > seqAt + 0.01 then return false end
+    state.delay = seqAt
+    return state:IsUsable() and true or false
+end
+
+local function castable( self, d, k, start )
+    local key = d.steps[ k ]
+    local ability = key and class.abilities[ key ]
+    if not ability then return false end
+    local pa, pd, pid, pnc, pnp = state.this_action, state.delay, state.scriptID, state.nearCost, state.nearPre
+    state.this_action, state.scriptID, state.delay = key, d.memberIDs[ k ], 0
+    local ok = self:IsSpellEnabled( key ) and self:IsSpellKnown( key )
+    if ok then
+        seqAt = ability.gcd ~= "off" and state.cooldown.global_cooldown.remains or 0
+        local later = start and k > 1
+        local ig = later and ability.sequence_ignore
+        if ig then
+            gateSet.form, gateSet.noform, gateSet.buff, gateSet.nobuff = false, false, false, false
+            for i = 1, #ig do gateSet[ ig[ i ] ] = true end
+            state.gateSkip = gateSet
+        end
+        local custom = later and ability.sequence_ready
+        if custom then
+            state.ready = ready
+            ok = custom() and true or false
+            state.ready = false
+        else -- ready()'s body inline: its one extra frame (depth 9 in the Update thread) grows that thread's call stack
+            -- once, 640 B, the same total at 45 and 135 Updates; driver_alloc_spec would read it as bytes per Update
+            state.delay = 0
+            ok = state:TimeToReady() <= seqAt + 0.01
+            if ok then
+                state.delay = seqAt
+                ok = state:IsUsable() and true or false
+            end
+        end
+        state.gateSkip = false
+        if ok then
+            state.delay = seqAt
+            ok = scripts:CheckScript( d.memberIDs[ k ] )
+        end
+    end
+    state.this_action, state.delay, state.scriptID, state.nearCost, state.nearPre = pa, pd, pid, pnc, pnp
+    return ok and true or false
+end
+
+-- A change to sequence d's copy at now goes to the belief under this display's key (slot 1 only, §5.1).
+local function seqSend( d, code, arg, lineID )
+    local key = state.offset == 0 and ( state.delay or 0 ) == 0 and state.WindowSendKey( d.name )
+    if key then winSend( key, code, arg, d.name, lineID ) end
+end
+
+-- (§6) One sequence line at its list position. Returns the pick, and true when the walk must end below it (mode=wait
+-- with a member due). A change to the copy takes the line's per-slot mark and restarts the walk (walkRestart).
+local function sequenceLine( self, dispName, packName, entry, scriptID, slot, rAction, rWait, rDepth, caller, debug )
+    local cw = scripts.appliedWindows
+    state.delay = 0
+
+    if entry.action == "restart_sequence" then
+        local name = entry.window_name
+        if name == nil or name == "" then name = "default" end
+        local d = cw.byName[ name ]
+        if not ( d and d.keys[ dispName ] ) or state.WindowFired( scriptID ) then return rAction, rWait, rDepth end
+        local win = state.window[ name ]
+        if win.up and win.step ~= 1 and self:CheckStack() and scripts:CheckScript( scriptID ) and state.WindowStep( name, 1 ) then
+            seqSend( d, OP_STEP, 1, scriptID )
+            state.WindowFired( scriptID, true )
+            walkRestart = true
+            if debug then self:Debug( " - restart_sequence %s: step 1, restart.", name ) end
+        end
+        return rAction, rWait, rDepth
+    end
+
+    local d = cw.seqByID[ scriptID ]
+    if not d or not d.keys[ dispName ] then -- Sequences off in this display: the line does not exist here (§7)
+        return rAction, rWait, rDepth
+    end
+    local name, win = d.name, state.window[ d.name ]
+
+    if d.strict then
+        if win.up then return rAction, rWait, rDepth end -- open: the hold walks it at the top of the slot
+        if not ( self:CheckStack() and scripts:CheckScript( scriptID ) ) then return rAction, rWait, rDepth end
+        -- the start test (§6, rulings 27, 28): every member (allow_skip: any member) can be cast; start_on_first tests the
+        -- first only, its time within the queue window judged when the pick is final (Hekili.Update)
+        local first, n, failed = 0, #d.steps, 0
+        -- (§7, ruling 25) the start line skips the "toggle shown separately" test (sequences run in Primary and AOE only)
+        state.seqBypass = 1
+        if d.start_on_first then first = 1
+        elseif d.allow_skip then -- the first shown is the first castable by normal readiness; else by the fields (ruling 36)
+            for k = 1, n do
+                if castable( self, d, k ) then first = k break end
+            end
+            if first == 0 then
+                for k = 2, n do
+                    if castable( self, d, k, true ) then first = k break end
+                end
+            end
+        else
+            first = 1
+            for k = 1, n do
+                if not castable( self, d, k, true ) then first, failed = 0, k break end
+            end
+        end
+        if first == 0 then
+            state.seqBypass = 0
+            if debug then -- (§15 risk 18) the member the default test stopped at; allow_skip: none of them
+                if failed > 0 then self:Debug( " - strict_sequence %s: the start test fails at step %d (%s).", name, failed, d.steps[ failed ] )
+                else self:Debug( " - strict_sequence %s: the start test fails: no member can be cast.", name ) end
+            end
+            return rAction, rWait, rDepth
+        end
+        self:AddToStack( scriptID, d.startList, caller )
+        seqStartStep = first
+        rAction, rWait, rDepth = self:GetPredictionFromAPL( dispName, packName, d.startList, slot, rAction, rWait, rDepth, scriptID )
+        seqStartStep, state.seqBypass = 0, 0
+        self:PopStack()
+        return rAction, rWait, rDepth
+    end
+
+    -- plain: an inactive line (if= false) shows and skips nothing (ruling 28)
+    if not ( self:CheckStack() and scripts:CheckScript( scriptID ) ) then return rAction, rWait, rDepth end
+    if not win.up then
+        if not state.WindowFired( scriptID ) and state.openWindow( name ) then -- the generated open line (ruling 12)
+            if state.WindowFlap( name, true ) then flapWarn( packName, name ) end
+            seqSend( d, OP_OPEN, nil, scriptID )
+            state.WindowFired( scriptID, true )
+            walkRestart = true
+            if debug then self:Debug( " - sequence %s: opened, restart.", name ) end
+        end
+        return rAction, rWait, rDepth
+    end
+    if win.done then return rAction, rWait, rDepth end -- parked (ruling 15)
+
+    state.seqBypass = 1 -- (§7, ruling 9) up: its generated lines skip the separate test
+    if d.mode == "skip" and not state.WindowFired( d.skipID ) then -- the generated skip line (ruling 28, SimC)
+        local due, n = win.step, #d.steps
+        if not castable( self, d, due ) then
+            local to = n + 1
+            for k = due + 1, n do
+                if castable( self, d, k ) then to = k break end
+            end
+            if state.WindowStep( name, to ) then
+                state.seqBypass = 0
+                seqSend( d, OP_STEP, to, d.skipID )
+                state.WindowFired( d.skipID, true )
+                walkRestart = true
+                if debug then self:Debug( " - sequence %s: step %d (%s) cannot be cast, step %d, restart.", name, due, d.steps[ due ], to ) end
+                return rAction, rWait, rDepth
+            end
+        end
+    end
+
+    -- the member lines, under this line's condition (the stack)
+    self:AddToStack( scriptID, d.hidden, caller )
+    rAction, rWait, rDepth = self:GetPredictionFromAPL( dispName, packName, d.hidden, slot, rAction, rWait, rDepth, scriptID )
+    state.seqBypass = 0
+    self:PopStack()
+    return rAction, rWait, rDepth, d.mode == "wait" -- SimC wait_on_ready: nothing below the line
+end
+
+-- (§6) The give-up of strict sequence d held in this display (its due member cannot be cast with the GCD ready:
+-- CLOSE, which restarts the walk unheld, or with allow_skip a STEP to the next member that can), once per slot. Run
+-- after the hold's walk of the normal lists, so a member's if= reads the variables those lines define.
+local function giveUp( self, d )
+    local name = d.name
+    local win = state.window[ name ]
+    state.delay = 0
+    state.seqBypass = 1 -- the running steps' readiness through the bypass (§7): an off toggle still gives up
+    if not state.WindowFired( d.giveID ) and state.cooldown.global_cooldown.remains == 0 and not castable( self, d, win.step ) then
+        local to = 0
+        if d.allow_skip then
+            for k = win.step + 1, #d.steps do
+                if castable( self, d, k ) then to = k break end
+            end
+        end
+        state.WindowFired( d.giveID, true )
+        local due = win.step
+        if to > 0 then
+            if state.WindowStep( name, to ) then -- a STEP restarts the walk like the CLOSE (§4.3): outside lines see it
+                seqSend( d, OP_STEP, to, d.giveID )
+                walkRestart = true
+                if self.ActiveDebug then self:Debug( "strict_sequence %s: step %d (%s) cannot be cast; step %d, restart.", name, due, d.steps[ due ], to ) end
+            end
+        elseif state.closeWindow( name ) then
+            seqSend( d, OP_CLOSE, nil, d.giveID )
+            walkRestart = true
+            if self.ActiveDebug then self:Debug( "strict_sequence %s: step %d (%s) cannot be cast; closed, restart.", name, due, d.steps[ due ] ) end
+        end
+    end
+    state.seqBypass = 0
 end
 
 function Hekili:GetPredictionFromAPL( dispName, packName, listName, slot, action, wait, depth, caller )
@@ -612,7 +937,10 @@ function Hekili:GetPredictionFromAPL( dispName, packName, listName, slot, action
     else pack = Hekili.Engine.settings.packs[ packName ] end
 
     local packInfo = scripts.PackInfo[ spec.package ]
-    local list = pack.lists[ listName ]
+    -- (windows design v6 §6) a sequence's generated list: never saved, always active (Scripts.lua HiddenLists)
+    local hidden = scripts.HiddenLists[ packName ]
+    hidden = hidden and hidden[ listName ]
+    local list = hidden or pack.lists[ listName ]
     local scriptIDs = list and scripts.IDs[ list ] -- the entries' "pack:list:n" (Scripts.lua), built as the scripts loaded
 
     local debug = self.ActiveDebug
@@ -631,7 +959,7 @@ function Hekili:GetPredictionFromAPL( dispName, packName, listName, slot, action
 
     if debug then self:Debug( "Current recommendation was %s at +%.2fs.", action or "NO ACTION", wait or state.delayMax ) end
 
-    if self:IsListActive( packName, listName ) then
+    if hidden or self:IsListActive( packName, listName ) then
         local actID = 1
 
         while actID <= #list do
@@ -645,7 +973,10 @@ function Hekili:GetPredictionFromAPL( dispName, packName, listName, slot, action
                 break
 
             else ]]
-            if rWait <= EARLY_EXIT then -- Forever: 0.2 s and a hair (EARLY_EXIT)
+            if walkRestart then
+                break
+
+            elseif rWait <= EARLY_EXIT then -- Forever: 0.2 s and a hair (EARLY_EXIT)
                 if debug then self:Debug( "The recommended action (%s) is ready in less than 0.2s; exiting list (%s).", rAction, listName ) end
                 break
 
@@ -667,7 +998,8 @@ function Hekili:GetPredictionFromAPL( dispName, packName, listName, slot, action
 
             local entry = list[ actID ]
 
-            if self:IsActionActive( packName, listName, actID ) then
+            if hidden and seqStartStep > 0 and actID ~= seqStartStep then -- luacheck: ignore 542 (a start list walks its one start member)
+            elseif hidden or self:IsActionActive( packName, listName, actID ) then
                 -- Check for commands before checking actual actions.
                 local scriptID = scriptIDs and scriptIDs[ actID ] or ( packName .. ":" .. listName .. ":" .. actID )
                 local action = entry.action
@@ -680,7 +1012,21 @@ function Hekili:GetPredictionFromAPL( dispName, packName, listName, slot, action
 
                 local ability = class.abilities[ action ]
 
-                if not ability then
+                if seqAction[ action ] then
+                    -- (windows design v6 §6) a sequence line: its window's generated lines, run by the engine; nothing
+                    -- while a strict sequence holds the walk (its members and window lines only)
+                    if holdOffOnly == 0 then
+                        local halt
+                        rAction, rWait, rDepth, halt = sequenceLine( self, dispName, packName, entry, scriptID, slot, rAction, rWait, rDepth, caller, debug )
+                        if halt then stop, seqHalt = true, true end
+                    end
+
+                elseif holdOffOnly > 0 and ability and not holdPass[ action ]
+                    and not ( holdOffOnly == 1 and entry.use_off_gcd == 1 and ability.gcd == "off" ) then
+                    -- a strict hold (rulings 23, 29): outside the sequence only window lines and, by default, use_off_gcd=1 off-GCD lines
+                    if debug then self:Debug( "[---] %s ( %s - %d ) held by a strict sequence; skipping...", action, listName, actID ) end
+
+                elseif not ability then
                     if not invalidActionWarnings[ scriptID ] then
                         Hekili:Error( "Priority '%s' uses action '%s' ( %s - %d ) that is not found in the abilities table.", packName, action or "unknown", listName, actID )
                         invalidActionWarnings[ scriptID ] = true
@@ -879,8 +1225,11 @@ function Hekili:GetPredictionFromAPL( dispName, packName, listName, slot, action
                                                 if debug then self:Debug( "Action list (%s) was found.", name ) end
                                                 self:AddToStack( scriptID, name, caller, not ts and action == "run_action_list" )
 
+                                                seqHalt = false
                                                 rAction, rWait, rDepth = self:GetPredictionFromAPL( dispName, packName, name, slot, rAction, rWait, rDepth, scriptID )
                                                 if debug then self:Debug( "Returned from list (%s), current recommendation is %s (+%.2f).", name, rAction or "NO ACTION", rWait ) end
+                                                -- (§6, SimC: the waiting line is every caller's pick) a mode=wait sequence in it stops this list too
+                                                if seqHalt then stop = true end
 
                                                 self:PopStack()
 
@@ -902,6 +1251,8 @@ function Hekili:GetPredictionFromAPL( dispName, packName, listName, slot, action
 
                                     if class.variables[ name ] then
                                         if debug then self:Debug( " - variable.%s references a hardcoded variable and this entry will be ignored.", name ) end
+                                    elseif packInfo and packInfo.pure and packInfo.pure[ name ] then
+                                        -- CN25: a pure variable is read in place (State.lua), never registered
                                     elseif name ~= nil then
                                         state:RegisterVariable( name, scriptID, listName, Stack )
                                         if debug then self:Debug( " - variable.%s[%s] will check this script entry ( %s )", name, tostring( state.variable[ name ] ), scriptID ) end
@@ -910,7 +1261,7 @@ function Hekili:GetPredictionFromAPL( dispName, packName, listName, slot, action
                                     end
 
                                 elseif action == "open_window" or action == "close_window" then
-                                    windowLine( self, scriptID, script, action == "open_window", debug, rWait, spec.throttleForecastingTime or 0 )
+                                    walkRestart = windowLine( self, scriptID, script, action == "open_window", debug, rWait, spec.throttleForecastingTime or 0, packName )
 
                                 else
                                     -- Target Cycling.
@@ -1319,7 +1670,8 @@ end
 Hekili:ProfileCPU( "GetPredictionFromAPL", Hekili.GetPredictionFromAPL )
 
 
-function Hekili:GetNextPrediction( dispName, packName, slot )
+-- One walk of the priority (precombat, then default) from a clean slate: GetNextPrediction below repeats it.
+local function nextPrediction( self, dispName, packName, slot )
     local debug = self.ActiveDebug
     state.nearAction = false -- no pick yet (mana-regen plan, Task 4a)
     state.nearHoldFrom = 0
@@ -1330,6 +1682,9 @@ function Hekili:GetNextPrediction( dispName, packName, slot )
     for i = #Block, 1, -1 do tinsert( StackPool, tremove( Block, i ) ) end
     twipe( InUse )
     inPrecombat = false -- in case a walk was interrupted
+    -- the sequence walk's flags too (a dropped thread, a raising sequence_ready handler)
+    holdOffOnly, seqStartStep, state.seqBypass, state.gateSkip = 0, 0, 0, false
+    state.ready = false
 
     for k, v in pairs( listCache ) do tinsert( lcPool, v ); twipe( v ); listCache[ k ] = nil end
     for k, v in pairs( listValue ) do tinsert( lvPool, v ); twipe( v ); listValue[ k ] = nil end
@@ -1370,6 +1725,36 @@ function Hekili:GetNextPrediction( dispName, packName, slot )
         state:SetWhitelist( nil )
     end
 
+    -- (windows design v6 §6) a strict sequence up in this display holds the walk: the normal lists for window lines
+    -- (ruling 23: a close line aborts it) and, by default, use_off_gcd=1 off-GCD lines (ruling 29); then its members
+    local holdName = scripts.appliedWindows.nStrict > 0 and state.WindowHold()
+    if holdName then
+        local hold = scripts.appliedWindows.byName[ holdName ]
+        if hold then
+            -- the outside lines first (a ready off-GCD one is weaved ahead of the member), the give-up, then the members
+            holdOffOnly = hold.hold_off_gcd and 2 or 1
+            -- hold_off_gcd=1 takes window and variable lines only: none in the priority, nothing to walk (L1270)
+            if holdOffOnly == 1 or scripts.appliedWindows.holdWalk then
+                for _, listName in ipairs( HOLD_LISTS ) do
+                    if pack.lists[ listName ] and wait > 0 and not walkRestart then
+                        action, wait, depth = self:GetPredictionFromAPL( dispName, packName, listName, slot, action, wait, depth )
+                    end
+                end
+            elseif debug then
+                self:Debug( "strict_sequence %s: no window or variable line in the priority; the normal lists are not walked.", holdName )
+            end
+            holdOffOnly = 0
+            if not walkRestart then giveUp( self, hold ) end
+            if wait > 0 and not walkRestart then
+                state.seqBypass = 1 -- the hidden list's lines skip the separate test while up (§7, ruling 9)
+                action, wait, depth = self:GetPredictionFromAPL( dispName, packName, hold.hidden, slot, action, wait, depth )
+                state.seqBypass = 0
+            end
+            state:SetWhitelist( nil )
+            return action, wait, depth
+        end
+    end
+
     if pack.lists.precombat then
         local listName = "precombat"
 
@@ -1395,6 +1780,24 @@ function Hekili:GetNextPrediction( dispName, packName, slot )
     state:SetWhitelist( nil )
     if debug then self:Debug( "Recommendation is %s at %.2f + %.2f.", action or "NO ACTION", state.offset, wait ) end
 
+    return action, wait, depth
+end
+
+-- (windows design v6 §4.3) After a window line changed the copy the walk starts again from the top, time unchanged:
+-- the partial pick, the delay and its bounds, the stacks and the near-cost hold are dropped (nextPrediction's own
+-- reset). No cap: every restart follows a line taking its per-slot mark, so a slot restarts at most once per window
+-- line. Allocates nothing.
+function Hekili:GetNextPrediction( dispName, packName, slot )
+    local dMin, dMax, delay = state.delayMin, state.delayMax, state.delay
+    walkRestart = false
+    local action, wait, depth = nextPrediction( self, dispName, packName, slot )
+    while walkRestart do
+        walkRestart = false
+        slotRestarts = slotRestarts + 1
+        if self.ActiveDebug then self:Debug( "Window restart %d in this slot: walking again from the top.", slotRestarts ) end
+        state.delayMin, state.delayMax, state.delay = dMin, dMax, delay
+        action, wait, depth = nextPrediction( self, dispName, packName, slot )
+    end
     return action, wait, depth
 end
 
@@ -1433,6 +1836,7 @@ local displayRules = {
     Primary    = { function(   ) return true                                                         end, "AOE"        },
     AOE        = { aoeDisplayRule                                                                       , "Interrupts" },
 }
+local separateDisplays = { "Interrupts", "Defensives", "Cooldowns" } -- the displays that walk their own Forecast Period
 
 -- Alternatives under resource uncertainty (display styles plan, Task 3c), for a display a subscriber asked them of
 -- (needs.alts): after the slot loop, so the main records never depend on them, records 1 and 2 each get the picks the
@@ -1464,6 +1868,7 @@ local function altPick( dispName, packName, rec, i, bound, value, maxTime, abili
     if dt > 0 then state.advance( dt ) end
 
     altProbe.index, state.index = i, i
+    state.WindowSlot( false ) -- the probe's lines act on its copy only: nothing sent (windows design v6 §5.1)
     state.delay = 0
     state:SetConstraint( 0, maxTime )
     local action = Hekili:GetNextPrediction( dispName, packName, altProbe )
@@ -1532,6 +1937,13 @@ function Hekili.Update()
     local pack = rawget( settings.packs, packName )
     if not pack then return end
 
+    -- (windows design v6 §9) the active pack (or its scripts) changed: its APL windows go to the belief (a new
+    -- generation, applied out of combat) and the core's copy. A table identity test per update: no allocation.
+    if ( scripts.Windows[ packName ] or scripts.NoWindows ) ~= scripts.appliedWindows then
+        scripts:ApplyWindows( packName )
+        state:BuildWindows()
+    end
+
     -- VirtualState: fold what was observed since the last cycle and apply our casts through the spec, after the guards
     -- above and before any reset (docs/superpowers/specs/2026-10-14-hekili-virtualstate-design.md §5.1).
     ns.VirtualState.Drain( GetTime() )
@@ -1548,6 +1960,19 @@ function Hekili.Update()
         status.specName = state.spec.name
         Output.Publish( "status", 1 )
     end
+
+    -- E-D6: the resource forecast's horizon, the longest window a display in use walks: the global forecast window
+    -- (Primary, AOE), or a separate display's Forecast Period (it reuses the last full reset's forecast). No allocation.
+    local horizon = settings.performance.forecastWindow or 15
+    for i = 1, #separateDisplays do
+        local name = separateDisplays[ i ]
+        local d = rawget( settings.displays, name )
+        if d and Output.Wanted( name ) and displayRules[ name ][ 1 ]( settings ) then
+            local p = d.forecastPeriod or 15
+            if p > horizon then horizon = p end
+        end
+    end
+    state.forecastHorizon = horizon
 
     local snaps
 
@@ -1603,7 +2028,7 @@ function Hekili.Update()
             local maxRecs, onGcd = numRecs > 1 and numRecs + 2 or numRecs, 0
             local abilityOpts = Hekili:GetActiveSpecOption( "abilities" )
 
-            if debug then Hekili:Debug( "Combat Timer: %.2f", state.time ) end
+            if debug then Hekili:Debug( "Combat Timer: %.2f", state.time ); windowsSection( dispName ) end
 
             for i = 1, maxRecs do
                 local chosen_depth = 0
@@ -1611,19 +2036,15 @@ function Hekili.Update()
                 local slot = Queue[ i ]
                 slot.index = i
                 state.index = i
+                state.WindowSlot( i == 1 ) -- the per-slot marks cleared; slot 1 sends its changes at now (windows design v6 §4.3, §5.1)
+                slotRestarts = 0
 
                 if debug then Hekili:Debug( 0, "\nRECOMMENDATION #%d ( Offset: %.2f, GCD: %.2f, %s: %.2f ).\n", i, state.offset, state.cooldown.global_cooldown.remains, ( state.buff.casting.v3 == 1 and "Channeling" or "Casting" ), state.buff.casting.remains ) end
 
                 local action, wait, depth
                 local isMain = ( dispName == "Primary" or dispName == "AOE" )
                 -- Forever E9: Primary and AOE use the global forecast window (Options, Performance); other displays their Forecast Period.
-                local defaultMax = isMain and ( Hekili.Engine.settings.performance.forecastWindow or 15 ) or ( display.forecastPeriod or 15 )
-
-                if class.file == "DEATHKNIGHT" then
-                    defaultMax = max( defaultMax, 0.01 + 20 * state.haste )
-                elseif state.spec.assassination and state.energy.regen_combined > 0 then -- a rate never read plain is 0: keep the default window
-                    defaultMax = max( state.delayMax, 0.01 + state.energy.max / state.energy.regen_combined )
-                end
+                local defaultMax = state.ForecastWindow( isMain and ( Hekili.Engine.settings.performance.forecastWindow or 15 ) or ( display.forecastPeriod or 15 ) )
                 if i <= 2 then altMax[ i ] = defaultMax end
 
                 state.delay = 0
@@ -1837,14 +2258,7 @@ function Hekili.Update()
 
                 if not action then
                     state.delay = 0
-                    state:SetConstraint( 0, defaultMax )
-
-                    if class.file == "DEATHKNIGHT" then
-                        state:SetConstraint( 0, max( state.delayMax, 0.01 + 20 * state.haste ) )
-                    elseif state.spec.assassination and state.energy.regen_combined > 0 then
-                        -- Cap recommend generation above worst-case energy generation.
-                        state:SetConstraint( 0, max( state.delayMax, 0.01 + state.energy.max / state.energy.regen_combined ) )
-                    end
+                    state:SetConstraint( 0, defaultMax ) -- the slot's window (state.ForecastWindow), its fill stretch included
 
                     if hadProj and debug then Hekili:Debug( "[ ** ] No recommendation before queued event(s), checking recommendations after %.2f.", state.offset ) end
 
@@ -1905,9 +2319,10 @@ function Hekili.Update()
                 end
 
                 state.delay = wait
+                slot.restarts = slotRestarts -- the window restarts of this slot (windows design v6 §15, ruling 24)
 
                 if debug then
-                    Hekili:Debug( "Recommendation #%d is %s at %.2fs (%.2fs).", i, action or "NO ACTION", wait or state.delayMax, state.offset + state.delay )
+                    Hekili:Debug( "Recommendation #%d is %s at %.2fs (%.2fs); window restarts: %d.", i, action or "NO ACTION", wait or state.delayMax, state.offset + state.delay, slotRestarts )
                 end
 
                 if slot.healthCues then
@@ -1921,6 +2336,28 @@ function Hekili.Update()
                     numFilled = i
                     slot.time = state.offset + wait
                     slot.exact_time = state.now + state.offset + wait
+
+                    -- (windows design v6 §6, rulings 4, 27) a strict sequence's start line is the final pick: due now (delay
+                    -- 0; start_on_first=1: within the spell queue window, NOW_TOL) it opens. Slot 1 at now sends OPEN (and the
+                    -- STEP of an allow_skip start past member 1); the copy opens in every slot, so later slots show the next
+                    -- members as the forecast casts this one (State.lua WindowCast). No restart: the pick stands.
+                    local sd = scripts.appliedWindows.startByID[ slot.script ]
+                    if sd and not state.window[ sd.name ].up and wait <= ( sd.start_on_first and ns.SpellQueueWindow() or 0 ) + 0.001 then
+                        local k = 1
+                        for j = 1, #sd.startIDs do
+                            if sd.startIDs[ j ] == slot.script then k = j end
+                        end
+                        local dl = state.delay
+                        state.delay = 0
+                        if state.openWindow( sd.name ) then
+                            if state.WindowFlap( sd.name, true ) then flapWarn( packName, sd.name ) end
+                            local key = state.offset == 0 and state.WindowSendKey( sd.name )
+                            if key then winSend( key, OP_OPEN, nil, sd.name, sd.id ) end
+                            if k > 1 and state.WindowStep( sd.name, k ) and key then winSend( key, OP_STEP, k, sd.name, sd.id ) end
+                            if debug then Hekili:Debug( "strict_sequence %s chosen at +%.2f: opened%s.", sd.name, wait, key and ", sent" or ", forecast only" ) end
+                        end
+                        state.delay = dl
+                    end
                     slot.delay = i > 1 and wait or ( state.offset + wait )
                     slot.since = i > 1 and slot.time - Queue[ i - 1 ].time or 0
                     slot.resources = slot.resources or {}
@@ -1953,9 +2390,7 @@ function Hekili.Update()
 
                     -- For a timeline: the pick's spend of resource_type now (as ns.spendResources reads it) and how long
                     -- it keeps the player busy (its GCD, or its cast or channel when longer).
-                    local cost = ability.spend
-                    if type( cost ) == "function" then cost = cost() end
-                    if type( cost ) ~= "number" then cost = 0 end
+                    local cost = state.SpendOf( ability ) or 0
                     if slot.resource_type then cost = ns.SpendPoints( cost, state[ slot.resource_type ], ability ) end
                     slot.cost = cost
                     slot.busy = max( ability.gcd ~= "off" and gcdLength( action ) or 0, ability.cast or 0 )
@@ -2095,6 +2530,8 @@ function Hekili.Update()
                     break
                 end
             end
+
+            state.WindowSlot( false ) -- nothing after the slot loop sends (a one-icon display's slot 1 included)
 
             -- After passes, the next reset must be full: a full reset rebuilds the state whatever the passes left, as
             -- it would from the main loop's end (offset > 0). shortcut: skipped when the main loop ends at offset 0 (the

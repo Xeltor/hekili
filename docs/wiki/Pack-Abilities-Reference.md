@@ -28,6 +28,7 @@ The belief reads the declared fields it needs to model a cast (cost, cooldown, c
 |---|---|---|
 | `id` | number | Rank 1's spell ID. Without one, the ability gets a negative pseudo-ID (an item ability gets its own range). |
 | `copy` | number, string or list | The other ranks' spell IDs, in rank order, or other keys the ability answers to |
+| `ranks` | list | Every rank's spell ID, rank 1 first. Gives `id` (rank 1), `copy` (ranks 2 and up) and `known` (true while the spellbook knows any rank). A declared `copy` or `known` wins; a declared `id` must be rank 1. With `ranks`, any field may be `{ byRank = { v1, v2, ... } }`: the value of the highest known rank, rank 1's before any is known. Such a field is a function, so a `cast` or `cooldown` given this way is not multiplied by haste. |
 | `name` | string | The name shown, when it should not come from the spell's own name |
 | `listName` | string | The text the options' ability list shows |
 | `texture` | number | The icon, when it should not come from the spell |
@@ -46,6 +47,7 @@ The belief reads the declared fields it needs to model a cast (cost, cooldown, c
 | `spendBase` | boolean | Reads `spend` as a share of base power at any size, for a percent cost that an aura can raise past 100% |
 | `excess_cap` | number or function | The most extra of the spent resource the ability converts beyond its cost. A line with `max_energy` waits for the cost plus this, at most the resource's maximum ([APL line options](APL-Line-Options)). |
 | `refundOnAvoid` | boolean or number | The share of the cost given back when the target dodges, parries or misses. `true` uses the resource's default share. Belief only. |
+| `refundNowOnAvoid` | boolean | `true`: when the target dodges, parries or misses the cast, the belief gives back what the cast's `now` spent from the ability's resource ([Pack resources and regen](Pack-Resources-And-Regen#refunds)). Belief only. |
 | `ladder` | boolean | `false`: the client's usability answers for this ability do not bound the resource. Use it when the answer depends on something else, such as a finisher that is unusable at 0 combo points. |
 
 A proc that makes abilities cheaper is a cost modifier (`RegisterCostMod`), not a condition in `spend` ([Pack API reference](Pack-API-Reference#cost-and-gcd-modifiers)).
@@ -88,15 +90,17 @@ These fields decide whether the ability is known, usable and shown.
 | `debuff` | string or list | Target auras that must be up |
 | `nobuff` | string or list | Player auras that must be down; the simulation waits until they fall |
 | `nodebuff` | string or list | Target auras that must be down; the simulation waits until they fall |
-| `usable_on` | list | The target creature types it works on, such as `{ "undead", "demon" }`. An unknown type never blocks it. |
+| `usable_on` | list | The target creature types it works on, such as `{ "undead", "demon" }`, or `{ "any" }` for any type. Usable only on a living attackable target of a confirmed type: a readable type decides; in dungeons and raids, or while the client gives no type, the client's range answer for `rangeSpell` (else the ability) must confirm it. |
 | `healthGate` | number | The client allows the ability only at or below this share of the target's health. The belief reads the client's answers for it as bounds on the target's health. |
 | `range` | number | The greatest range in yards, checked when the range filter is on |
-| `rangeSpell` | number | The spell ID to ask the client about for range |
+| `rangeSpell` | number or function | The spell ID to ask the client about for range (and for `usable_on`'s type confirmation); a function returns the ID, or nil for the ability's own |
 | `nomounted` | boolean | Not recommended while mounted |
 | `nocombat` | boolean | Not usable in combat |
 | `toggle` | string | The toggle it sits under: `"cooldowns"`, `"defensives"`, `"interrupts"`, `"potions"` and the others on [Toggles](Toggles) |
 | `startsCombat` | boolean | Casting it starts combat with the target |
 | `essential` | boolean | A precombat line with this ability is still considered once combat has started |
+| `sequence_ignore` | list | Gates out of `"form"`, `"noform"`, `"buff"`, `"nobuff"` that a `strict_sequence` start test skips for this ability when it is a member after the first and the line has no `start_on_first=1`. Any other name raises at load. |
+| `sequence_ready` | function | Replaces this ability's readiness in the same start test; inside it `ready()` is the normal test with `sequence_ignore` applied. The member's own `if=` still applies. |
 
 Declare a form requirement with `form`, never through `buff` or a `usable` function; `tests/Forever/forms_spec.lua` checks this.
 
@@ -116,6 +120,8 @@ Declare a form requirement with `form`, never through `buff` or a `usable` funct
 | `impact` | Simulation | A projectile lands (`velocity` or `flightTime` set) |
 
 `now` and `handler`, and `now_finish` and `finish`, must be separate functions: the belief refuses a pair that is one function. Why each effect is written twice is explained on [Pack belief and simulation](Pack-Belief-And-Simulation).
+
+Where the two are the same code, declare `effect = function() return function() ... end end` instead: the core calls the factory once for `handler` and once for `now`, so each layer gets its own closure. A declared `handler` or `now` wins over `effect`, which fills only the missing one. The factory must return a new function on each call.
 
 > [!NOTE]
 > **On Forever:** The game hides the amounts and kinds of most hits on the target, so `onCrit` and `onLand` run only where a hit's row is plain. In the open world on the live client, no target row was plain when measured, so neither ran there. Treat them as corrections, not as the only source of an effect the recommendations need.

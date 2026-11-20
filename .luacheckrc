@@ -99,7 +99,7 @@ local nowEnv = {
     "summonTotem", "summonPet", "dismissPet", "reduceCooldown", "level", "resetResource", "capResource",
     "talent",
     "buff", "debuff", "knownRank", "stat", "swingBase", "healthMax", "now", "combat", "rage", "energy", "mana", "focus",
-    "runic_power", "totem", "action", "settings", "haste", "instant", "cast_start", "target",
+    "runic_power", "totem", "action", "settings", "haste", "instant", "cast_start", "cast_id", "target",
     "set_bonus", "equipped", "victim_channel",
     "openWindow", "closeWindow", "lastSwing", "nextSwing", "usable", -- the windows (Families/Windows.lua)
 }
@@ -113,6 +113,7 @@ files["tests/Forever/"] = { std = "+busted" }
 local warriorEnv = {
     "rage", "cooldown", "combat", "active_enemies", "active_dot", "setDistance", "interrupt", "swap_stance",
     "mainhand_remains", "nextMH", "nextOH", "mainhand_speed", "offhand_speed", "weapon", "main_hand", "off_hand", "level",
+    "removeStack", "addStack", -- the Reckless Swings reaction's and a strike's now and onAvoid
 }
 for _, k in ipairs(stateEnv) do
     warriorEnv[#warriorEnv + 1] = k

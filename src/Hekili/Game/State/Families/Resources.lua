@@ -31,8 +31,10 @@ local UNKNOWN, NOT, YES, SHORT = -1, 0, 1, 2
 -- By resource slot r. `swing[r]` is the hand that pays it (1 main, 2 off; 0: continuous regen) and `swingOff[r]` the
 -- off hand's own value when both hands pay it (0: none); `swingAura[r]` the player aura index its swings need (0: none;
 -- -1: named but not tracked, so no swing pays); `swingCrit[r]` / `swingOffCrit[r]` the extra a critical white hit of
--- that hand adds (0: none). Continuous regen is per second (regE/regL/regH); a swing-paid
--- resource's step is the spec's model value of that hand x scale (spread around it). `restMax[r]`: a regenerating
+-- that hand adds (0: none); `swingWidth[r]` / `swingOffWidth[r]` the half-width of that hand's value, a random part the
+-- belief cannot see (a proc's expected gain; 0: none). Continuous regen is per second (regE/regL/regH); a swing-paid
+-- resource's step is the spec's model value of that hand x scale (spread around it), its floor step (value - width) x
+-- (scale - spread) and its top step (value + width) x (scale + spread). `restMax[r]`: a regenerating
 -- resource rests at its maximum (energy, mana), the others at 0 (rage).
 -- The five-second rule (C3): a slot with an `fsr` meta splits its continuous regen in two parts, each with its own
 -- calibrated state: the `mp5` part (regE/regL/regH, decl, dev) always, the `spirit` part (spE/spL/spH, spDecl, spDev;
@@ -74,6 +76,8 @@ local R = {
     swingOff = {},
     swingCrit = {},
     swingOffCrit = {},
+    swingWidth = {},
+    swingOffWidth = {},
     est0 = {},
     lo0 = {},
     hi0 = {},
@@ -171,7 +175,11 @@ R.auraRegen = G
 -- Regen entries (C3b, built from each resource's `mult` list), wowsims's mana PseudoStats while the player's aura j is
 -- believed up: `mult` the whole rate x n (default 1), `spirit` the spirit regen x m (default 1), `share` + s of the
 -- spirit regen while casting (default 0; capped with the slot's static share at all of it), `mp5` + x a second in and
--- out of the window (default 0); `spirit`, `share` and `mp5` may be functions (refresh). See coefAt.
+-- out of the window (default 0); `spirit`, `share` and `mp5` may be functions (refresh). `mp5Mult` (a number, default 1)
+-- the gear and buff MP5 x p: the learned mp5 part and every other entry's `mp5` but an `energize` one's (`energize`:
+-- a periodic energize ticks its own amount; wowsims mana.go:176-183 multipliedManaRegen). `spirit`, `share`,
+-- `mp5Mult` and `energize` act on an `fsr` slot only: a slot without the rule has no learned parts to split, its rate is
+-- f x (the learned rate + every entry's mp5). See coefAt.
 local M = {
     n = 0,
     slot = {},
@@ -180,6 +188,8 @@ local M = {
     spirit = {},
     share = {},
     mp5 = {},
+    mp5Mult = {},
+    energize = {},
     spiritDef = {},
     mp5Def = {},
     shareDef = {},
@@ -393,6 +403,7 @@ I.OnBuild(function(def, now)
         R.swingValue[r] = d.swingValue or 0
         R.swingOff[r] = d.swingOff or 0
         R.swingCrit[r], R.swingOffCrit[r] = d.swingCrit or 0, d.swingOffCrit or 0
+        R.swingWidth[r], R.swingOffWidth[r] = d.swingWidth or 0, d.swingOffWidth or 0
         R.est0[r], R.lo0[r], R.hi0[r] = R.rest[r], 0, R.max[r]
         estDebt[r] = 0
         R.assume[r] = R.restMax[r] and R.swing[r] == 0
@@ -452,11 +463,13 @@ I.OnBuild(function(def, now)
             local e = entries[k]
             -- each field valid or its default (a spirit of 0 or less: the out-of-combat read divides by it; a mult of 0
             -- pauses the slot, and a read under it teaches nothing); a function spirit or mp5 is read here once
-            local f, sh, m, x = e.mult, e.share, e.spirit, e.mp5
+            local f, sh, m, x, p = e.mult, e.share, e.spirit, e.mp5, e.mp5Mult
             f = type(f) == "number" and f >= 0 and f or nil
             sh = (type(sh) == "function" or type(sh) == "number" and sh > 0 and sh <= 1) and sh or nil
+            p = type(p) == "number" and p > 0 and p or nil
             local live = f
                 or sh
+                or p
                 or type(m) == "function"
                 or type(m) == "number" and m > 0
                 or type(x) == "function"
@@ -466,6 +479,7 @@ I.OnBuild(function(def, now)
                     M.n = M.n + 1
                     M.slot[M.n], M.aura[M.n] = r, i
                     M.mult[M.n], M.spiritDef[M.n], M.mp5Def[M.n], M.shareDef[M.n] = f or 1, m, x, sh
+                    M.mp5Mult[M.n], M.energize[M.n] = p or 1, e.energize == true
                     R.shaped[r] = true
                 end
             end
@@ -530,7 +544,7 @@ end)
 -- gained at the swing) (its application after it, or its expiry at or before it). Allocates nothing.
 local function perSwing(r, hand, main, off, at)
     local j, t = R.swingAura[r], at or I.clock
-    if j < 0 or j > 0 and (I.auras.exp0[1][j] <= t or I.auras.applied[1][j] > t) then
+    if j < 0 or j > 0 and not I.AuraUpAt(1, j, t) then
         return 0 -- unit 1 is always "player" (Tracked.lua's def.units)
     end
     local v = main[r]
@@ -552,6 +566,19 @@ end
 --- The spec's white-crit extra of a swing-paid slot for `hand` (its swing entry's `crit`), as I.SwingValue.
 function I.SwingCrit(r, hand, at)
     return perSwing(r, hand, R.swingCrit, R.swingOffCrit, at)
+end
+
+--- The half-width of the per-swing value of a swing-paid slot for `hand` (its swing entry's `width`: a proc the belief
+--- cannot see), as I.SwingValue.
+function I.SwingWidth(r, hand, at)
+    return perSwing(r, hand, R.swingWidth, R.swingOffWidth, at)
+end
+
+-- The floor step of a landed swing of `hand` at `at` for slot r: its value without the width (never below 0) x
+-- (scale - spread). Allocates nothing.
+local function lowStep(r, hand, at)
+    local v = I.SwingValue(r, hand, at) - I.SwingWidth(r, hand, at)
+    return (v > 0 and v or 0) * (R.scale[r] - R.spread[r])
 end
 
 -- What entry g brings in (from, to]: `value` at each `interval` after the player's aura was applied, up to its
@@ -587,27 +614,39 @@ local function auraGain(g, from, to)
 end
 
 -- Slot r's rate at t as multiples of its two learned parts plus a known rate (fa x regE + fb x spE + k): wowsims's
--- (MP5/5 + S x m x min(c + s, 1)) x f inside the window and (MP5/5 + S x m) x f outside (sim/core/mana.go:186-206),
--- from the entries up at t: f and m multiply, s and mp5 add. The spirit regen S is spE / (1 - c), or the mp5 part
--- when the static share c is all of it (shortcut: exact while the slot has no mp5; upgrade if a full-share spec has
--- mp5). A plain slot's fb is 0. Allocates nothing.
+-- (MP5 x p + S x m x min(c + s, 1) + E) x f inside the window and (MP5 x p + S x m + E) x f outside
+-- (sim/core/mana.go:176-206: its all-regen multiplier p scales the spirit regen too, which `spirit` entries carry), from
+-- the entries up at t: f, m and p multiply, s and mp5 add; MP5 is the learned mp5 part M plus the entries' mp5 but an
+-- `energize` one's, E those. regE holds M + cS and spE (1 - c)S, so M x p + S x m' is p x regE + (m' - p c) / (1 - c) x
+-- spE. The spirit regen S is spE / (1 - c), or the mp5 part when the static share c is all of it (shortcut: exact while
+-- the slot has no mp5; upgrade if a full-share spec has mp5). A plain slot's fb is 0. Allocates nothing.
+-- shortcut: an entry whose p exceeds its spirit multiple (an `mp5Mult` with no `spirit`) makes fb negative, so the
+-- spirit term of the band's lo and hi swap sides; the estimate is exact. Upgrade by taking the band's ends apart when a
+-- pack declares one (the shared all-regen entry has m = p).
 local function coefAt(r, t, inside)
-    local f, m, s, k = 1, 1, 0, 0
+    local f, m, s, p, k, kE = 1, 1, 0, 1, 0, 0
     for i = 1, M.n do
         if M.slot[i] == r then
             local j = M.aura[i]
-            if I.auras.applied[1][j] <= t and I.auras.exp0[1][j] > t then -- unit 1 is always "player"
-                f, m, s, k = f * M.mult[i], m * M.spirit[i], s + M.share[i], k + M.mp5[i]
+            if I.AuraUpAt(1, j, t) then -- unit 1 is always "player"
+                f, m, s, p = f * M.mult[i], m * M.spirit[i], s + M.share[i], p * M.mp5Mult[i]
+                if M.energize[i] then
+                    kE = kE + M.mp5[i]
+                else
+                    k = k + M.mp5[i]
+                end
             end
         end
     end
     if not R.fsr[r] then
-        return f, 0, f * k
+        return f, 0, f * (k + kE)
     end
+    k = k * p + kE
     local c = R.share[r]
-    local fa, fb, e = 1, 1, m - 1
+    -- outside 1 + e / (1 - c) = (m - p c) / (1 - c), written so p = 1 computes what it did before p existed
+    local fa, fb, e = p, 1, m - 1 - (p - 1) * c
     if inside then
-        fb, e = 0, m * (c + s < 1 and c + s or 1) - c
+        fb, e = 0, m * (c + s < 1 and c + s or 1) - p * c
     end
     if c < 1 then
         fb = fb + e / (1 - c) -- nonzero: c < 1
@@ -618,17 +657,17 @@ local function coefAt(r, t, inside)
 end
 
 -- The entries of slot r up at t as the out-of-combat read sees them: their whole-rate multiple f, their summed mp5,
--- whether a `spirit` one is up (the game's pair then mixes the parts: no news), and the summed share s of the
--- share-only ones (a regen-while-casting aura: the pair mixes them by a known share, which the read unmixes; aura audit
--- C9). Allocates nothing.
+-- whether a `spirit` or an `mp5Mult` one is up (the game's pair then mixes the parts: no news), and the summed share s
+-- of the share-only ones (a regen-while-casting aura: the pair mixes them by a known share, which the read unmixes; aura
+-- audit C9). Allocates nothing.
 local function readAt(r, t)
     local f, k, mixed, s = 1, 0, false, 0
     for i = 1, M.n do
         if M.slot[i] == r then
             local j = M.aura[i]
-            if I.auras.applied[1][j] <= t and I.auras.exp0[1][j] > t then
+            if I.AuraUpAt(1, j, t) then
                 f, k = f * M.mult[i], k + M.mp5[i]
-                mixed = mixed or M.spirit[i] ~= 1
+                mixed = mixed or M.spirit[i] ~= 1 or M.mp5Mult[i] ~= 1
                 s = s + (M.spirit[i] == 1 and M.share[i] or 0)
             end
         end
@@ -1060,8 +1099,7 @@ function I.Missed(hand, at)
             (R.swing[r] == hand or (hand == 2 and R.swing[r] == 1 and R.swingOff[r] ~= 0))
             and R.spends[r] == swSp[hand]
         then
-            local step = I.SwingValue(r, hand, at) * (R.scale[r] - R.spread[r]) -- its form or aura at the swing
-            return swTop[hand] < swL[hand] + step
+            return swTop[hand] < swL[hand] + lowStep(r, hand, at) -- its form or aura at the swing
         end
     end
     return false
@@ -1077,14 +1115,14 @@ end
 -- its crit (the hand's `crit`, unscaled); none for a crit of a slot without one. `owed`: the step first covers the
 -- slot's rung lift (R.liftE/L/H). Allocates nothing.
 local function swingStep(r, hand, c, t, owed, at)
-    local max, v, s, sp = R.max[r], 0, 1, 0
+    local max, v, s, sp, w = R.max[r], 0, 1, 0, 0
     if c == 1 then
-        v, s, sp = I.SwingValue(r, hand, at), R.scale[r], R.spread[r]
+        v, s, sp, w = I.SwingValue(r, hand, at), R.scale[r], R.spread[r], I.SwingWidth(r, hand, at)
     else
         v = I.SwingCrit(r, hand, at)
     end
     if c == 1 or v ~= 0 then -- a slot with no `crit` takes no sample for a crit
-        local de, dl, dh = v * s, v * (s - sp), v * (s + sp)
+        local de, dl, dh = v * s, (v > w and v - w or 0) * (s - sp), (v + w) * (s + sp)
         if owed then
             de, R.liftE[r] = net(de, R.liftE[r])
             dl, R.liftL[r] = net(dl, R.liftL[r])
@@ -1257,13 +1295,17 @@ I.OnSettle(function()
 end)
 
 -- The low step of `hand`'s swing still pending (VS.SwingPending) for slot r, at its swing, if an answer at t can show
--- it (ORACLE_MIN after it); else 0. Allocates nothing.
-local function pendingStep(r, hand, t)
+-- it (ORACLE_MIN after it); else 0. `proc`: the step with its width's whole proc, (value + width) x (scale - spread):
+-- what that hand alone may have paid. Allocates nothing.
+local function pendingStep(r, hand, t, proc)
     local p = VS.SwingPending(hand)
     if p == 0 or t <= p + I.Log.ORACLE_MIN - 1e-6 then
         return 0
     end
-    return I.SwingValue(r, hand, p) * (R.scale[r] - R.spread[r])
+    if proc then
+        return (I.SwingValue(r, hand, p) + I.SwingWidth(r, hand, p)) * (R.scale[r] - R.spread[r])
+    end
+    return lowStep(r, hand, p)
 end
 
 -- Slot r's floor raised to v (a yes that showed a pending swing landed: its low step), within the believed top, the
@@ -1358,7 +1400,8 @@ I.On(Obs.Usable, function(o, t, lag)
                 heardT[1], heardT[2] = o.t, o.t
             end
         else
-            local e1, e2 = c > lo + f + I.EPS, c > lo + m + I.EPS
+            -- the other hand alone may have paid up to its step with the proc (L1456 i): only past that is a hand shown
+            local e1, e2 = c > lo + pendingStep(r, 2, o.t, true) + I.EPS, c > lo + pendingStep(r, 1, o.t, true) + I.EPS
             -- each shown hand gave more than none (it landed), but only where the yes contradicts the estimate: one the
             -- estimate already reached may follow an avoided swing (lifting there put the floor above the truth).
             -- shortcut: est0 is no bound (truth may sit above it before a dodge); the sound test, c > hi0 + the other
@@ -1407,7 +1450,8 @@ I.On(Obs.Usable, function(o, t, lag)
                 owe(r, e, lo, hi, o.t)
             else
                 -- a swing-paid resource crosses at a swing: [c, c + one step of the larger hand), measured at its
-                -- midpoint
+                -- midpoint. The value, not value + width: the crossing's expected overshoot is half the expected step,
+                -- and a midpoint a width higher would bias the scale where this pin chains with an exact read (review M1)
                 local v, off = I.SwingValue(r), R.swingOff[r] ~= 0 and I.SwingValue(r, 2) or 0
                 local step = (v > off and v or off) * (R.scale[r] + R.spread[r])
                 local e, lo, hi = R.est0[r], R.lo0[r], R.hi0[r]
@@ -1589,7 +1633,9 @@ I.On(Obs.Swing, function(o, t)
                     end
                 elseif k > 0 and recR[k] == r then -- confirmed: the rest of a landed step, and its floor
                     R.liftRec[r] = owes and o.b or 0 -- as a landed swing's (c = 1): its crit pays the rest it owed
-                    local de, dh, dl = v * sc * (1 - recAsm[k]), v * (sc + sp) - v * sc * recAsm[k], v * (sc - sp)
+                    local w = I.SwingWidth(r, hand, o.t)
+                    local de, dh = v * sc * (1 - recAsm[k]), (v + w) * (sc + sp) - v * sc * recAsm[k]
+                    local dl = lowStep(r, hand, o.t)
                     if owes then
                         de, R.liftE[r] = net(de, R.liftE[r])
                         dh, R.liftH[r] = net(dh > 0 and dh or 0, R.liftH[r])
@@ -1679,11 +1725,8 @@ I.On(Obs.PlayerHit, function(o, t)
                 -- calibration even when the content cannot credit it; no amount or resource gain is invented.
                 R.pinOwn[r] = true
             end
-            I.NowAt(t)
-            local ok, gain, width = pcall(f, I.HitName[kind], o.b, o.c)
-            if not ok then
-                I.nowErrors, I.nowError = I.nowErrors + 1, gain
-            elseif type(gain) == "number" and gain > 0 then
+            local ok, gain, width = I.Guard(f, t, I.HitName[kind], o.b, o.c)
+            if ok and type(gain) == "number" and gain > 0 then
                 width = type(width) == "number" and width > 0 and width or 0
                 local max = R.max[r]
                 R.est0[r] = clamp(R.est0[r] + gain, max)
@@ -1935,20 +1978,34 @@ end
 --- set since the cast plus what the slot gained since that answer (the answer already saw the refunded pool; regen or
 --- a credit after it adds to the truth); lo takes it only when no usable answer raised lo since the cast, est only
 --- when none raised est (else that answer's bound already holds the refund). `held`: an answer since the cast raised
---- either, before a later spend reset those marks (a late refund: the CDM verdict's), so lo and est stay. Returns what
---- est, lo and hi took (I.Unrefund's). Allocates nothing.
-function I.Refund(r, d, t, held)
+--- either, before a later spend reset those marks (a late refund: the CDM verdict's), so lo and est stay. `dL`, `dH`
+--- (optional, both or neither; neither: d): what lo and hi take instead (a `now`'s spend clamped each at 0 apart: Families/Now.lua).
+--- `fE`, `fL` (optional): floors est and lo reach at least, before the tops clamp them (what the slot held before a
+--- `now` whose spend the avoid gives back, plus the share: an answer since the cast only bounds it from below, so it
+--- can raise that give-back, never cancel it). Returns what est, lo and hi took (I.Unrefund's). Allocates nothing.
+function I.Refund(r, d, t, held, dL, dH, fE, fL)
     local lo, e, top, hi = R.lo0[r], R.est0[r], R.sinceShort[r], R.hi0[r]
     if top < math.huge then
         local moved = e - R.sinceShortEst[r]
         top = top + (moved > 0 and moved or 0)
     end
     I.ResourceShift(r, d, t, Obs.Avoided)
+    if dL then
+        R.lo0[r], R.hi0[r] = clamp(lo + dL, R.max[r]), clamp(hi + dH, R.max[r])
+        norm(r)
+    end
     if held or R.sinceYes[r] then
         R.lo0[r] = lo
     end
     if held or R.sinceSnap[r] then
         R.est0[r] = e
+    end
+    if fL and R.lo0[r] < fL then
+        R.lo0[r] = clamp(fL, R.max[r])
+        norm(r)
+    end
+    if fE and R.est0[r] < fE then
+        R.est0[r] = clamp(fE, R.max[r])
     end
     if R.hi0[r] > top then
         R.hi0[r] = top
@@ -1965,7 +2022,27 @@ function I.Refund(r, d, t, held)
     if R.hi0[r] < R.est0[r] then
         R.hi0[r] = R.est0[r]
     end
+    if dL then -- a `now`'s give-back explains a flip (R.gain) by what est took, not by the whole take
+        local took = R.est0[r] - e
+        R.gain[r] = R.gain[r] - d + (took > 0 and took or 0)
+    end
     return R.est0[r] - e, R.lo0[r] - lo, R.hi0[r] - hi
+end
+
+--- An avoid's give-back of what a `now` spent (Families/Now.lua) explains the rung lifts of slot r since that cast
+--- (sE, sL, sH: R.liftE/L/H at the cast) up to what it gave back (gE, gL, gH): the pool was never spent, so no swing's
+--- wound owes that part (owe). A window reset since the cast reads as less lift since (kept owed: est low, the safe
+--- side). Allocates nothing.
+function I.LiftExplained(r, sE, sL, sH, gE, gL, gH)
+    local u = R.liftE[r] - sE
+    u = u < gE and u or gE
+    R.liftE[r] = u > 0 and R.liftE[r] - u or R.liftE[r]
+    u = R.liftL[r] - sL
+    u = u < gL and u or gL
+    R.liftL[r] = u > 0 and R.liftL[r] - u or R.liftL[r]
+    u = R.liftH[r] - sH
+    u = u < gH and u or gH
+    R.liftH[r] = u > 0 and R.liftH[r] - u or R.liftH[r]
 end
 
 --- A refund `d` proven wrong (the CDM verdict's, struck: Families/Now.lua I.VerdictTakeBack) comes back out of slot r:

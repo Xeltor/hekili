@@ -185,7 +185,7 @@ describe("Cooldown Manager facts through the engine #slow", function()
     it("F3: a CDM UP in our cast's drain keeps the cast's expiry (SM Ruin seed 1: Corruption, Immolate)", function()
         local w = require("Forever.helpers.warlock_world")
         local function remains(arm)
-            local L = loop.new(w.SMRuin)
+            local L = loop.new(w.raid(w.SMRuin))
             local out = {}
             loop.run(L, 1, {
                 duration = 15,

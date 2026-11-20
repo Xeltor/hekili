@@ -658,11 +658,12 @@ describe("Forever Rogue priorities", function()
             settings = w.settings,
             action = merged.abilities,
         }
+        local pe = require("Forever.helpers.pack_entries")
         for name, p in pairs(packs) do
             for list, entries in pairs(p.lists) do
-                for i, e in ipairs(entries) do
+                for i, e in ipairs(pe.flat(entries)) do
                     local where = name .. " " .. list .. " " .. i
-                    assert.is_not_nil(merged.abilities[e.action], where .. ": " .. e.action)
+                    assert.is_not_nil(merged.abilities[e.action] or pe.LINE[e.action], where .. ": " .. e.action)
                     for kind, key in (e.criteria or ""):gmatch("(%a+)%.([%w_]+)") do
                         if kinds[kind] then
                             assert.is_not_nil(kinds[kind][key], where .. ": no " .. kind .. " " .. key)
@@ -937,6 +938,44 @@ describe("Forever Assassination with no plain energy rate", function()
         for _, hi in ipairs(maxes) do
             assert.is_true(hi == nil or hi < math.huge, "window " .. tostring(hi))
         end
+    end)
+end)
+
+-- dry-forecast (engine pass E3): the forecast window's stretch is pack data. Assassination declares `fillWindow =
+-- "energy"`: every window (the slot's, the retry's, the resource forecast's horizon) reaches at least the time a full
+-- bar takes at the combined rate, 0.01 + 100 / 10 here; Combat declares none and keeps its window.
+describe("Forever Rogue forecast window", function()
+    local function boot(name)
+        local C = require("Forever.helpers.rogue_world")[name]
+        local H = headless.new({ character = C.character(), pack = C.PACK })
+        assert.are.same({}, H.loadErrors)
+        H.ctl.inRange.target, H.ctl.level.target = true, 60
+        H.Fire("PLAYER_TARGET_CHANGED")
+        assert.is_true(headless.cycle(H, H.ctl.now + 0.5))
+        return H.Hekili.State, H
+    end
+
+    it("stretches Assassination's to a full energy bar's regen, never below the display's own", function()
+        local S = boot("Assassination")
+        assert.are.equal("energy", S.spec.fillWindow)
+        assert.are.equal(10, S.energy.regen_combined)
+        assert.is_true(math.abs(S.ForecastWindow(5) - 10.01) < 1e-9)
+        assert.are.equal(15, S.ForecastWindow(15))
+    end)
+
+    it("leaves Combat's as the display's own", function()
+        local S = boot("Combat")
+        assert.is_falsy(S.spec.fillWindow) -- state.spec answers false for a key it lacks
+        assert.are.equal(5, S.ForecastWindow(5))
+    end)
+
+    -- dry-forecast review M7: a `fillWindow` naming no resource the class registers stretches nothing and never raises.
+    it("ignores a fillWindow that names no registered resource", function()
+        local S, H = boot("Assassination")
+        S.spec.fillWindow = "runic_power"
+        assert.are.equal(5, S.ForecastWindow(5))
+        assert.is_true(headless.cycle(H, H.ctl.now + 0.5))
+        assert.are.same({}, H.errors)
     end)
 end)
 

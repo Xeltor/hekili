@@ -125,18 +125,27 @@ M.WORLD = {
         if M.chargesW ~= W then
             M.charges = 0
         end
+        M.wrng = W.krng -- this world's Unbridled Wrath rolls (wrath below)
     end,
 }
 
+-- Unbridled Wrath's rage on a landed white swing, Heroic Strike or Cleave at talent rank `rank`: rolled, 11.9% a rank,
+-- 1 rage a proc with any weapon (wowsims ab0f talents_fury.go:65-87, aura_helpers.go:163; EV-0148, owner L1419), from
+-- the world's own stream (W.krng, handed over at the pull) so no other draw moves. No rank, no draw.
+local WRATH, UNBRIDLED_WRATH = 0.119, 12322
+local function wrath(rank)
+    return (rank or 0) > 0 and M.wrng.chance(WRATH * rank) and 1 or 0
+end
 -- True rage per landed white wound: the class file's own model restated (Hekili_Warrior/Warrior.lua, "Rage per white
--- swing": 4.5 x the unhasted speed with a two-hander; a crit doubles it, W1). Circular on purpose:
+-- swing": 4.5 x the unhasted speed with a two-hander; a crit doubles it, W1), plus Unbridled Wrath's roll at the
+-- character's rank (none at M.TALENTS). Circular on purpose:
 -- the loop measures recommendations, not the rage model (its own specs measure that). The loop's gain hook: rage is
 -- the character's only power, so `pt` is always rage's.
-function M.gain(_, hand, _, flag)
+function M.gain(_, hand, _, flag, character)
     if hand ~= 1 then
         return 0
     end
-    return 4.5 * 3.6 * (flag == "CRITICAL" and 2 or 1)
+    return 4.5 * 3.6 * (flag == "CRITICAL" and 2 or 1) + wrath(character and character.talents[UNBRIDLED_WRATH])
 end
 
 -- The avoids each press rolls when not the special melee tables' (world.OUTCOMES, from wowsims/forever's warrior/*.go):
@@ -190,6 +199,28 @@ function M.dropReckless()
         end
     end)
 end
+-- Our queued Heroic Strike's or Cleave's outcome (behaviours.lua's `e.struck`), set at its press: a landed one rolls
+-- Unbridled Wrath and spends one Reckless Swings charge for 5 rage, once a cast (wowsims talents_fury.go at
+-- ab0f00e4fc; EV-0148, EV-0138). shortcut: one target, so one roll a Cleave. Its Flurry charge is not modelled (the
+-- world's swings keep their speed).
+local function struck(e, X)
+    e.struck = e.struck
+        or function(W, act)
+            if act ~= "WOUND" then
+                return
+            end
+            local n = wrath(X.talent.unbridled_wrath.rank)
+            if M.charges > 0 and M.chargesE == e then
+                M.charges, n = M.charges - 1, n + 5
+                if M.charges == 0 then
+                    M.dropReckless()
+                end
+            end
+            if n > 0 then
+                W.gain(e, n)
+            end
+        end
+end
 local function strike(amount, key) -- a hit on the target for `amount` (nil: none), and debuff `key` when it lands
     return {
         effect = function(W, e, _, X)
@@ -230,8 +261,18 @@ M.MAP = {
         end,
     },
     -- shortcut: a queued strike that lands has no crit or armour. It rolls its avoids (W.hit's sets, the swing's).
-    cleave = { amount = 50 },
-    heroic_strike = { amount = 157 },
+    cleave = {
+        amount = 50,
+        effect = function(_, e, _, X)
+            struck(e, X)
+        end,
+    },
+    heroic_strike = {
+        amount = 157,
+        effect = function(_, e, _, X)
+            struck(e, X)
+        end,
+    },
     demoralizing_shout = strike(nil, "demoralizing_shout"),
     sunder_armor = strike(nil, "sunder_armor"),
     hamstring = strike(45, "hamstring"),
@@ -338,15 +379,18 @@ M.MAP = {
             W.hit(e, e.target, weapon(W, e, 35), 1)
         end,
     },
-    execute = { -- the target's true health under 20%; rank 5: 600, and 15 a point of the rage it spends past its cost
+    -- the target's true health under 20%; rank 5: 600, and 15 a point of the rage past its cost, spent only by a landed
+    -- strike: an avoided one keeps it (wowsims execute.go at e4ef929e54; the kit gives no refund of the cost)
+    execute = {
         requires = function(_, e)
             local v = e.target
             return v ~= nil and v.health <= 0.2 * v.healthMax, "not in execute range"
         end,
         effect = function(W, e)
             local extra = e.power
-            W.gain(e, -extra)
-            W.hit(e, e.target, 600 + 15 * extra, 1)
+            if W.hit(e, e.target, 600 + 15 * extra, 1).act == "WOUND" then
+                W.gain(e, -extra)
+            end
         end,
     },
     victory_rush = { -- a kill of ours within 20 s
@@ -514,7 +558,7 @@ M.Fury = setmetatable({
     end,
     -- The class file's rates restated (as M.gain): 3.46 x speed main hand with a one-hander, 1.73 x speed off hand, +10%
     -- per rank of Dual Wield Specialization the character has (5/5 at 60, 0 at L24: the cut stops short of it); a crit
-    -- doubles the swing's rage (W1). Unbridled Wrath's procs are not modelled.
+    -- doubles the swing's rage (W1); Unbridled Wrath's roll (wrath above) at the character's rank.
     gain = function(_, hand, _, flag, character)
         local rate = hand == 1 and 3.46 or 1.73 * (1 + 0.1 * (character.talents[DUAL_WIELD_SPEC] or 0))
         local paid = 0
@@ -524,21 +568,25 @@ M.Fury = setmetatable({
                 M.dropReckless()
             end
         end
-        return rate * FURY_SPEED[hand] * (flag == "CRITICAL" and 2 or 1) + paid
+        return rate * FURY_SPEED[hand] * (flag == "CRITICAL" and 2 or 1)
+            + paid
+            + wrath(character.talents[UNBRIDLED_WRATH])
     end,
 }, { __index = M })
 
 -- The Protection base (wowsims packs plan, Task 6; ws.content's base for Protection (wowsims.com)): the world above with
--- wowsims/forever's prebis Protection gear (MIT, https://github.com/wowsims/forever): a one-hander (10271) at the 2.35 s
--- period of the first Tag 1 swing pairs of tests/Forever/wowsims/warrior_protection.log and a shield (15289); damage
--- UNMEASURED. Defensive Stance up (wowsims's defaultStance); Mortal Strike is an Arms talent, so the character does
--- not know it. The client's armor and block value (UnitArmor, GetShieldBlock) are the log's: Inspiration's "Armor *=
--- 1.25" line adds 1259, so 5036 armor; each damage-taken rage line then gives the hit before mitigation (wowsims's
--- rage.go) and the block value 0.9 x (1 - armor share) x that - the "Block for N" amount: 52-63 over the 41 blocks, 57.
-local PROT_SPEED = 2.35
+-- wowsims/forever's prebis Protection gear (MIT, https://github.com/wowsims/forever): a one-hander (10271) at the 2.40 s
+-- period of the swing pairs ({OtherID: 3, Tag: 14}) of tests/Forever/wowsims/warrior_protection.log (e4ef929e54) and a
+-- shield; damage UNMEASURED. Defensive Stance up (wowsims's defaultStance); Mortal Strike is an Arms talent, so the
+-- character does not know it. The client's armor and block value (UnitArmor, GetShieldBlock) are the log's:
+-- Inspiration's "Armor *= 1.25" line adds 1423.25, so 5693 armor; each damage-taken rage line then gives the hit after
+-- Defensive Stance and before armor (wowsims's rage.go, A 0.40 at 63) and the block value (1 - armor share) x that -
+-- the "Block for N" amount: 49-65 over the 48 partial blocks, mean 59.5, median 58.9: 59 (the same reading gives the
+-- old e5a9cd2a2d log's 57).
+local PROT_SPEED = 2.40
 M.Protection = setmetatable({
     WORLD = setmetatable(
-        { weapons = { { 60, 120, PROT_SPEED } }, stats = { armor = 5036, block = 57 } },
+        { weapons = { { 60, 120, PROT_SPEED } }, stats = { armor = 5693, block = 59 } },
         { __index = M.WORLD }
     ),
     character = function()
@@ -547,12 +595,13 @@ M.Protection = setmetatable({
         c.items = { [16] = { 1, "One-Hander", "INVTYPE_WEAPON" }, [17] = { 2, "Shield", "INVTYPE_SHIELD" } }
         return c
     end,
-    -- The class file's rate restated (as M.gain): 3.46 x speed with a one-hander; a crit one more base swing.
-    gain = function(_, hand, _, flag)
+    -- The class file's rate restated (as M.gain): 3.46 x speed with a one-hander; a crit one more base swing; Unbridled
+    -- Wrath's roll at the character's rank.
+    gain = function(_, hand, _, flag, character)
         if hand ~= 1 then
             return 0
         end
-        return 3.46 * PROT_SPEED * (flag == "CRITICAL" and 2 or 1)
+        return 3.46 * PROT_SPEED * (flag == "CRITICAL" and 2 or 1) + wrath(character.talents[UNBRIDLED_WRATH])
     end,
 }, { __index = M })
 

@@ -22,7 +22,7 @@ function M.boot(ns, api, edit)
     -- the rate-field entries (Bear Form's energy pause), which Spec/Regen.lua moves out of the model into regenMult
     local rates = {}
     for _, m in pairs(w.resources[3].models or {}) do
-        if m.mult or m.spirit or m.share or m.mp5 then
+        if m.mult or m.spirit or m.share or m.mp5 or m.mp5Mult then
             rates[#rates + 1] = m
         end
     end
@@ -45,6 +45,7 @@ function M.boot(ns, api, edit)
             onNextSwing = a.onNextSwing,
             startsCombat = ld.run(a.startsCombat, e), -- Rows.lua credits a strike's hit to its cast
             refundOnAvoid = a.refundOnAvoid, -- an avoid's refund (Families/Now.lua)
+            refundNowOnAvoid = a.refundNowOnAvoid, -- and its `now`'s take (L1237)
             ladder = a.ladder, -- `false`: its answers are no rungs (Families/Resources.lua)
             expects = a.expects, -- the declared outcome (Families/Expect.lua): which rows its ticket takes
             velocity = a.velocity,

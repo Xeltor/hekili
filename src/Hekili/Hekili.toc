@@ -8,6 +8,7 @@
 ## X-Website: https://github.com/zmsl/hekili
 ## X-Curse-Project-ID: 1753387
 ## SavedVariables: HekiliDB
+## SavedVariablesPerCharacter: HekiliCDMProof
 ## OptionalDeps: ConsolePort, ElvUI, LibDualSpec-1.0, Masque, WeakAuras
 
 embeds.xml
@@ -66,6 +67,10 @@ Game\Events\Rows.lua
 Game\Events\Attackers.lua
 Game\API\Facade.lua
 Locales\enUS.lua
+Locales\deDE.lua
+Locales\esES.lua
+Locales\frFR.lua
+Locales\itIT.lua
 Locales\zhCN.lua
 Locales\Locales.lua
 
@@ -85,6 +90,7 @@ Engine\Schema\Tracked.lua
 Engine\Schema\Spec.lua
 Engine\Schema\Spec\Regen.lua
 Engine\Schema\Spec\Auras.lua
+Engine\Schema\Spec\Ranks.lua
 Engine\Schema\Spec\Abilities.lua
 Engine\Schema\Spec\Kits.lua
 Engine\Schema\Spec\All.lua
@@ -111,7 +117,7 @@ UI\BarGlow.lua
 UI\Styles\Classic.lua
 UI\Styles\Timeline.lua
 UI\Truth.lua
-Integrations\WeakAuras.lua
+Integrations\Recommendations.lua
 Engine\Sim\AplWarnings.lua
 Engine\Sim\Scripts.lua
 Engine\Sim\Core.lua

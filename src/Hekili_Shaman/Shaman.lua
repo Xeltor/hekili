@@ -9,14 +9,16 @@
 -- under the five-second rule (`fsr`), and the default priority, Enhancement (wowsims.com), translated from
 -- wowsims/forever's APL (tools/wowsims/specs/shaman_enhancement.lua). Research: the class-completion research §4.
 -- Unmodelled: the totems' effects (their buffs are applied on the summon, as wowsims does), Flametongue and Windfury
--- Weapon's procs, Windfury Totem's proc (its 1 s attack-power buff is registered, nothing applies it), Improved
+-- Weapon's procs, Windfury Totem's proc (a main-hand weapon strike, 10610, since hotfix push 114060: no buff, no
+-- Maelstrom Weapon stack, no swing reset; it spends a Flurry charge, which nothing here models), Improved
 -- Lightning Shield (+5% a rank on the shield's damage: not a charge), Rage of the Farseer's +30% attack speed (the swing
 -- family observes the hasted durations; only the swing in flight when it is cast lags one swing).
 -- Also here: Improved Stormstrike (rank 2 applied by Stormstrike; rank 1's 50% roll is observed only) and its reset of
 -- Stormstrike on a dodge or parry taken (rank 2), Nature's Swiftness, Flurry and Elemental Devastation (registered for
--- reads: their crits are unobservable), Burning Totem (the relic: +3 s on Flame Shock).
+-- reads: their crits are unobservable), Burning Totem (the relic: +3 s on Flame Shock), Totemic Recall (every totem
+-- down; its refund is not modelled).
 -- The Elemental kit (class-completion Task 17; its priority Elemental (wowsims.com)): what wowsims/forever's
--- Elemental list casts (ui/specs/shaman/elemental/builds/testing.build.json): Chain Lightning (its 6 s cooldown lifted
+-- Elemental list casts (ui/specs/shaman/elemental/builds/default.build.json): Chain Lightning (its 6 s cooldown lifted
 -- by Elemental Mastery), Elemental Mastery, Magma, Windfury and Mana Tide Totems (Windfury Totem only for a
 -- pack that casts it, as that list's pre-pull does), Water Shield (one shield at a time), Convection's and Elemental
 -- Alacrity's cuts, Clearcasting on Chain Lightning, Revelation's charge (Lava Burst is gone from the game).
@@ -260,6 +262,17 @@ end
 
 -- Mana Spring's buff on us (DB2 aura 24), mana every 2 s by totem rank.
 local MANA_SPRING = { 4, 6, 8, 10 }
+-- Mana Tide's buff on us (16191 / 17355 / 17360 / 1325257 effect 1, PeriodMs 3000; wowsims spell data), mana every 3 s
+-- by totem rank.
+local MANA_TIDE = { 88, 133, 197, 290 }
+
+-- Totemic Recall's takedown: the four elements and every totem buff (sorted: a fixed order).
+local ELEMENTS = { "fire", "earth", "water", "air" }
+local ALL_TOTEM_BUFFS = {}
+for _, buff in pairs(TOTEM_BUFF) do
+    ALL_TOTEM_BUFFS[#ALL_TOTEM_BUFFS + 1] = buff
+end
+table.sort(ALL_TOTEM_BUFFS)
 
 local function rest(ids)
     local out = {}
@@ -308,6 +321,21 @@ local function summon(key)
         end
         if own then
             applyBuff(own, d)
+        end
+    end
+end
+
+-- Totemic Recall's: each element's slot ends now (a zero-length summon, Hekili's summonTotem) and every totem buff
+-- goes (two closures, as summon's).
+-- shortcut: every totem buff goes, a party Shaman's identical one too (wowsims drops only its own totems' auras);
+-- upgrade when the buff read tells our totem's buff from a party member's.
+local function recall()
+    return function()
+        for i = 1, #ELEMENTS do
+            summonTotem("totemic_recall", ELEMENTS[i], 0)
+        end
+        for i = 1, #ALL_TOTEM_BUFFS do
+            removeBuff(ALL_TOTEM_BUFFS[i])
         end
     end
 end
@@ -480,16 +508,15 @@ end
 local MINDFULNESS = { 0.17, 0.33, 0.5 }
 
 -- The five-second rule (C3): spirit and mp5 regen per second, the declared starting point the out-of-combat read and
--- the in-combat calibration replace, as wowsims's logs measure them at 60: shaman_elemental 31.13 a second while casting
--- (Mana Spring Totem, Mindfulness 3/3's 50% share and gear: S = 28.24, the parts below are the log's two rates) and
--- 45.25 outside the rule, so spirit 14.12 (the outside
--- rate less the casting one) and mp5 31.13 (the e2842f0a78 log, Windshaper Skyborne; was 29.75 / 42.5 as a Troll);
--- shaman_enhancement 17.8 / 49.05, so spirit 31.25 and mp5 17.8 (the e2842f0a78 log, Windshaper Skyborne; was 9.8 /
--- 38.42 as an Orc). Forever's
--- Spirit regen is `6.25 + Spirit/8` a second for every class (wowsims mana.go:75-76), not Classic's formula.
--- The seeds' mp5 is the rate without the totem's buff (the logs' casting rate a tick before it: 2.613 a tick in
--- shaman_elemental.log before -2.0 s, 1.280 in shaman_enhancement.log before -3.0 s), so 26.13 and 12.8; the totem's
--- own entry (below) adds its mp5 while the buff is up, as wowsims models it (totems.go:105-109).
+-- the in-combat calibration replace, as wowsims's e4ef929e54 and ab0f00e4fc logs measure them at 60. The mp5 is the
+-- casting rate without Mana Spring Totem's buff (the casting tick before the totem stands), the spirit part the rate
+-- outside the rule less the casting one, both with the totem: shaman_elemental 2.685 a tick before -2.0 s (26.85 a
+-- second), 31.85 with the totem (Mindfulness 3/3's 50% share inside), 45.10 outside, so spirit 13.25 and mp5 26.85
+-- (6295 mana at ab0f00e4fc; was 14.31 / 26.31, 5950 at e4ef929e54, 14.12 / 26.13 at e2842f0a78); shaman_enhancement 1.200 a tick before -3.0 s (12.0), 17.0 with the totem, 42.75
+-- outside, so spirit 25.75 and mp5 12.0 (its gear lost the Five Thunders pieces; was 17.8 / 49.05 at e2842f0a78, 9.8 /
+-- 38.42 as an Orc). Forever's Spirit regen is `6.25 + Spirit/8` a second for every class (wowsims mana.go:75-76), not
+-- Classic's formula. The totem's own entry (below) adds its mp5 while the buff is up, as wowsims models it
+-- (totems.go:105-109).
 -- Improved Stormstrike (1238931, DB2 aura 134 = 50): +50% of Spirit regen while casting for 15 s.
 -- Mana Spring (DB2 aura 24, 4/6/8/10 every 2 s by rank, +5% a rank of Restorative Totems 16187): mp5 = value / 2.
 -- state.spec: the functions run in the state's environment (the file's `spec` is the class).
@@ -497,10 +524,18 @@ spec:RegisterResource(
     Enum.PowerType.Mana,
     {
         improved_stormstrike = { aura = "improved_stormstrike", share = 0.5 },
-        -- Mana Tide Totem's buff (1325257 effect 1: 290 every 3 s, 13 s; wowsims spell data)
-        mana_tide = { aura = "mana_tide", mp5 = 290 / 3 * 5 },
+        -- Mana Tide Totem's buff (13 s): its rank's mana every 3 s as a rate a second. Both totems' buffs are periodic
+        -- energizes (`energize`): Innervate leaves their mp5 unscaled (wowsims e4ef929e54 mana.go:176-183).
+        mana_tide = {
+            aura = "mana_tide",
+            energize = true,
+            mp5 = function()
+                return (MANA_TIDE[knownRank(TOTEMS.mana_tide_totem.ids)] or MANA_TIDE[1]) / 3
+            end,
+        },
         mana_spring = {
             aura = "mana_spring",
+            energize = true,
             mp5 = function()
                 local ranks = TOTEMS.mana_spring_totem.ids
                 return (MANA_SPRING[knownRank(ranks)] or MANA_SPRING[1])
@@ -513,10 +548,10 @@ spec:RegisterResource(
     {
         fsr = {
             spirit = function()
-                return state.spec.elemental and 14.12 or 31.25
+                return state.spec.elemental and 13.25 or 25.75
             end,
             mp5 = function()
-                return state.spec.elemental and 26.13 or 12.8
+                return state.spec.elemental and 26.85 or 12.0
             end,
             -- Mindfulness's rank (the belief reads it after its talent walk), never the spec; + 8% with the Polished
             -- Driftwood Icon relic (its equip aura 1248756: aura 134 +8, wowsims item_totems.go:13-20)
@@ -575,12 +610,12 @@ spec:RegisterAuras({
     flametongue_weapon = { enchants = { 5, 4, 3, 523, 1665, 1666 }, duration = 3600, max_stack = 1 },
     windfury_weapon = { enchants = { 283, 284, 525, 1669 }, duration = 3600, max_stack = 1 },
     frostbrand_weapon = { enchants = { 2, 12, 524, 1667, 1668 }, duration = 3600, max_stack = 1 },
-    -- Flurry (16257, wowsims: 15 s, 3 charges, set on a melee crit, spent by landed white swings) and Elemental
-    -- Devastation (30165: 10 s, +3/6/9% melee crit after a spell crit): registered for reads; crits are unobservable
-    -- live, so nothing here applies them. Windfury Totem's proc buff (10610: 1 s, 2 charges): the same.
+    -- Flurry (16257, wowsims e4ef929e54: 15 s, 3 charges, set on any melee crit; every white swing spends one whatever
+    -- its outcome, and so does a Windfury Weapon or Windfury Totem strike, 0.5 s apart; Stormstrike and spells spend
+    -- none) and Elemental Devastation (30165: 10 s, +3/6/9% melee crit after a spell crit): registered for reads; crits
+    -- are unobservable live, so nothing here applies them.
     flurry = { id = 16257, copy = { 16256 }, duration = 15, max_stack = 3 }, -- 16256: the talent's CDM item
     elemental_devastation = { id = 30165, copy = { 30160 }, duration = 10, max_stack = 1 },
-    windfury_attack = { id = 10610, duration = 1, max_stack = 2 },
     -- Nature's Swiftness (16188): until used (wowsims DurationMs -1), one charge; the next Lightning Bolt or Chain
     -- Lightning (its mask) is instant and spends it.
     natures_swiftness = { id = 16188, duration = 3600, max_stack = 1 },
@@ -650,7 +685,7 @@ spec:RegisterAuras({
         duration = 300,
         max_stack = 1,
     },
-    -- the party's proc-trigger auras (the 1 s attack-power buff Windfury's proc applies is windfury_attack, above)
+    -- the party's proc-trigger auras (Windfury's proc is a weapon strike, 10610: no buff of its own)
     flametongue = {
         id = 15036,
         copy = withTotem("flametongue_totem", { "flametongue_totem", 8230, 8250, 10521 }),
@@ -706,7 +741,8 @@ spec:RegisterCostMod({
 
 spec:RegisterAbilities({
     -- Maelstrom Weapon (408505 aura 108 base -20, two effects on Lightning Bolt's class mask): each stack takes 20% off
-    -- its cast time and cost; five make it instant and free. Elemental Alacrity and Elemental Mastery's flat cuts come
+    -- its cast time and cost at every talent rank (wowsims e4ef929e54: the talent's effect 1 is -20 at each of its five
+    -- points; was 4% a point); five make it instant and free. Elemental Alacrity and Elemental Mastery's flat cuts come
     -- off the cast first; Convection's -2% a rank off the cost.
     lightning_bolt = {
         id = 403,
@@ -722,14 +758,14 @@ spec:RegisterAbilities({
             if buff.elemental_mastery.up then
                 t = t - 0.5
             end
-            return max(0, t) * max(0, 1 - 0.04 * talent.maelstrom_weapon.rank * buff.maelstrom_weapon.stack)
+            return max(0, t) * max(0, 1 - 0.2 * buff.maelstrom_weapon.stack)
         end,
         cooldown = 0,
         gcd = "spell",
 
         spend = function()
             return byRank(LIGHTNING_BOLT_COST, LIGHTNING_BOLT)
-                * max(0, 1 - 0.04 * talent.maelstrom_weapon.rank * buff.maelstrom_weapon.stack)
+                * max(0, 1 - 0.2 * buff.maelstrom_weapon.stack)
                 * (1 - 0.02 * talent.convection.rank)
         end,
         spendType = "mana",
@@ -862,7 +898,7 @@ spec:RegisterAbilities({
     stormstrike = {
         id = 17364,
         cast = 0,
-        cooldown = 6, -- wowsims 4b0030a44b (was 8)
+        cooldown = 8, -- wowsims e4ef929e54 (hotfix push 113722, a63f2b37f0; 6 at 4b0030a44b)
         gcd = "spell",
 
         -- wowsims spell data, absent from DB2 (wowdb spell 17364 costs 125 flat): 8% of base mana, 121 at level 60
@@ -1080,7 +1116,7 @@ spec:RegisterAbilities({
         known = knows(CURE_DISEASE),
     },
 
-    -- Recalls the totems for a quarter of the base mana (its refund is not modelled).
+    -- Forever's Totemic Call (437009; wowsims's row: a summon, 25% of base mana, 30 s).
     totemic_call = {
         id = 437009,
         cast = 0,
@@ -1094,6 +1130,23 @@ spec:RegisterAbilities({
 
         startsCombat = false,
         known = knows(TOTEMIC_CALL),
+    },
+
+    -- Totemic Recall (36936; wowsims e4ef929e54 totems.go registerTotemicRecallSpell: level 20, a 1.5 s GCD, no cost):
+    -- every totem standing goes down, each element's slot ended at the cast, and with them every totem buff on us.
+    -- shortcut: its refund (25% of the standing totems' base costs as mana) is not modelled: neither layer's totem read
+    -- names the standing totem (blocker repin-shaman-09-1); add `gain` once `totem.<element>.spell` exists.
+    totemic_recall = {
+        id = 36936,
+        cast = 0,
+        cooldown = 0,
+        gcd = "spell",
+
+        startsCombat = false,
+        known = knows({ 36936 }),
+
+        now = recall(),
+        handler = recall(),
     },
 
     searing_totem = totemAbility("searing_totem"),
@@ -1278,13 +1331,13 @@ end)
 -- it, never this block (tests/Forever/shaman_spec.lua checks it matches).
 spec:RegisterPack(
     "Elemental (wowsims.com)",
-    20261112000,
-    [[Hekili:TE5BVTTnqy8pl9nz2ygs2UnnTb1fidBdTfRbdq91sMw8KfRLifiPQNbc0N9DK2ww)JkEDbbiGrK3ZZXth)jMWfHFlmGs0q4JlNV8TlwSy585Zdd0hkGWGcs8oYwCaNKJ)(pYGCGRjzvRNSxSxXYvEXI8PMfEitqOgX2uYY0FMhUzqDvfqCyqWNE4Rp849Wz9cdszukCmiqf72Q7RwRtHQ1NEMFIqc)aKvRPqcPmtxT(H)(VQwJpUADtnkz(gRv(QusoH7xBTVjFPkFnO0m(wp7F69DLGpDg6LKWvz42GIJfgVzQQ1ekvW)fCWo4GYRA9Vt0K7hiNM81p)nuKuTUqDVV)wMoTCJzB43zPtrnXuhUL8(y6sYsAsShwuLIewgw3jXAMGR8kKag8gIE1EmLKrQugKrNXsw9QnLjjEnFQxzr1x6f4VUYxPLaFRonsKebejoql0qUvf7ip7tDg)EgNMukp0lmct6miSKtIufsSc3loBw7oDXSzOOsysad6gtm)aIaoKZa1QfU8FBo5k14Jx0yvo57czKn7leMhnRubyLljABmD1cJwMj9kI1rzIp8U51HIMsHCbNfhjl5W4XDxR4S2Pzu4sc3CX32AX)36eWamjcdLv1oLAUKE18jDRY30OakHCcJR(WQ5tBVlAvYN0TiFfsuFifFdOWn0H(vXjV64Y9sYqefUJfX782Xf75prbBPO5eLfT0FtMqqJmnZV0cdsfi3H1WxyHJtX6uugBBQMBuFOc7ttA0T8XvVz(n1w2RGEY4Jnn9NfDFAl)nVTI4IFqmo78yJzHx2dZIpeNH9Ye5wqJ9oZYj)tu7N96zjI4s1QLgzhOkCP)Ov7HLED0JJXVy4MvREgqlsYnLHof16Yz0grMU7XTLZDV2QVegG4BfozNVZLXuAL9BRh)Ueo8r73Aboztgqd)TWGgTgMjpH5dd6bDcdIL4rwjJyMSjUjuJ(ELY2eh5sX7Sk(6okEjXAbMCjYTwrEJdrAIMAQWGGlJq3EL7VAWMjO36W9wOTM2FTioJ435S(uJ8grANOpJ0V7k3S9oR2Yq3ighmgJ1V)kT(c18)VNlMFTMwtuFbmT7bXZM0HUo67WN(jWSJZzTPw3dZNtTAWBZKQBozvW1H3gfcuJM4xBHUhu2GbcSyvdIPHRJYNTPq3J(JDkBa2CJU8le(6C54USlu4CeT5ZUiulpMNUGeDeX8tq9TjhIK)tZ2C962XL0BPz7lRpg3U9v2hqKJxDFmQDVlWpGkNVi)qq7NL)(mxRFmMUdS7ZCj)WtVyjL6uHmm4tWowgd)N2(Zt)pz2Pd)3)]]
+    20261118001,
+    [[Hekili:TEvyVTTnq0Fl9lPoOgsYojnzb1fidBfTfRbdq5ZuMwIYI1sKcKuXZad63(os7irkz64oeeGagsEV3JhV7jg0m0tO4mSIGECE08poB2S7IIMHIv7QjO4AC6g8Ayadxb)(pljveMcx2UCYw(wjTsgKYRUuVXDLCCMgSvn0s13yOvhfxznjffh)1h(XdpEp5f8qXf0SmY(GiYu)uDF7svbPD5H5cZ5cYZer7YmsoUPu1U8H)(VAxct3U0gJgAOMAzOSaxHzHDuhQ1BMm8q8bM)m4Nso7YPaxcmtwchJmymxZnv2UeNLXzVhgSHStg0U8pWk89hrtt(X3EcaPqPQL3hgUMQkAwPpgHd26LaMG0XRIYJIixNNE3vbqsvWZPLqEhNQOCMmOwqGGxHvl2cssKilOKYSP08fVBvtEEG9Sbn1TFFuGFyrOujiS1QIeEEcblGbkUIuzqXmkWmR343szz5nIDJcdtfEdcs54ezTGYwpkoJQ9lxqnhlQCQGabDHoMNjjegPIsKlM5J)1v4ZeJp3JXIk8p5IeJ6R56PM2ijqMlpzDA2IzAS0lguNQsk5F6UOUqbsZivCgnnr0WiNoUBDIZqNIMr6fS9MVXzZ)AvcqaAHqbyLUsYElJY5tgMLVWkbkivykt(Pfrx6EkCs5tgMKpdi0RLW4pJ1a49sc2yx3mCvjHt(UXP7jVB)2dYlbVmi1Wt3eSHX3Y(3mIjNzVqtTJqwvY5zj6Q(3AGjcjrSbs2VXaNwaj0Ks66cftJUgpRIOpFD0fD4pk7DGL9LsJxfOY9AQxgtt3Lwc1TyXAIcQtMwH)Ne35UAAopTrUyUwth5G0xl4CdBCQ2ZX(4n5it0AluWJwFuCl17o(jR4LQH9rZJ8V32VJIbFzjS4GpGvsLkP5JM7)Gbm8rZhrjm8Qssg63rXwxL6fp4FJIh5MGItfqVOGI1lA7JGuaVNjS2(m(q8wdIxnaXEH5444dKBmGCThqS9CSr4OosAGU5mpFDow6G(Oh2D8SSP)C9U0GFR38tNx2jG2RNMg678aDNhNnWdXvdWVDMzRr9Rok2VNIhtfn1ZIotU79jFdi9C7Q69qFdiDyp3lKmWp1HPFvF1tASAuHV(ulfdkW2w1Krgz2Q74Jn2LA3elnFsFxJeg2L3h7ypxRIVEB6oInvVZg2S)seU(U(CEMVxu(A(haI(N4UN)Dmh6)3Ew(Qp88QAhmDFD9P8JDFJ9raz)BTpLB8OxCFeuE5L3hZm(v9vFL3HFkVAp2PVYRYrhUyXnQcUaf)vYgAjf(VS(YH)jkZYO)l]]
 )
 spec:RegisterPack(
     "Enhancement (wowsims.com)",
-    20261112000,
-    [[Hekili:DJ1wVTTnu4Fl9LmBSa5lzPPnOoazyBODynyaQplzAPJSznfPajv8mWG)TVdPDSPOeLnYq7d9LeD5C)8Do8ZkzsYxsIZjAi5PPJN(2jtMmD84XjX6TvqsCfjBnzjEbNuI)935Ri8mOe46DZhSrSrrlvrzIYHgr3YeKCJ5wutz6pXtw0PLvvqwsC8hF8Zp(09WjlMeVIMNd7vduz95U73nxVc2n)WZgviKWZGC38COGuZqXF8V)RDZXhVBEtRuthzca1i1ksjHpYjagzI7C1inO0u(Yi7TrFvj4dVg9NKWvmmDYXRfg)tv7MtYZf8FcVynSvfTB(Vr0K77iUg85p9f0iR06k19JgTKQxvVWKkJ8eDiAtmoHBjVplFkzAErwewCLIckd7aKmnvWvrvsavEbrpRGHTgTGVSgs3aKkb)AAXS3SOUOiQKq5Py(LNc8m8)6O6QD)zlB8ZZgjfzRxq1G8ISXvVzVnIA78O1CXgE3ozdX4a1kkWYp5a3Ngm(2q55f1YTPAHgkTkBVkIqLbvc7VKuvLeBMT0Z61GAQ0sGVuVkvuKcejEHV(2N2JNxwsAPtbvcUQ867DFd7y2O)RczQT6vjmp86AfGLII0Lz5ZMy8K5Lrvz6uM4dVBSRY5qPGtZsL1COF9URHEnahfISA1SPNhK0j04eYqcMIH6dZM6QrpDx3MB3k3jOYftfsTgichar3YVGje5PM8QzrSHmGubY1yKewgZlqusPkSisCdVPuGButliOjbzyHZimw6(BtzuL(AZjdZuymWGunrUe0PsHMyHnyIAe9zarIqjfuxITicOhl8qdlWOlxP5MwXcbtBHlhW5kTqwInA6AWFLu3b7(HreIHZvU4VCWcaDE7Po24Zzuly7yGCbs7Lq7Jd7KZanHHhsHt3adnNO8LXxGtwWG8Rom779wLgpcF2TdVaFVFuWMIxG0gSBkx8m5KSUDUz4MhQPTEiFCtbGzpVLGnFgjts1BJWdxx)WSBUAqW(3)EOr4(I6QHxvs5dmTd7cVdDMRrOR79dF4Gv9cQOmIspS7e48POrchmt22SJfktpRK8pPnF2nVcCLNd7en5jZ3bmKNhBGCsIrAmk8fE8(mt4kd9qxLX7FYsb9qeK8RVWXjj2RzHpqAoVJssI))HK(2bLs0yshiDoIMmcDtiHobhW81f9yQtXTWuglfB7Wgh7uH6fEzIGFjqe4uumIDRNyT7bVsW0jp2eVEmDMyC)BdeLoioumuPU3t1f86sRrD3towR7Pt7vc971FNlHHA0nlHTA0DbB1MAM9hy13CBBkMU5CyoQ9vs9z7Ezw8SSE7Q94q9XoZ9si0IvSBm0KpCxL9qM1LVCilE34(hf7KJ8jx4(IMi4qJxn5u76QU4wBS0DbNf6KRDBt6Z52y03fWOT4G32C(CXnM79bn3rU5TnKhhDJDMm(c7TNiXBvZFGjOAh51BvZFMiKAhP6B16sH1DW(3QVp(9uDXOPlLENtS9i0V)q)09F8OaBOn(kmYUPVE4s9vdkggpecO7V40zM6WQJw0h2Vh84V2)h4nHDV)4CRD65iNWRvA81C674OEh99(2o9TH7c2l59LE6BlxGnin)UpwGdcDi16vczs8hH1ugD38b)XHp9N91j)h]]
+    20261118000,
+    [[Hekili:DJv3UTTnu4NLEtMnwGSCsBtwqDaYW2q7WAWauVwY0shzZAjsbsQ4zGb)SVdPDSOOeveYq7f9Me9Z5)Z35WpR45XFjokJOG4hVk8Q3pF(8BdddJJu7RG4Oks6wYA8cgPe)7VZ2qyPqjWuhwozhFNKwkds5Lt1IUVGtY0MBvnTq9jw8QETSScsJJI(4dF(HhVdASyC0gAwgCunqMoK7U7Ws1g4WYtpBwoxapbIdlZGCsDbk(d)9FDyj(4dlBBLA6mDaiNj3qkjSzwbWmDCNjNPaPIYwhyUn4RsoB6LO)eeMSatNm8AU2)u5HLKSmo7NWl2c7Lbhw(Bef5UEIRjF(tFbnYgLQsE3SzRPQn1R0PYmhrNI2eJtYQW8Wq4T5P3EDawCf8CAb2biPkkNjdQeaQ8kIArEb2AuC26AizhqQ4SlP5lEZQ688GscLLG5xwcWsX)RcQRo8NDSXpVyMGNUDfvbIrzJlEZrBe015bBz8DS(DYoI2bYnuOiRXb2p1B8TJYYYRf7tuCfuAu2CvaHk8Qe2FjjYkb2m7ONXRE1uQeaBTAtcppbic8cx9npDapVUK0rNCQaSv5137(g2Xmr)x5Iet1RIRF4L1salf5jRtZwmx7j9ldQsvjf8pCBOTYzqjNrtte1myy9UPLETah580A5IREzqsVqJgKHa0fd5hwCLTgd0DTBU9RCVGkBmLp1AHiSae9l)QcoplrNxTlITKbesqSfJe)YOFbIskL(frGB41LcCJAsobnji8lCkPOi54TjfuP6s9jdlKymuajkIynOseCfXaBWevl6taIeHskihJTiCyalCFlluqxVrX0TIv8cLbUCcNlvCrj2OPBb3vs9hShhgrigoxzJ)Yada06TnDSWxYOgW25azes7KqhJdZKZefPapKcNUHc0C8YNhFbgzvbKDXPzFN3kv4r4lE30r47JJcMuCesRXUjm(tKgzT7ClWnpuDB9u(yNcqH58wc28liPcQAFaE4627xC9ft82)(3tnc7xuxn9IskBIUDyw4DQZCjcDTVF69NSQtqfKsKQP9NaVCkQLWcZKUp9CHs3Zkj)ts7ND9Rax54WErtoY8Dad54XwiN4iKgJeFHdVp9eUutp0wz8(hnuqpfbX)6ZCCIJCAw4de6Z7OK4O)FiPVDqPyfM0EsNZOjTqx7tOg4aMV2OhDDkQdMsBPithw7yRk0GWlDe8wprGvrrl27CeRBp4vcMA8yB8650zU29V3tuAH4qXqL6FpvFWRXwJ6VNCUwpqN2Pe62R)oxc91OBxc70O7d2Q01mZpWAO52UumTZz)CuhQK6Y2DCw8fz92x7XI6JzM75qOdRy7yOnF4(k7(mRnFzFw8MWHhf7LJCJlSFrBeSVXR2CQTDvFCR1w6gVZc9Y1URjD5CRn6TEmAho4DnNlxCT5(fVM7m38UgYHJU2oZdhzVTHeVrn3bgVQDMxVrn3zcFQDMQVrRXcR7H9VrFx8BtDrRPnLERtSDi0F8q)KJF8ipBO1(YpYUTVUFS(QffdTh8b0DxCAntDA1rh6dh3dE(x7)d8MW(3F8sRDg4ih)RvA91Cg64Obh9D(2odTHBe7LC(spdTLZZgK2F3hdWbHoKA1gUio6JWwAb9WYj)XPp9N51X)3]]
 )
 
 -- The hand-built Enhancement list, replaced by Enhancement (wowsims.com): a saved choice of it falls back to the default.

@@ -13,13 +13,17 @@
 --    `flightTime`, else the request's `distanceFromTarget` over its `velocity`, else 0: wowsims's distance over the
 --    missile speed, translator-2), `priorityList` -> `actions`,
 --    each group a list `actions.<snake of its name>` called with `call_action_list,name=<snake>`, groups in the APL's
---    order as first called; `valueVariables` are inlined where referenced.
+--    order as first called; `valueVariables` are inlined where referenced, except a text of M.HOIST_TERMS or more
+--    term occurrences (CN25: Lua 5.1's limits on one line, the engine's debug print and recheck): it is one
+--    `variable,name=v_<snake>,pure=1,value=<text>` line heading the default list and read as `variable.v_<snake>` (an
+--    engine pure variable; never a text reading a window, the target's range or holding a comma).
 --    The pre-pull guard (owner ruling 2026-10-21: a guard against recasting, the player decides when to press): each
 --    cast line of the precombat list, and of a list only pre-pull lists call, gets one term ahead of its condition,
 --    derived from what its ability's handler does (called once under pcall in the kit's stub state with the verbs
 --    recorded, and once more with every buff up for its removals):
 --    - it applies an aura of the ability's own key: `!buff.<key>.up` (applyBuff) or `!debuff.<key>.up` (applyDebuff),
---      unless the aura's duration is at most the ability's cooldown (moot: the cooldown already hides it);
+--      unless the aura's duration is at most the ability's cooldown (moot: the cooldown already hides it); a duration
+--      or cooldown the kit computes (a function, which the stub state may not answer) is unknown, never moot (CN21);
 --    - it summons a totem of its own key: `!totem.<element>.up` (the element's slot);
 --    - otherwise no guard (the ability's own usability and cooldown decide).
 --    A guard term the line's condition already has as an `&` term is not added twice (L102).
@@ -100,7 +104,7 @@
 --    deviation from wowsims, with its reason in the recipe header.
 -- 8. Constants: `true`/`false`; a number; a Go duration ("1.5s", "300ms", "2m", "1m30s") in seconds; "N%" as N when
 --    it is a direct operand (a variable followed) of a comparison with a percent read (M.PERCENT: `mana.pct`,
---    `health.pct`, which run 0-100 where wowsims's run 0-1), else N/100 as wowsims reads it (inside `math`, or
+--    which runs 0-100 where wowsims's runs 0-1), else N/100 as wowsims reads it (inside `math`, or
 --    compared with anything else: Demonology's "Execute at" 35% scales a time). A percent read inside `math`, `min`
 --    or `max` is unsupported (rule 2): its scale would leak into the result.
 -- 9. `auraIcdIsReady` (wowsims: the proc aura's internal cooldown is ready): the aura declaring `icd` (RegisterAura,
@@ -187,6 +191,11 @@
 --    one before it is cast (wowsims holds the rotation for it, so nothing else is recommended between); a later member
 --    re-reads its sequence's remaining terms, which wowsims reads once at the start, so a change between the casts can
 --    stop it; a cast of a member outside the sequence also opens its next; the members must be casts (else rule 2).
+--    With the recipe's `sequences = true` (windows design v6 §10.1, ruling 14): one line at the entry's position,
+--    `strict_sequence,name=<first member>_<last member>,start_on_first=1,hold_off_gcd=1[,if=<condition>]:<member>:...`,
+--    each member its own line's text (rules 5-7), the condition's reads all guarded; a repeated name is an error. The
+--    engine holds the rotation for it, so none of the deviations above remain. A recipe `extra` before a member
+--    goes before its sequence's line (the member is part of that line).
 -- 15. Maintenance debuffs: the recipe's `maintenance` ({ [action key] = setting key }) names a debuff (or self-buff)
 --    kept up for the raid, which open-world play skips. Every emitted line whose action is that key (any list, the
 --    recipe's leveling and extra lines included) is its cast line and gets `settings.<key>&` before its condition (the
@@ -273,7 +282,8 @@
 --    `# Deviation:` names the swap's other terms (the node kinds; a top-level `numberTargets>1` is the engine's own
 --    `active_enemies>1`), which are not carried: the list's order gives them. Any other changeTarget is omitted: to
 --    NextTarget with "no on-all-targets read of a cast before it in this list" (the Warlock Bane spread, Havoc's
---    swap away), to Target with "no main target in Hekili" (the swap back).
+--    swap away, Feral's 2/3-target swaps on another target's time to die), to Target with "no main target in Hekili"
+--    (the swap back), to PreviousTarget with "no previous target in Hekili" (Feral's swap back, CN24).
 -- 21. A castSpell or channelSpell aimed at another target (`target` Target with an index above 0: wowsims's second
 --    target, Bane of Havoc) carries `,other_target=1`: shown only on another target with Recommend Target Swaps on,
 --    never on the current one (the engine's forced cycle). Any other action aimed there stays omitted (rule 2).
@@ -284,6 +294,9 @@
 --    pool (a lower level, whose N may exceed its whole pool) reads the share. No log: unsupported (rule 2). A `not` of
 --    our mana under a number is rewritten too (`!(mana.lo<N&mana.pct_lo<P)`), while a direct `>` or `>=` a number
 --    stays absolute; no APL at the pins has either form.
+-- 23. The player's health (`currentHealthPercent`, `currentHealth`; owner L1462): the client hides it in combat, so a
+--    read of it is unsupported (rule 2): the entry is omitted, as is a call or variable reading it. Another unit's
+--    health read is unsupported as any other unit's (`... of <unit>`).
 -- 14b. A `sequence` (wowsims: its members in order, each once, once per reset; design §3a) is a stepped window `<w>`
 --    (the snake of its name) whose steps are its cast members: one line a cast, `<key>,if=window.<w>.next.<key>`, its
 --    own condition after, consecutive equal lines once. A distance-only waitUntil member is the next cast's range gate,
@@ -296,6 +309,15 @@
 --    `sequenceIsComplete` is dropped there (the window opens on the evaluator's edge: once); elsewhere one is
 --    `!window.<w>.up`. `resetSequence` is the window's `loop`. A strictSequence stays rule 14's chain until its lane
 --    moves it (§3a).
+--    With the recipe's `sequences = true` (windows design v6 §10, ruling 14): one line at the entry's position,
+--    `sequence,name=<w>,mode=continue[,if=<condition>]:<member>:...`, every cast member (a repeated one too) with its
+--    own condition and its range gate, `(toggle.movement|<gate>)` after a move; the condition is the line's own, any
+--    read; no header line. `sequenceIsComplete` is `window.<w>.done` (in its own condition too); `resetSequence` is
+--    `restart_sequence,name=<w>[,if=<condition>]` at its position (omitted with its sequence); the held gate reads the
+--    sequence running, `window.<w>.up&!window.<w>.done` (a finished sequence stays up, parked), and skips a later
+--    sequence's line as it skipped its steps. A member rule 19 copies to another position (a move arm) stays there
+--    as a reader line, `<member>,if=window.<w>.next.<member>&...`: the members are carried as such lines through
+--    rule 19 and joined into their sequence's line at output.
 -- One-line reads (re-pin plan, docs/superpowers/plans/2026-11-03-wowsims-repin.md, Task 3; wowsims sim/core
 --    apl_values_*.go): `talentIsKnown` (wowsims's constant: the build holds that rank or a higher one) of an ID that
 --    resolves to a talent (a kit talent's spell, or a recipe `map` to a talent's key, as rule 4) is
@@ -304,7 +326,7 @@
 --    `talent.<key>.rank`, else 0; `spellFullCooldown` `cooldown.<key>.duration`, `spellTravelTime`
 --    `action.<key>.travel_time` and `spellGcdHastedDuration` `action.<key>.gcd` (each nil while the spell is unknown:
 --    rules 6, 12); `gcdIsReady` `gcd.remains<=0` (wowsims also counts the queue window); `currentHealth`
---    `health.current` (Self only); `auraDuration` `<unit>.<key>.duration` (as `auraRemainingTime`) and
+--    unsupported (rule 23); `auraDuration` `<unit>.<key>.duration` (as `auraRemainingTime`) and
 --    `dotBaseDuration` `debuff.<key>.duration` (as `dotRemainingTime`); `druidBleedIsActive` (the target's only)
 --    the Druid kit's state expression `druid_bleed_active`. Re-pin plan Task 4: `spellIsCasting` is
 --    `action.<key>.executing` when the kit ability has a cast time (its `cast` above 0 or unreadable), else false;
@@ -321,7 +343,12 @@
 --    line (rule 17's precedent; "any" errs the other way: a DoT on another target reads down); of the current target
 --    (wowsims's default unit) `targetIsActive` is true, `timeUntilTargetActive` 0 (a line is read only with the target
 --    up) and `timeUntilTargetDies` `fight_remains` (one target, no despawn schedule: wowsims's fight end, as
---    `remainingTime`); another target unit is unsupported, for these and `isExecutePhase`. `numActiveAdds` (no boss/add
+--    `remainingTime`); another target unit is unsupported, for these and `isExecutePhase`. CN24, an API-forced
+--    deviation: Forever gives no other target's time to die, so an entry reading another target's (wowsims's
+--    NextTarget, Feral's 2/3-target lists) is omitted with that reason. A comparison of the current target's with
+--    `remainingTime` (both `fight_remains` here, gap AN: Guardian's "dies before the fight ends") is a constant term,
+--    folded as S4's: false for `<`, `>` and `!=`, true for `<=`, `>=` and `=`, with a `# Deviation:` line and the
+--    reason on an entry it empties. `numActiveAdds` (no boss/add
 --    split in the engine) and `remainingCastTime` (no read mapped; no APL uses it) stay unsupported.
 -- Absent enum fields (protojson omits a zero value; zeros from the pinned proto/*.proto): rule 16's option is its
 -- recipe `zero`; every other enum read here has an "unknown" zero that wowsims rejects, so an absent one is
@@ -356,8 +383,6 @@ M.VALUES = {
     maxMana = "mana.max",
     currentManaRegen = "mana.regen",
     currentComboPoints = "combo_points.current",
-    currentHealthPercent = "health.pct",
-    currentHealth = "health.current",
     currentTime = "time",
     remainingTime = "fight_remains", -- API-forced: wowsims knows its fight length; ours answers "unknown" (3600 s)
     gcdTimeToReady = "gcd.remains",
@@ -520,6 +545,15 @@ function M.manaMax(text)
     end
 end
 
+--- wowsims's isTank for a request: the player (raid index 0) in a tank slot (sim/core/environment.go:123-128).
+function M.isTank(req)
+    local tank = false
+    for _, t in ipairs(req.raid.tanks or {}) do
+        tank = tank or (t.type == "Player" and (t.index or 0) == 0)
+    end
+    return tank
+end
+
 --- The translation context of an ability set (`abilities`, `auras`, `talents` as the engine registers them:
 --- tests/Forever/helpers/engine.lua abilitySet), recipe `r` (map, focus, executePhase, leveling, levelingFirst, extra,
 --- settings, exclusive, requires, guard, condition, maintenance, select, auras), the spec's exported log text `log` (rule 13; nil: the
@@ -565,6 +599,7 @@ function M.context(set, r, log, player, encounter, tank)
         condition = r.condition or {}, -- rule 7: { [action key] = SimC expression }, an owner deviation's condition
         windowVars = r.windowVars or {}, -- rule 10: { [variable name] = window }, a time since read from the window
         ranges = r.ranges or {}, -- rule 19: { [action key] = { min, max } yards }, the DB2's, where the APL gives none
+        sequences = r.sequences == true, -- rules 14, 14b: sequences as APL sequence lines (windows Phase 3, per recipe)
         maintenance = {}, -- rule 15: { { action key, setting key } }, by action key
     }
     for key, rule in pairs(r.maintenance or {}) do
@@ -856,7 +891,7 @@ local function reads(c, x)
 end
 
 -- Rule 8's percent reads (0-100 in the engine, 0-1 in wowsims).
-M.PERCENT = { currentManaPercent = true, currentHealthPercent = true }
+M.PERCENT = { currentManaPercent = true }
 
 -- Whether value node `n` is a percent read (variables followed).
 local function percentRead(c, n)
@@ -966,12 +1001,15 @@ local ALL_TARGETS = 'an "on all targets" read is the current target\'s only.'
 local ANY_TARGET = 'an "on any target" read is the current target\'s only.'
 
 -- CN4: a value or test of a target unit (wowsims's default, the current target) reads only the current target here.
-local function currentTarget(k, v)
+local function currentTarget(k, v, why)
     local u = v.targetUnit and v.targetUnit.type or "CurrentTarget"
     if u ~= "CurrentTarget" then
-        unsupported(k .. " of " .. tostring(u))
+        unsupported(k .. " of " .. tostring(u) .. (why or ""))
     end
 end
+local OTHER_DEATH = ": Forever gives no other target's time to die" -- CN24, API-forced
+local FIGHT_END = "timeUntilTargetDies against remainingTime: the target's time to die is fight_remains here (gap AN),"
+    .. " so the comparison is a constant."
 local FACING = "frontOfTarget is the request's in-front setting (%s the target); the client gives no facing."
 local MOB_TYPE = "targetIsMobType is the request's target type (%s); the client's creature type is not read."
 local PREPULL_CAST = "the pre-pull time uses the kit's base cast time; wowsims uses the hasted cast."
@@ -1073,6 +1111,47 @@ local function sinceHand(c, n)
     return n.autoTimeSinceLast and SINCE[n.autoTimeSinceLast.autoType]
 end
 
+-- CN25: a variable's text is inlined where read unless it holds at least M.HOIST_TERMS term occurrences; then the
+-- read is `variable.<name>` and the text is emitted once as a `variable` line (see translate).
+M.HOIST_TERMS = 40
+
+--- The term occurrences of condition text `s` (Engine/Sim/Scripts.lua generateDebugPrint's tokens).
+function M.terms(s)
+    local n = 0
+    for _ in (s:gsub("'[^']*'", "")):gmatch("[a-zA-Z][A-Za-z0-9_%.]+") do
+        n = n + 1
+    end
+    return n
+end
+
+-- Variable `name`'s translated text `s` as read here (CN25). A text reading a window stays inline (the line's own
+-- window recheck, Scripts.lua ReadsWindow), as does one reading the target's range (rule 19 scans the line's own
+-- `target.within`/`target.outside`/`in_range` terms) and one with a comma (the SimC line's separator).
+local function hoisted(c, name, s)
+    if
+        s == nil
+        or M.terms(s) < M.HOIST_TERMS
+        or s:find("window.", 1, true)
+        or s:find("target.within", 1, true)
+        or s:find("target.outside", 1, true)
+        or s:find(".in_range", 1, true)
+        or s:find(",", 1, true)
+    then
+        return s
+    end
+    local base, k = "v_" .. M.snake(name), 1
+    local x = base
+    while c.hoist[x] and c.hoist[x] ~= s do -- the same variable translated differently in another context
+        k = k + 1
+        x = base .. "_" .. k
+    end
+    if not c.hoist[x] then
+        c.hoist[x] = s
+        c.hoistOrder[#c.hoistOrder + 1] = x
+    end
+    return "variable." .. x
+end
+
 -- A value: its text and nil condition (`true`: nil, no text). `pct`: compared directly with a percent read (rule 8).
 local function value(c, n, pct)
     local k, v = next(n)
@@ -1084,6 +1163,9 @@ local function value(c, n, pct)
             unsupported("boolean as a value")
         end
         return s, false
+    elseif k == "currentHealthPercent" or k == "currentHealth" then -- rule 23
+        local u = v.sourceUnit and v.sourceUnit.type or "Self"
+        unsupported(k .. (u == "Self" and ": the player's health, hidden in combat" or " of " .. tostring(u)))
     elseif M.VALUES[k] then
         local u = v.sourceUnit and v.sourceUnit.type or "Self"
         local res = u == "Pet" and M.VALUES[k]:match("^(%a+)%.lo$") -- the pet's power: the sim's pet.<resource> (no band)
@@ -1097,7 +1179,7 @@ local function value(c, n, pct)
         local n0 = c.movedN or 0
         local s, u = value(c, c.vars[v.name] or unsupported("variable " .. v.name), pct)
         movedVar(c, v.name, n0, u)
-        return s, u
+        return hoisted(c, v.name, s), u
     elseif k == "unitMovementSpeed" or k == "unitDistance" then -- rule 18 (rule 11 compares yards in bool())
         return moved(c, k)
     elseif k == "math" and (isYards(c, v.lhs) or isYards(c, v.rhs)) then -- rule 18 (R17): a walk time is one
@@ -1194,7 +1276,7 @@ local function value(c, n, pct)
         currentTarget(k, v)
         return "0", false
     elseif k == "timeUntilTargetDies" then -- CN4: one target, no schedule: wowsims's fight end, as remainingTime
-        currentTarget(k, v)
+        currentTarget(k, v, OTHER_DEATH)
         return M.VALUES.remainingTime, false
     elseif k == "totemRemainingTime" then
         if v.totemType == nil then -- TypeUnknownTotem (0, proto/shaman.proto): wowsims's nil node
@@ -1347,6 +1429,11 @@ local function bool(c, n)
         local l, lu = value(c, v.lhs, percentRead(c, v.rhs))
         local r, ru = value(c, v.rhs, percentRead(c, v.lhs))
         local op = M.OPS[v.op] or unsupported("op " .. tostring(v.op))
+        if l == M.VALUES.remainingTime and r == l then -- CN24: the target's death against the fight's end, a constant
+            deviate(c, FIGHT_END)
+            c.folds[#c.folds + 1] = FIGHT_END -- S4: an entry this fold empties keeps the reason on its `never`
+            return nil, v.op == "OpLe" or v.op == "OpGe" or v.op == "OpEq", false
+        end
         local u = nilOr(lu, ru)
         if u == true then
             return nil, nil, true
@@ -1436,7 +1523,9 @@ local function bool(c, n)
         return "gcd.remains<=0", nil, false
     elseif k == "sequenceIsComplete" then -- rule 14b: the sequence's window down; in its own condition, the edge's once
         local w = M.snake(v.sequenceName or "")
-        if w == c.ownSeq then
+        if c.sequences then -- the parked state, in its own condition too (design v6 §10)
+            return "window." .. w .. ".done", nil, false
+        elseif w == c.ownSeq then
             return nil, nil, true
         end
         return "!window." .. w .. ".up", nil, false
@@ -1578,7 +1667,7 @@ local function bool(c, n)
         local n0 = c.movedN or 0
         local s, b, u = bool(c, c.vars[v.name] or unsupported("variable " .. v.name))
         movedVar(c, v.name, n0, u)
-        return s, b, u
+        return hoisted(c, v.name, s), b, u
     elseif c.selectValue[k] then -- rule 16
         local kind, sel = c.selectValue[k][1], c.selectValue[k][2]
         sel.used = true
@@ -1895,6 +1984,58 @@ local function sequence(c, members, cond, node)
     return out
 end
 
+-- Rules 14, 14b (recipe `sequences`): sequence `w` of `n` members is declared once a priority.
+local function declare(c, w, n, what)
+    if c.seqSize[w] then
+        error(
+            ("%s: the %sname %s repeats (%s #%d)"):format(
+                what,
+                what == "strictSequence" and "generated " or "",
+                w,
+                c.listName,
+                c.entryNo
+            ),
+            0
+        )
+    end
+    c.seqSize[w] = n
+    c.windows[#c.windows + 1] = { name = w, list = c.listName, n = c.entryNo }
+end
+
+-- Rule 14 (recipe `sequences`): a strictSequence as one `strict_sequence` line (design v6 §10.1), named
+-- `<first member>_<last member>`, `start_on_first=1,hold_off_gcd=1` always, under its condition `cond`; its members (casts)
+-- are carried as lines `<member>,if=window.<name>.next.<key>[&<own>]` after it, joined into it at output.
+local function strictLine(c, members, cond)
+    local bodies, keys = {}, {}
+    for i, m in ipairs(members) do
+        local mk
+        for k in pairs(m) do
+            mk = k ~= "condition" and k or mk
+        end
+        if mk ~= "castSpell" and mk ~= "channelSpell" then
+            unsupported("strictSequence of " .. tostring(mk))
+        end
+        local body, why = entry(c, { action = m })
+        if not body then
+            unsupported(("strictSequence member %d: %s"):format(i, why))
+        end
+        bodies[i], keys[i] = body, c.self
+    end
+    c.self = nil
+    if #keys == 0 then
+        unsupported("strictSequence casts nothing")
+    end
+    local w = keys[1] .. "_" .. keys[#keys]
+    declare(c, w, #keys, "strictSequence")
+    local out =
+        { "strict_sequence,name=" .. w .. ",start_on_first=1,hold_off_gcd=1" .. (cond and (",if=" .. cond) or "") }
+    for i, body in ipairs(bodies) do
+        local base, own = body:match("^(.-),if=(.*)$")
+        out[i + 1] = (base or body) .. ",if=window." .. w .. ".next." .. keys[i] .. (own and ("&" .. paren(own)) or "")
+    end
+    return out
+end
+
 -- Rule 19: whether condition node `n` tests only the target's range (a rule 11 bracket, its `not`, a spellInRange;
 -- variables followed): a distance-only waitUntil.
 local function rangeOnly(c, n)
@@ -1944,6 +2085,10 @@ end
 -- `wait` members give no line (rule 19, decision 9). The condition is the window's evaluator (the class registers it
 -- from the header line), only when the belief can read it; its own `sequenceIsComplete` is dropped there (the window
 -- opens on the evaluator's edge, so once).
+-- With the recipe's `sequences` (design v6 §10): one `sequence,name=<w>,mode=continue[,if=<condition>]` line, its
+-- members carried as the lines above (every member, a repeated one too) after it and joined into it at output; a gate
+-- after a move is `(toggle.movement|<gate>)` (a member is due only while the sequence runs); the condition is the
+-- line's own, any read.
 local function windowed(c, a)
     local s = a.sequence
     local w = M.snake(s.name or "")
@@ -1953,7 +2098,7 @@ local function windowed(c, a)
     if cond == false then
         return nil, never(c)
     end
-    local bad = cond and unreadable(cond)
+    local bad = not c.sequences and cond and unreadable(cond)
     if bad then
         unsupported(("sequence %s: its condition is not readable by the belief (%s)"):format(w, bad))
     end
@@ -1980,11 +2125,12 @@ local function windowed(c, a)
             parts[#parts + 1] = own and paren(own) or nil
             local g = pending and condition(c, pending) -- the cast is the line's own: its range read unguarded
             if g then
-                parts[#parts + 1] = moved and ("(toggle.movement&window." .. w .. ".up|" .. g .. ")") or paren(g)
+                local up = c.sequences and "" or ("&window." .. w .. ".up")
+                parts[#parts + 1] = moved and ("(toggle.movement" .. up .. "|" .. g .. ")") or paren(g)
             end
             pending = nil
             local line = (base or body) .. ",if=" .. table.concat(parts, "&")
-            out[#out + 1] = line ~= out[#out] and line or nil
+            out[#out + 1] = (c.sequences or line ~= out[#out]) and line or nil
             steps[#steps + 1] = c.self
         elseif mk ~= "wait" then
             unsupported(("sequence %s of %s"):format(w, tostring(mk)))
@@ -1998,10 +2144,15 @@ local function windowed(c, a)
     if g then
         c.held[#c.held + 1] = { list = c.listName, n = c.entryNo, gate = g, window = w, moved = moved }
     end
-    c.windows[#c.windows + 1] = { name = w, steps = steps, cond = cond, list = c.listName, n = c.entryNo }
     if moved then -- rule 19: the sequence's move, reaching its steps' gates and its held one
         c.moving[#c.moving + 1] = { list = c.listName, n = c.entryNo, seq = w, reach = {} }
     end
+    if c.sequences then
+        declare(c, w, #steps, "sequence")
+        table.insert(out, 1, "sequence,name=" .. w .. ",mode=continue" .. (cond and (",if=" .. cond) or ""))
+        return out
+    end
+    c.windows[#c.windows + 1] = { name = w, steps = steps, cond = cond, list = c.listName, n = c.entryNo }
     return out
 end
 
@@ -2091,6 +2242,9 @@ local function entryBody(c, e)
         return windowed(c, a)
     elseif kind == "strictSequence" then -- rule 14: its condition's reads all guarded (no member is the line's own)
         c.self, seq = nil, a.strictSequence.actions or {}
+    elseif kind == "resetSequence" and c.sequences then -- rule 14b: the loop's restart line (design v6 §10)
+        c.self = nil
+        body, key = "restart_sequence,name=" .. M.snake(a.resetSequence.sequenceName or ""), "restart_sequence"
     elseif kind == "autocastOtherCooldowns" or kind == "castAllStatBuffCooldowns" then
         c.self, auto = nil, automatic(c, kind, a[kind])
         if #auto == 0 then
@@ -2104,6 +2258,9 @@ local function entryBody(c, e)
         return nil, never(c)
     end
     if seq then
+        if c.sequences then
+            return strictLine(c, seq, cond)
+        end
         return sequence(c, seq, cond, a.condition)
     end
     if auto then
@@ -2195,6 +2352,15 @@ local function effect(c, key)
     return c.effects[key][1], c.effects[key][2]
 end
 
+-- Rule 1's moot test reads field `k` of an aura or ability only when the kit does not compute it (CN21: the engine's
+-- `funcs`, run on read, may need state the stub lacks, as Guardian's Maul's mainhand_speed): nil is unknown.
+local function fixed(t, k)
+    local f = rawget(t, "funcs")
+    if not (f and f[k]) then
+        return t[k]
+    end
+end
+
 -- Rule 1: the guard term of each cast line in pre-pull list `out` (`origin`: each line's APL entry, for the notes).
 function guard(c, name, out, origin, omitted)
     local eff, keys = {}, {}
@@ -2214,7 +2380,7 @@ function guard(c, name, out, origin, omitted)
             end
             local a, aura = c.set.abilities[x], c.set.auras[x]
             if r and r.unit and type(aura) == "table" then
-                local d, cd = aura.duration, a.cooldown
+                local d, cd = fixed(aura, "duration"), fixed(a, "cooldown")
                 if not (type(d) == "number" and type(cd) == "number" and d <= cd) then
                     eff[i], keys[i] = r, x
                 end
@@ -2321,6 +2487,8 @@ local function swaps(c, entries, at)
             swapAt[j] = "changeTarget " .. tostring(to) .. ": no on-all-targets read of a cast before it in this list"
             if to == "Target" then
                 swapAt[j] = "changeTarget Target: no main target in Hekili"
+            elseif to == "PreviousTarget" then -- CN24
+                swapAt[j] = "changeTarget PreviousTarget: no previous target in Hekili"
             end
             local vals = to == "NextTarget" and e.action.condition and flatAnd(e.action.condition, {}) or {}
             local x, ia
@@ -2480,7 +2648,7 @@ local function rewrite(c, lists, byName, origin, pre, omitted)
     for _, l in ipairs(lists) do
         local L, j = l[1], 1
         while j <= #l[2] do
-            local w = l[2][j]:match("window%.([%w_]+)%.")
+            local w = l[2][j]:match("window%.([%w_]+)%.") or l[2][j]:match("^restart_sequence,name=([%w_]+)")
             if w and not made[w] then
                 omitted[#omitted + 1] = ("%s #%d: reads window %s, whose sequence was omitted"):format(
                     L,
@@ -2516,7 +2684,9 @@ local function rewrite(c, lists, byName, origin, pre, omitted)
     end
     local function later(L, after, into) -- the APL lines of `L` after entry `after` that no window's step holds
         for j, b in ipairs(byName[L]) do
-            if (tonumber(origin[L][j]) or -1) > after and not b:find(",if=window%.[%w_]+%.next%.") then
+            -- a plain sequence's line stands for its steps (recipe `sequences`), held as they were: not at all
+            local step = b:find(",if=window%.[%w_]+%.next%.") or (c.sequences and b:find("^sequence,"))
+            if (tonumber(origin[L][j]) or -1) > after and not step then
                 into[#into + 1] = { L, j }
             end
         end
@@ -2535,10 +2705,13 @@ local function rewrite(c, lists, byName, origin, pre, omitted)
             end
             m.n = math.min(m.n, h.n)
             if h.window then
-                m.windows[#m.windows + 1] = "!window." .. h.window .. ".up"
+                local w = "window." .. h.window -- a parked sequence stays up: running is up and not done
+                m.windows[#m.windows + 1] = c.sequences and ("(!" .. w .. ".up|" .. w .. ".done)")
+                    or ("!" .. w .. ".up")
                 for _, mv in ipairs(h.moved and c.moving or {}) do
                     if mv.seq == h.window then
-                        m.conds[#m.conds + 1], m.movers[#m.movers + 1] = "window." .. h.window .. ".up", mv
+                        m.conds[#m.conds + 1], m.movers[#m.movers + 1] =
+                            c.sequences and (w .. ".up&!" .. w .. ".done") or (w .. ".up"), mv
                     end
                 end
             else
@@ -2579,6 +2752,7 @@ local function rewrite(c, lists, byName, origin, pre, omitted)
             if
                 b:find("|toggle.movement&window." .. mv.seq .. ".up|", 1, true)
                 or b:find("&(toggle.movement&window." .. mv.seq .. ".up|", 1, true)
+                or (b:find("window." .. mv.seq .. ".next.", 1, true) and b:find("&(toggle.movement|", 1, true))
             then
                 add(mv, mv.list, b)
             end
@@ -2711,7 +2885,7 @@ local function rewrite(c, lists, byName, origin, pre, omitted)
     end
     local header = {}
     for _, w in ipairs(c.windows) do
-        if not pre[w.list] then
+        if not pre[w.list] and not c.sequences then -- an APL sequence: nothing for the class to register
             header[#header + 1] = ("# Window: %s: steps %s%s; on_deviation stay; evaluator %s (the class registers it)."):format(
                 w.name,
                 table.concat(w.steps, ", "),
@@ -2743,9 +2917,11 @@ end
 --- ON/OFF groups in its order, then the recipe's `settings` by key).
 function M.translate(rotation, c)
     c.vars, c.toggles, c.used, c.seen, c.named, c.namedKeys, c.notes, c.dropped = {}, {}, {}, {}, {}, {}, {}, {}
+    c.hoist, c.hoistOrder = {}, {} -- CN25: { [variable] = text }, in first-read order
     c.dropNote = {}
     c.callers, c.deviated, c.deviations, c.moves, c.movedAll = {}, {}, {}, {}, {}
     c.held, c.windows, c.loops, c.moving = {}, {}, {}, {} -- rules 14b, 19
+    c.seqSize = {} -- rules 14, 14b (recipe `sequences`): [name] = its member count, the lines joined into its line
     c.conditioned = {} -- rule 7: the recipe's condition keys a line took
     c.keyUsed = {} -- CN12: "<field>:<key>" of each recipe guard, requires and windowVars key a line took
     -- the IDs the APL casts itself (wowsims takes them out of its automatic cooldowns: rule 13)
@@ -2895,7 +3071,7 @@ function M.translate(rotation, c)
                 local ok, body, why = true, nil, "noted"
                 c.cycleMods = cycleAt[i] and ",cycle_targets=1" or nil -- rule 20 (rules 17 and 21 set it in `entry`)
                 local s = swapAt[i]
-                if a.move or a.waitUntil or a.resetSequence then -- rules 19, 14b: no line, but recorded
+                if a.move or a.waitUntil or (a.resetSequence and not c.sequences) then -- rules 19, 14b: no line, but recorded
                     omitted[#omitted + 1] = ("%s #%d: %s"):format(name, i, motion(c, a))
                 elseif type(s) == "table" then -- rule 20: absorbed into its cast's line
                     c.deviated[#c.deviated + 1] = ("# Cycle: %s #%d changeTarget -> #%d %s: cycle_targets=1 (shown with Recommend Target Swaps on)"):format(
@@ -2993,6 +3169,10 @@ function M.translate(rotation, c)
         for i, body in ipairs(byName.default) do
             if body:match("^[%w_]+") == x.before and (not x.translated or origin.default[i] ~= false) then
                 at = i
+                -- a sequence's member (recipe `sequences`) is part of its sequence's line: the extra goes before that
+                while c.sequences and at > 1 and byName.default[at]:find(",if=window%.[%w_]+%.next%.") do
+                    at = at - 1
+                end
                 if not x.last then
                     break
                 end
@@ -3064,17 +3244,63 @@ function M.translate(rotation, c)
             guard(c, l[1], l[2], origin[l[1]], omitted)
         end
     end
+    -- CN25: each hoisted variable an emitted line reads (directly or through another), in first-read order (a text
+    -- reads only variables hoisted before it), as `variable` lines heading the default list; rule 15 rewrites them too
+    local need = {}
+    local function reads(s)
+        for x in s:gmatch("variable%.([%w_]+)") do
+            if c.hoist[x] and not need[x] then
+                need[x] = true
+                reads(c.hoist[x])
+            end
+        end
+    end
+    for _, l in ipairs(lists) do
+        for _, body in ipairs(l[2]) do
+            reads(body)
+        end
+    end
+    local defs = {}
+    for _, x in ipairs(c.hoistOrder) do
+        if need[x] then
+            defs[#defs + 1] = "variable,name="
+                .. x
+                .. ",pure=1,value="
+                .. maintained(c, "x,if=" .. c.hoist[x], {}):sub(6)
+        end
+    end
+    if #defs > 0 then
+        local default = byName.default or error("CN25: hoisted variables but no default list", 0)
+        for i = #defs, 1, -1 do
+            table.insert(default, 1, defs[i])
+        end
+    end
     local text, cast = {}, {}
     for _, l in ipairs(lists) do
         local head = l[1] == "default" and "actions" or ("actions." .. l[1])
-        local n = 0
-        for _, body in ipairs(l[2]) do
+        local n, j = 0, 0
+        while j < #l[2] do
+            j = j + 1
+            local body = l[2][j]
             local called = body:match("^call_action_list,name=([%w_]+)")
             if called and #(byName[called] or {}) == 0 then
                 omitted[#omitted + 1] = ("%s: empty group %s"):format(l[1], called)
             else
+                local line = maintained(c, body, cast)
+                local w = body:match("^sequence,name=([%w_]+)") or body:match("^strict_sequence,name=([%w_]+)")
+                for k = 1, w and c.seqSize[w] or 0 do -- rules 14, 14b: its member lines follow it, joined as members
+                    local m, rest = (l[2][j + k] or ""):match("^(.-),if=window%." .. w .. "%.next%.[%w_]+(.*)$")
+                    if not m then
+                        error(
+                            ("sequence %s: member %d is not the line after it (%s)"):format(w, k, tostring(l[2][j + k])),
+                            0
+                        )
+                    end
+                    line = line .. ":" .. maintained(c, rest == "" and m or (m .. ",if=" .. rest:sub(2)), cast)
+                end
+                j = j + (w and c.seqSize[w] or 0)
                 n = n + 1
-                text[#text + 1] = head .. (n == 1 and "=" or "+=/") .. maintained(c, body, cast)
+                text[#text + 1] = head .. (n == 1 and "=" or "+=/") .. line
             end
         end
     end
@@ -3131,10 +3357,10 @@ function M.translate(rotation, c)
     return text, omitted, read, header
 end
 
---- Writes spec `spec`'s pack: src/Hekili_<Class>/APLs/<recipe.pack>.simc from the checked-in request (`ex`:
---- export.lua's module), its description (with the recipe's `notes`, player-facing lines), toggles and omitted entries in
---- the header.
-function M.write(spec, ex)
+--- The pack file of recipe `spec` (`ex`: tools/wowsims/export.lua's module) from its checked-in request: its path
+--- (src/Hekili_<Class>/APLs/<recipe.pack>.simc), its text (the description with the recipe's `notes`, player-facing
+--- lines, the toggles and omitted entries in the header), its omitted and toggle counts.
+function M.render(spec, ex)
     local json = require("dkjson")
     local r = ex.recipe(spec)
     local f = assert(io.open(ex.OUT .. spec .. ".json", "rb"))
@@ -3147,12 +3373,8 @@ function M.write(spec, ex)
         lf:close()
     end
     local player = req.raid.parties[1].players[1]
-    local tank = false -- wowsims's isTank: the player (raid index 0) in a tank slot (sim/core/environment.go:123-128)
-    for _, t in ipairs(req.raid.tanks or {}) do
-        tank = tank or (t.type == "Player" and (t.index or 0) == 0)
-    end
     local text, omitted, toggles, header =
-        M.translate(player.rotation, M.context(set, r, log, player, req.encounter, tank))
+        M.translate(player.rotation, M.context(set, r, log, player, req.encounter, M.isTank(req)))
     local Class = r.class:sub(1, 1) .. r.class:sub(2):lower()
     local out = {
         ("# %s: the wowsims/forever default APL for %s (%s), translated to this addon's keys."):format(
@@ -3184,11 +3406,16 @@ function M.write(spec, ex)
     end
     out[#out + 1] = ""
     out[#out + 1] = text
-    local path = ("src/Hekili_%s/APLs/%s.simc"):format(Class, r.pack)
+    return ("src/Hekili_%s/APLs/%s.simc"):format(Class, r.pack), table.concat(out, "\n") .. "\n", #omitted, #toggles
+end
+
+--- Writes spec `spec`'s pack (M.render's text to its path) and prints its counts.
+function M.write(spec, ex)
+    local path, text, omitted, toggles = M.render(spec, ex)
     local w = assert(io.open(path, "wb"))
-    w:write(table.concat(out, "\n") .. "\n")
+    w:write(text)
     w:close()
-    print(("%s: %d omitted, %d toggles"):format(path, #omitted, #toggles))
+    print(("%s: %d omitted, %d toggles"):format(path, omitted, toggles))
 end
 
 return M

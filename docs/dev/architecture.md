@@ -21,7 +21,7 @@ are relative to `src/Hekili/` unless they start with another top-level folder.
                  Content  loads the shared content, then the class pack
         |  Hekili.Engine.Subscribe(name, fn)          ^ Hekili.Engine.Configure(profile)
         v                                             |
- subscribers: UI/ (displays), Integrations/WeakAuras, Options/ (owns the AceDB profile, Options.lua, Profile.lua)
+ subscribers: UI/ (displays), Integrations/Recommendations, Options/ (owns the AceDB profile, Options.lua, Profile.lua)
  the headless loop (tests)
 
  Content addons (Hekili_Shared, Hekili_<Class>) call the public Hekili object: Hekili:NewClass,
@@ -39,7 +39,7 @@ from the core: it never names `Hekili`, `class`, `state` or `ns.Output`, and eve
 registrations arrives in the build's `def` (`Engine/Schema/Tracked.lua`: Hekili's ability and aura tables with their
 IDs and spender slots, the resources, talents, units, guardians, the experimental toggles as `providers`, and the core's
 `school`, `error`, `fsr`, `gcdSpell`, `oracleMin`). The core reads the belief through the facade's client-shaped rows
-and the API upgrades (trailing returns, event slots), and calls it by name in exactly three places, the owner's
+and the API upgrades (trailing returns, event slots), and may call it by name in exactly four places, the owner's
 approved exceptions (`tools/check_border.sh` allows these and nothing else):
 - `ns.VirtualState.Drain(GetTime())` (`Engine/Sim/Core.lua`, once per update, after Update's guards): the fold is the
   belief's own, and the core must say when its update starts so the belief folds to that cut-off before any reset;
@@ -48,12 +48,17 @@ approved exceptions (`tools/check_border.sh` allows these and nothing else):
   change is the one event allowed to ask for it (a toggle never does: `Drain` swaps the providers);
 - `ns.VirtualState.SetLog(logger)` (`Hekili.lua`, at load): the snapshot trace writes into the core's debug log,
   which only the core can open (`{ active(), write(fmt, ...) }`; the belief fills `onOpen`, which `Hekili:SetupDebug`
-  calls as each display's log opens). `SetLog` also fills `logger.debug` (§4).
-Those three are all the core names; the gate allows nothing else. The one belief read beside them is the window read
+  calls as each display's log opens). `SetLog` also fills `logger.debug` (§4);
+- `ns.VirtualState.WindowOp(key, op, arg)` (windows design v6 §5, `docs/superpowers/specs/2026-11-13-windows-sequences-design.md`):
+  an APL window's operation from a display pass at now, by key (`<pack>:<name>#<display>`): 1 OPEN, 2 CLOSE,
+  3 STEP (arg: the step); the author's intent only (v6.1, L1165): the belief holds each window's declaration.
+  Three plain values into a preallocated buffer; the next `Drain` replays them first (see "Rotation windows"). The
+  one caller is `Engine/Sim/Core.lua`'s window line, in slot 1 of a display pass at now.
+Those four are all the core names; the gate allows nothing else. The one belief read beside them is the window read
 (re-pin decision 11, owner "yes"): `ns.Facade.Window(name)` -> `up, openedAt, expiresAt, refreshes, step` (plain
 values; `false, 0, 0, 0, 0` closed or unknown), a belief-only facade function like `Facade.KnownRank`, never the aura
-copy; the core's `state.reset` copies every registered window through it (`Engine/Sim/State.lua` `CopyWindows`) and
-writes nothing back. The second is the debuff count (option D, owner decision 2, 2026-11-11):
+copy; the core's `state.reset` copies every registered window through it (`Engine/Sim/State.lua` `CopyWindows`);
+`WindowOp` is the only write back. The second is the debuff count (option D, owner decision 2, 2026-11-11):
 `ns.Facade.DebuffCount(spellID, now)` -> how many enemies the belief holds the aura up on (the target plus every
 remembered target slot, keyed by GUID in the open world and by nameplate under the Map restriction), or nil when unknown
 (the current target holds no memory slot, or the aura is untracked); `state.active_dot` reads it (§2, "Target swaps on
@@ -87,19 +92,31 @@ through it.
   `icon=`, below), `item` (the item id), `keybind`, `keybindFrom`, `time`, `exact_time`,
   `delay`, `since`, `wait`, `waitSec`, `offGCD`, `interrupt`, `castStart`, `resource`, `resource_type`, `cost`, `busy`,
   `scriptType`, `script`, `hook`, plus the tables `resources`, `alts` (§7) and `belief` (empty until an annotator fills it).
-- `payload`: the WeakAuras copy, set by `Integrations/WeakAuras.lua` (a passive subscriber, outside `Engine/`) only
-  when WeakAuras is loaded.
+- `payload`: the copy for other addons (the WeakAuras event and the recommendation listeners), set by
+  `Integrations/Recommendations.lua` (a passive subscriber, outside `Engine/`) once WeakAuras is loaded at
+  `PLAYER_ENTERING_WORLD` or the first listener is registered.
 - Read it in a subscriber, or between publishes. Records are reused: copy a field you need to keep.
 
 **`Engine.Output.status`**: the engine's own record, published once (`count` is 1) when one of its fields changes:
 `combat`, `combatStart` (0 out of combat), `numTargets`, `specID`, `specKey`, `specName`, `packName`. Combat, target
 count, spec and pack are read here and nowhere else.
 
-**`Engine.Subscribe(name, fn, passive, needs)`** returns true, or false when the display's 4 slots are full. `fn(name, version,
+**`Engine.Subscribe(name, fn, passive, needs)`** returns true, or false when the display's 4 outside slots are full. `fn(name, version,
 output)` runs after each publish of `name` (`name` may be `"status"`). Subscribing the same `fn` again only updates its
 `passive` flag and `needs` (`needs.alts`: §7). A passive subscriber listens without asking for the display to be computed: the engine builds a display
 only when a non-passive subscriber exists. WeakAuras is passive, so it never makes the engine compute a hidden display.
-**`Engine.Unsubscribe(name, fn)`** is safe inside a subscriber; later subscribers are not skipped.
+**`Engine.Unsubscribe(name, fn)`** is safe inside a subscriber; later subscribers are not skipped. Hekili's own
+subscribers (the displays, `status` in `UI/UI.lua`, the action bar glow, `Integrations/Recommendations.lua`) subscribe
+through `ns.Output.Subscribe`, the same call in their own slots: 8 per display, at most 4 of them for `Engine.Subscribe`,
+so an outside caller of the port never takes the slot one of them needs. This is the one `ns.Output` call outside
+`Engine/`.
+
+**`Hekili:RegisterRecommendationListener(fn)`** / **`Hekili:UnregisterRecommendationListener(fn)`**
+(`Integrations/Recommendations.lua`): other addons' hook on each update. After every publish of the five displays (not
+`status`) the bridge calls `fn(display, payload)` inside pcall, in registration order, with the same `payload` as the
+WeakAuras event. 16 slots of its own (never an engine slot); a listener's first error goes to `geterrorhandler()`, later
+ones are dropped, and it stays registered. Allocation-free per publish
+(`tests/Forever/recommendation_listener_spec.lua`).
 
 **`Engine.Registry`**: read-only views of what content registered, each the engine's live table, never a copy:
 `Specs()`, `Abilities()`, `AbilityList()`, `ItemList()`, `Auras()`, `AuraList()`, `Potions()`, `PotionList()`, `Gear()`,
@@ -161,6 +178,7 @@ to the belief as `def.providers` (`Hekili:ProvidersChanged`).
   the functions. `ns.Output.Begin(name)`, `Publish(name, count)`, `Wanted(name)`: the build side of publish/subscribe.
   Only `Sim/Core.lua` builds records. `Begin` returns the scratch set; `Publish` runs the annotators, swaps scratch and `recs`, and calls
   the subscribers, so a reader never sees a half-built set.
+- `ns.Output.Subscribe(name, fn, passive, needs)`: `Engine.Subscribe` in Hekili's own slots (above).
 - `ns.Output.Annotate(fn)` / `Unannotate(fn)`: run `fn(name, rec, i)` over each record before the swap. Reserved for the
   belief annotator (section 7); 4 slots. Not on the port until that feature exists.
 - `ns.EngineFrame`: the `HekiliEngine` frame (`Engine/Driver.lua`). Only engine files touch it: `Driver.lua` (the loop
@@ -177,9 +195,10 @@ What a content addon may use, and nothing else (`tests/boundary_spec.lua` enforc
 - `Hekili:NewClass(token, { specs = { ... } })`, `Hekili:NewShared(...)`, `Hekili:NewRace(...)` and the `Register*`
   calls on the object they return (abilities, auras, hooks, settings, packs, ...). `NewClass` (`Engine/Schema/Spec/Kits.lua`)
   returns the class's kit, or nil on another class (the pack then returns). The kit holds every ability, aura and talent;
-  each entry of `specs` is one talent tree's spec: `{ key, name, tree (1-3), icon, role, ranged, package, unsupported }`
-  (`package`: the default priority's name; `unsupported`: no priorities on Forever, its displays off and its page a
-  notice). A spec reads the kit through its metatable and keeps its own settings and options. Ids are the core's:
+  each entry of `specs` is one talent tree's spec: `{ key, name, tree (1-3), icon, role, ranged, package, unsupported,
+  fillWindow }` (`package`: the default priority's name; `unsupported`: no priorities on Forever, its displays off and
+  its page a notice; `fillWindow`: a resource key, every forecast window of the spec reaching at least the time that
+  pool takes to fill from empty at its combined rate, `state.ForecastWindow`). A spec reads the kit through its metatable and keeps its own settings and options. Ids are the core's:
   `100000 + client class id x 10 + slot` (`ns.TreeSpecID`, `Engine/Schema/Trees.lua`; slot 0 the kit, 1..n the specs
   in `specs` order: Warrior Arms 100011). `RegisterTalents` entries are `{ tree, spell, max rank }`, the tree from the
   DB2 (`Talent.TabID`, ordered by `TalentTab.OrderIndex`; 0 when unknown, counted nowhere). `kit:RegisterSetting(key,
@@ -210,10 +229,11 @@ Two environments have them:
   or its hybrid's out-of-combat cache when the read is secret);
 - the belief's `now` context (`Game/State/Families/Now.lua`, `NAMES`): the same names, where `stat` is only the
   plain function `stat(name, arg)` and the gear comes from the belief's own read of the weapon slots
-  (`Sources/Player.lua`). A `now` handler cannot read `stat.crit`, and `equipped` holds `shield` alone. Three names
-  are the `now` context's alone (aura audit C8; the sim's `state` answers none of them): `instant` (true inside an
-  instant cast's `now`: no start seen; false elsewhere), `cast_start` (the cast's start time, 0 for an instant) and
-  `target.health` (`known`, and the percent bounds `lo` and `hi` of the belief's target health interval,
+  (`Sources/Player.lua`). A `now` handler cannot read `stat.crit`, and `equipped` holds `shield` alone. Four names
+  are the `now` context's alone (the sim's `state` answers none of them): `instant` (true inside an instant cast's
+  `now`: no start seen; false elsewhere), `cast_start` (the cast's start time, 0 for an instant), `cast_id` (the
+  spell ID the cast was, one of the ability's `id` and `copy` IDs, so one ability credits by rank, as a mana gem's
+  restore by the gem used; 0 elsewhere) and `target.health` (`known`, and the percent bounds `lo` and `hi` of the belief's target health interval,
   `Families/TargetHealth.lua`; 0 and 100 while unknown). There is no `target.health.pct`: secret health is unknown,
   never 100 or 0, so a `now` tests a bound (`target.health.hi < 35`: proven below 35%).
 
@@ -255,8 +275,12 @@ read. A file's `state.knownRank` local is the facade's function, safe in a helpe
 
 **Rotation windows** (re-pin design §3a, decision 11: only for a span the client shows no aura for).
 `spec:RegisterWindow(name, { evaluator, duration, now_duration?, refresh, max_duration?, max_refresh?, close_on_false?,
-steps?, loop?, on_deviation?, strict? })` (`Engine/Schema/Spec.lua`) crosses `Build(def)` as `def.windows` (plain
-records, `steps` as ability indexes). `duration` is seconds, `"combat"` or a function. A function is the forecast's: it
+steps?, loop?, on_deviation?, strict?, reset_on_target_change? })` (`Engine/Schema/Spec.lua`) crosses `Build(def)` as
+`def.windows` (plain records, `steps` as ability indexes). `steps` need an `evaluator` (a cast never opens a window,
+L773: RegisterWindow raises). `reset_on_target_change` (a boolean, default false): a target change (`Obs.TargetSwap`:
+a re-selection, a Map swap by plate index, clearing the target, and the belief's own swap at `Start` and every
+`Build` included) closes the window and forgets the evaluator's last value, so a
+still-true evaluator reopens it at step 1 in the same `Drain`. `duration` is seconds, `"combat"` or a function. A function is the forecast's: it
 runs under `state` at each forecast open and each counted refresh. Its per-layer twin `now_duration` (required with a
 function `duration`, and only then) is the belief's, run in the `now` context at each belief open and each counted
 refresh: one function cannot run in both environments, the same rule as an ability's `now()` and `handler()`. A refused
@@ -265,11 +289,37 @@ expiry (`Facade.Window`'s, `window.<name>.remains`) reads `math.huge`, and only 
 its steps end it. The belief owns the real windows (`Game/State/Families/Windows.lua`): each evaluator runs in the `now`
 context once per `Drain` after the fold (its edges open, refresh or close), a real cast's `now()` may call
 `openWindow(name)`/`closeWindow(name)`, a stepped window advances on our observed cast of its due step, and combat end
-closes all. The core is stateless: every reset copies the windows from `Facade.Window`, and within a cycle
-`actions+=/open_window,name=<w>,if=<c>[,refresh=1][,duration=<s>]` and `actions+=/close_window,name=<w>,if=<c>` (list
-order, no icon, like `variable`; an unregistered name is a `ParseActionList` warning with its line and the entry
-disabled), a `handler()`'s `openWindow`/`closeWindow` (the same verbs as `now()`'s, written separately in
-`Engine/Sim/State.lua`) and a simulated cast's step change only that cycle's copy. Reads: `window.<name>.up`,
+closes all. APL windows (windows design v6) are rows of the same store with no evaluator, one per key, from
+`def.aplWindows` (records `{ key, duration, refresh?, max_duration?, max_refresh?, steps? (ability indexes), strict?,
+step_timeout?, reset_on_target_change?, on_deviation? }`), with `def.aplOpCap` (the operations buffer's bound per update) and
+`def.aplGen` (a changed generation rebuilds only these rows and the buffer, at the next `Drain` out of combat, else
+after combat end; until then an unknown key reads down and its operations are dropped. While no APL row exists, as after
+a /reload in combat, whose scripts load after the Build, the next `Drain` applies it in combat too). `Drain` replays the buffered
+`WindowOp`s first (Flush, operations, polls, fold, settle, Lua evaluators, aura deltas), stamped with the previous
+cut-off: OPEN a fresh open for the declared duration on a closed or run-out row, and on an open row the declared
+refresh rule (with `refresh`, below `max_refresh` and below openedAt + `max_duration`: the expiry restarts, capped
+there, refreshes + 1; else nothing, counted refused); CLOSE; STEP the due step as a write (on an up stepped row;
+else dropped). An unknown key, a Lua window's key, an unknown operation, a record with no positive duration (its
+OPEN), an operation over the bound and one still waiting at a full `Build` are dropped and counted (applied,
+refused, dropped, the last drop's key, since combat start: the belief's snapshot line `windowops`); each replayed
+operation is a `[vs] windowop applied|refused|dropped` line of the trace, one over the bound an `overflow` line at
+send and one waiting at a full `Build` a `discarded` line (a replay skips those two). A plain sequence (steps, not strict) parks past its last step (step = steps + 1)
+until a STEP or combat end; a strict one closes after its last step, at another on-GCD cast, at a later step's cast
+when its record says `on_deviation = "end"`, and when the due step is
+not cast within `step_timeout` (default 4 s, restarted at each advance; Lua windows have none). The core is stateless: every reset copies the windows from `Facade.Window` (an APL window by the key of the display being
+walked), and within a cycle `actions+=/open_window,name=<w>,if=<c>` and `actions+=/close_window,name=<w>,if=<c>` (list
+order, no icon, like `variable`; name= and if= only), a `handler()`'s `openWindow`/`closeWindow` (the same verbs as
+`now()`'s, written separately in `Engine/Sim/State.lua`) and a simulated cast's step change only that cycle's copy.
+The priority's own windows are the reserved `windows` list's `window,name=,duration=[,refresh=][,max_refresh=]
+[,max_duration=][,reset_on_target_change=]` entries: `Engine/Sim/Scripts.lua` `CheckWindows` checks them with every
+window line (errors E1-E7 of the windows design §3.4: a line in error gets `script.Error` and is skipped; the import
+switches it off with a warning) into one record per window and display for `def.aplWindows` (`ns.SetAplWindows`,
+Tracked.lua: before every Build, and from `Hekili.Update` when the active pack's compile changes). Window lines are
+commands (design §4): a line that changed the copy takes a per-slot mark (`state.WindowSlot` clears them at each slot)
+and the walk restarts from the top at the same time (`Hekili:GetNextPrediction`, no cap, `slot.restarts` counts
+them); a change made by slot 1 at now (offset and delay 0, not a recheck) to an APL window is sent as
+`VS.WindowOp(key, OPEN|CLOSE)`. The copy's refresh of an APL window follows the belief's rule (refused once the
+expiry sits at the `max_duration` cap); a Lua window's line changes the copy only. Reads: `window.<name>.up`,
 `.remains`, `.elapsed` (0 when down), `.step`, `.next.<ability key>`, at `query_time`. An `open_window` line whose
 condition fails now is rechecked like any entry, so "true in t" opens the window at t, and a later line reading
 `window.<name>` gets that time as a recheck (its countdown). The decreasing-clock `<`/`<=` direction works today; the
@@ -297,6 +347,13 @@ where it works, a reaction only where only an outcome reveals the span.
 `RegisterAbility{ passive = true, id = <number> }` (`Engine/Schema/Spec/Abilities.lua`) is a spell the spellbook knows and the
 player never casts. The belief tracks its known rank (the `now` context's `knownRank` reads it; the sim's asks the
 spellbook through the facade); the sim never sees it.
+
+`RegisterAbility{ ranks = { id1, id2, ... } }` and `effect = function() return function() ... end end`
+(`Engine/Schema/Spec/Ranks.lua`, `ns.DeriveAbility`, run first on every registration) are derived at registration:
+`ranks` gives `id`, `copy` (ranks 2..n) and `known` (`Facade.KnownRank(ranks) > 0`), and a field declared
+`{ byRank = values }` reads the highest known rank's value (rank 1's before any); `effect` is called once for each
+missing one of `handler` and `now`, two closures for the two environments. A declared field wins; neither `ranks` nor
+`effect` crosses `Build(def)`.
 
 **Target creature type.** `target.creature_type` (`Engine/Sim/State.lua`'s target table, cached per reset) is the
 target's creature type as a key: UnitCreatureType's second return, CreatureType.db2's ID (the same on every client
@@ -335,11 +392,14 @@ follows the log's pet power lines (their after-values, no modelled regen; fix 31
 log.
 
 **Percent-of-base costs.** A `spend` between 0 and 1 is a fraction of its pool's base power (the resource meta's
-`base`, or the belief's learned one; without either, of the maximum, as Hekili), floored, in both layers: the sim's
-`ns.SpendPoints` (`Engine/Sim/State.lua`, every site that prices a spend) and the belief's `I.BaseCostOf`
-(`Game/State/Families/Casts.lua`). Any other cost is points. An ability declaring `spendBase = true` has its `spend`,
-scalar or function, read as a fraction at any magnitude (a percent-of-base cost a stacking aura raises past 100% of
-base), priced `floor(c x base)` the same way; the base learning from out-of-combat cost reads counts its reads too.
+`base`, or the belief's learned one; without either, of the maximum, as Hekili), to the nearest whole (a half up), in
+both layers: the sim's `ns.SpendPoints` (`Engine/Sim/State.lua`, every site that prices a spend) and the belief's
+`I.BaseCostOf` (`Game/State/Families/Casts.lua`); cost modifiers then cut that whole price, unrounded. Any other cost is
+points. An ability declaring `spendBase = true` has its `spend`, scalar or function, read as a fraction at any
+magnitude (a percent-of-base cost a stacking aura raises past 100% of base), priced the same way; the base learning
+from out-of-combat cost reads (`I.LearnBases`) counts its reads too. A read cut only by passive talents' percent
+modifiers (talent-gated, no aura) teaches the base with their factor divided out; a read an aura's modifier cuts
+teaches nothing.
 
 **One-time resource caps.** `capResource(resource, maximum)` is available to both `now` effects and simulation
 handlers. It caps the lower, estimated and upper amounts independently, never grants resource and leaves the pool's
@@ -380,6 +440,25 @@ ambiguous: a light then may be another member's (a cast we did not see), so it o
 member past its modelled duration. A plain
 direct read still wins: a form aura the shapeshift read owns is never judged by the Cooldown Manager. The family name
 is the pack's own; the core only compares it.
+
+**Cooldown Manager proof across sessions** (L1113-L1115). The verdict closes a record only through a proven item (one
+that lit for its aura). Each proven item that maps to one aura is saved at logout (and `/reload`) in the belief's own
+per-character saved global `HekiliCDMProof` (`Hekili.toc` `SavedVariablesPerCharacter`), with its aura key, the viewer
+it was proven on, its unit and its silent count; `Game/State/Sources/Presence/CooldownViewer.lua` reads and writes it
+through `api` only and the core never names it, so the store is no border crossing. The client's
+`CooldownViewerSettings.OnDataChanged` (EventRegistry; registered at `VS.Start`) fires once when the layout loads at
+login, on every settings edit, and when spells, talents or PvP talents change or a hotfix arrives; `OnPendingChanges`
+brackets an edit. After it, and when a viewer is shown after the load (an in-combat-only viewer at the pull), the
+leaf's next sweep with no edit open reads the layout (every configured slot of a visible viewer): a saved entry is
+restored when its viewer shows the item and the item still maps to the saved aura alone, else dropped; a proof whose
+viewer no longer shows its item (moved or removed) is dropped. A viewer that is hidden or shows a secret ID judges
+nothing, and a saved entry waits while its viewer shows no item. While saved entries wait and the layout shows no
+configured item yet on a visible viewer with plain IDs, it is read again at each sweep out of combat (with every
+viewer hidden it waits for one to be shown). A restored proof is no light: no fact goes up or down by it, only the
+item's dark counts again, so the first missed application of a session can be closed. The snapshot's `presence-proof`
+line counts `restored`, `unlaid` (dropped by an edit) and `reads` (layout reads). The snapshot's `presence-slot`
+light, dark and unit are each slot's last held sweep as a mapped item, the first silent sweep after it and its unit,
+kept through target swaps and re-points.
 
 **A charge spent by hits on us, with its own cooldown.** A player aura's `consumedBy` (a set of hit kinds:
 `WOUND`, `BLOCK`, `BLOCKED`, ...) makes each such hit on us spend one stack in the belief (`Families/Auras.lua`), and
@@ -525,8 +604,9 @@ facade and the environment names. The boundary scan rejects `Hekili.Virtual` and
   compares the English text with the golden written at the merge base.
 - `tools/check_border.sh` (in `make api-check`): the belief/core border (§1). Comments stripped, no file of `Game/`
   names `Hekili`, `class.`, `state.` or `ns.Output`; no file of `Engine/`, `UI/`, `Options/`, `Integrations/` or `Hekili.lua` names
-  `VS`, `ns.VirtualState` or `VirtualStateInternal` except the three calls `ns.VirtualState.Drain`, `.Build`,
-  `.SetLog`.
+  `VS`, `ns.VirtualState` or `VirtualStateInternal` except the four calls `ns.VirtualState.Drain`, `.Build`,
+  `.SetLog`, `.WindowOp`. Its optional arguments (for the spec) replace the `Game/` scan and add a path to the core
+  scan; a path that matches no file fails.
 - `tools/check_engine_reads.sh` (in `make api-check`), both directions: the engine files (`Sim/{Core,State,Targets,
   Scripts}`, `Output`, `Registry`, `Snapshot`, `Driver`) name no `HekiliDisplay*`, `ns.UI.` or
   `DisplayPool`, and nothing in `Engine/` names `Hekili.DB` or `.profile` (exempt: `Settings.lua`, comments). UI,
@@ -591,13 +671,15 @@ default list from the forecast window `state.delayMax` as it would after an empt
 to die (`fight_remains`, `target.time_to_die`, `time_to_pct_N`, `longest_ttd`, ...) answers "unknown": `FOREVER`, 3600 s,
 a fight that never ends soon, a grey (trivial) target's too (wowsims's `remainingTime` has no trivial case), and
 `GetNumTTDsAfter` counts every enemy as after any time. The tracker's 0.5 s ticker is not started. A priority may read them without a load warning (`Engine/Sim/AplWarnings.lua` warns only
-on target health); wowsims's `remainingTime` maps to `fight_remains` with that deviation.
+on target and player health); wowsims's `remainingTime` maps to `fight_remains` with that deviation.
 
-**Player health.** The same rule for the player's own health (`health.pct`, `health.current`, `health.deficit`): the
-plain value whenever the client answers one (out of combat), full while it keeps the answer secret
-(`Game/State/Families/Player.lua`), never a stale read from before the pull. A defensive line (`health.pct<50`) never
-fires on an unknown and a `health.pct>50` gate always passes; no load warning. wowsims's `currentHealthPercent` maps to
-`health.pct` with that deviation.
+**Player health.** The client hides the player's own health in combat (`UnitHealth`/`UnitHealthMax("player")` secret;
+owner L1461; the headless fake client answers so): `health.pct`, `health.current`, `health.deficit` read the plain
+value out of combat and full while the answer is secret (`Game/State/Families/Player.lua`), never a stale read from
+before the pull, and the facade's row never hands the core a secret. A defensive line (`health.pct<50`) never fires in
+combat and a `health.pct>50` gate always passes there, so a custom line reading it gets a load warning
+(`Engine/Sim/AplWarnings.lua`), and the translator omits every wowsims entry reading `currentHealthPercent` or
+`currentHealth` (its rule 23, owner L1462).
 
 **APL line options.** `make_pack.lua` and the in-game importer accept these on a line before `if=` (in the tool,
 an unknown option or a non-numeric value errors; `unparse` writes them in this order): `name=<list>` (for
@@ -605,8 +687,8 @@ an unknown option or a non-numeric value errors; `unparse` writes them in this o
 highest; the record carries `focus = N` and the timeline shows it in the now circle ahead of time, below). The tool
 refuses 0, negatives and non-integers; the in-game importer drops `focus=0` (off) and warns on and drops anything that
 is not a whole number; the priority editor's Focus Tier slider sets it (0 is off). The tier is per line, not per
-ability. The Druid pack flags Feral's `rip` (tier 1); the Warrior pack's Fury tiers Heroic Strike and Cleave 1 near the
-rage cap and 2 otherwise.
+ability. The packs' rage dumps are always tier 2 (Heroic Strike and Cleave in the Warrior packs, Maul in Guardian);
+Feral tiers Shred and Claw 1 and Rip and Rake 2.
 
 Four more, from the tbc branch's `label` (no shipped pack uses them): `label=<text>` puts the text on the pick's
 record as `label` (the displays draw it on the icon, top centre), `label_if=<condition>` keeps it only while the
@@ -621,6 +703,32 @@ error in any of them leaves the field nil. Core evaluates them at each pick (`ma
 queue slot's state; the value is taken verbatim (Scripts.lua's `text` modifier type), so it may not hold a comma.
 Both default renderers draw the record's icon through `ns.UI.SetRecTexture` (UI.lua): `iconOverride` when set, else
 `texture`. A style that ignores overrides sets `texture` itself. Example: `starfire,label=R6,label_if=mana.pct<20`.
+
+**Pure variables.** Purity is explicit: `variable,name=<v>,pure=1,value=<expression>` is a pure variable when it is
+enabled, has no `if=`, `value_else=` or `op` other than `set`, is the only line of that name in the pack, and sits in
+`default` or a list reached only by enabled calls with no `if=` or `strict_if=` from `default`, and its value does not
+read itself (directly or through other pure variables). A `pure=1` line that breaks a rule raises a `Hekili:Error` at
+load naming the line and the rule, and is read as a stock variable; a line without `pure=1` is always a stock variable.
+`scripts:MarkPure` in `Sim/Scripts.lua` keeps the pack's map (`PackInfo[pack].pure`): at `LoadScripts`, after the
+priority editor moves a line (`SwapScripts`), and when one `variable` or list-call line is reloaded
+(`Hekili:LoadScript`; a change in which names are pure, or in a pure value, reloads the pack's lines).
+A read `variable.<v>` calls its compiled value in the reader's own state: no cache, no registration (`Sim/Core.lua`
+skips the line in the walk), no string built (`state.variable` in `Sim/State.lua`; under a debug snapshot it logs the
+value and the expression). The reader's recheck times are its value's (`recurseRechecks` follows it), never a time of
+the bare read; `state.recheck` joins a line's own times with those of every variable it reads into one compiled
+function of their distinct comparisons (once per load), so a comparison repeated across a pack's variants is
+evaluated once. The time-sensitivity of a line reads through it. It is the expression written in the reader's place
+in what it reads and when, with these limits: the value is compiled as a value (`EmulateSyntax`'s numeric mode, so a
+boolean expression must compile the same both ways: the wowsims packs' do, `tests/Forever/wowsims_pin_spec.lua`); a
+pure read does not make the reader a window reader (`ReadsWindow`: its own text only); a comparison of the read
+(`variable.<v><=x`) keeps the inherited recheck of a variable time; and the value ignores the list calls that reach the
+line (a stock variable is evaluated under its line's call conditions): the placement rule keeps a pure line out of
+conditionally called lists. Any other `variable` line keeps the inherited Hekili path (registered per walk, cached per
+`query_time`). The wowsims translator emits `pure=1` variables for its large shared conditions (`tools/wowsims/apl.lua`
+rule 1: never a text that reads a window or the target's range), so no line exceeds Lua 5.1's limits;
+`tools/make_pack.lua`'s import leaves a host's `pure=1` lines unguarded and moves the source's into the host's
+`default` (the imported lists are entered under the form's condition); stock `variable` lines are guarded and stay in
+their list.
 
 **Pre-pull guards.** Upstream Hekili walks `precombat` before `default` on every refresh and skips its non-essential
 entries once `time > 0`; out of combat it is a plain priority. The fork keeps it so (owner ruling 2026-10-21: "a guard
@@ -824,4 +932,13 @@ of the core (core-is-generic) and stop one key meaning two things (the core's "C
   a violation unless its line ends `-- l10n: verbatim` (for the never-localized list). `Libs/`, `Locales/`, DevTools and
   the snapshot files are skipped. It is token-level: a literal returned from a function in a sink is not seen.
 - **Adding a language:** create an empty `Locales/<locale>.lua` in each addon with text, list it in that addon's TOC
-  after `enUS.lua`, and run `python3 tools/locales.py`.
+  after `enUS.lua` (languages in alphabetical order, then `Locales.lua`), and run `python3 tools/locales.py`. Every
+  language the core has must have a file in each addon with text (a pack without one shows as out of date). The shipped
+  languages are deDE, esES, frFR, itIT and zhCN. One file may serve two clients: `esES.lua` registers for esES and esMX
+  (`ALIASES` in the tool), written in neutral Spanish. Until translated, a file lists every key as a comment and the
+  English text shows.
+- **Coverage and length.** `python3 tools/locales.py --report` prints, per language, how many keys are untranslated
+  (`-v` per addon, `--keys` each key; it always exits 0; `make check-full` prints it as information, and a language
+  more than 5% behind is marked). A translation of a label of 24 characters or fewer that is longer than 1.5 times the
+  English prints a warning (not a failure); German and French run long, so check the widest panels in game. Terms:
+  `docs/dev/translation-glossary.md`.

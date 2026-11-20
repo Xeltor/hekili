@@ -94,7 +94,8 @@ jobs:
       - run: make bootstrap
       - run: ARMS_RECS=record .lua/bin/busted tests/Forever/arms_recs_spec.lua
       - run: TIMING=record .lua/bin/busted tests/Forever/wowsims_warrior_spec.lua
-      - run: .lua/bin/busted tests/Forever/driver_alloc_spec.lua tests/Forever/wowsims_warlock_spec.lua
+      - if: always()
+        run: .lua/bin/busted tests/Forever/driver_alloc_spec.lua tests/Forever/wowsims_warlock_spec.lua
       - uses: actions/upload-artifact@v4
         if: always()
         with:

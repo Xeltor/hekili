@@ -684,7 +684,10 @@ M.READY = {
     -- Unbridled Wrath proc): the same 9 rows; Sunder Armor 44.00 (0.99 -> 1.22) and 46.40 (0.17 -> 0.92) now wait for
     -- the next main-hand swing (45.21 / 47.31) instead of a proc the floor cannot promise; A/B with only that floor
     -- line reverted reproduces the old fixture
-    warrior_fury = { 0.64, 9 },
+    -- Fork CN15 on ab0f: the observation-driven white-swing policy holds 10 real waits, median 0.92 s.
+    -- Upstream's 0.64 / 9 includes projected Reckless rage. The old fork log read 0.42 / 14; this repin's
+    -- Bloodthirst (4), Sunder (3), Execute (1) and other cost waits remain visible in the recorded timing fixture.
+    warrior_fury = { 0.92, 10 },
     -- { 0.38, 11 } -> { 0.37, 3 } re-pin e2842f0a78 (lane 14, R6; after 5049ede22's GCD fix): 98 decisions, 3 real, all
     -- early, class aura: Shield Slam 49.84 (0.24), Sunder Armor 71.77 / 143.44 (0.37 / 0.44): wowsims queues Shield Block
     -- (`Queueing up 2565 to cast at`) and casts the on-GCD ability at that instant, after ours shows it ready

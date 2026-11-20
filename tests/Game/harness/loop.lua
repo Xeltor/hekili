@@ -668,6 +668,9 @@ function M.run(L, seed, o, drivers)
                 if d.gcd then
                     local n = #run.dec.ours + 1
                     run.dec.ours[n], run.dec.theirs[n] = firstGcd(steps[1].H), d.key
+                    if os.getenv("REPLAY_TRACE") and run.dec.ours[n] ~= d.key then
+                        print(("replay %.3f: %s -> %s"):format(d.t, d.key, tostring(run.dec.ours[n])))
+                    end
                     -- a flip at a decision point: the icon changed since the tick's poll, no cast, spend, avoid or
                     -- aura change between
                     local moved = pollEv.cast or pollEv.spend or pollEv.avoid or pollEv.aura

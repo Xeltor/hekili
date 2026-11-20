@@ -7,6 +7,25 @@ permissions:
   contents: read
 
 jobs:
+  trace:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        kit: [fork, upstream]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: jdx/mise-action@v2
+      - uses: actions/cache@v4
+        with:
+          path: .lua
+          key: lua-${{ runner.os }}-${{ hashFiles('scripts/bootstrap.sh') }}
+      - run: make bootstrap
+      - if: matrix.kit == 'upstream'
+        run: git show ad298381a:src/Hekili_Warrior/Warrior.lua > src/Hekili_Warrior/Warrior.lua
+      - run: REPLAY_TRACE=1 TIMING=record .lua/bin/busted --filter='Fury.*follows' tests/Forever/wowsims_warrior_spec.lua
   loops:
     runs-on: ubuntu-latest
     strategy:

@@ -71,7 +71,7 @@ describe("Serpent Sting application", function()
         "holds the real ability while its projectile is pending and allows a retry after an attributed resist",
         function()
             local headless = require("Game.harness.headless")
-            local hunter = require("Forever.helpers.hunter_world").BeastMastery
+            local hunter = require("Forever.helpers.hunter_world").BeastMasteryTurret
             local H = headless.new({ character = hunter.character(), pack = hunter.PACK })
             local ctl, state = H.ctl, H.Hekili.State
             ctl.distance.target = 30

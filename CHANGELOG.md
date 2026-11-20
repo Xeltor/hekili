@@ -33,7 +33,7 @@
 - Warrior now counts Shield Specialization's Rage from partial blocks even when the game hides the damage amount.
 - Abilities such as Bloodrage no longer appear ready after a reload when the game still reports them on cooldown.
 - Hidden incoming damage no longer trains the estimate of Rage gained from outgoing swings.
-- Reckless Swings no longer assumes all 20 bonus Rage arrives immediately when cast. Heroic Strike and Cleave count one charge at their confirmed cast, with rollback on an attributed avoid. White-swing bonuses remain unmodelled until the client reconciles the resource estimate.
+- Reckless Swings no longer assumes all 20 bonus Rage arrives immediately when cast. Its per-swing bonus remains unmodelled until the client reconciles the resource estimate.
 - Rogue forecasts include Initiative's guaranteed opener points. Ghostly Strike can lead into an eligible Ambush, and Shank can restore Energy at five combo points when it advances a finisher without wasting points.
 - Eureka now uses the learned spell ID for the player's class instead of the Warrior variant for every Gnome.
 

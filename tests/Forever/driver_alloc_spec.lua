@@ -9,7 +9,7 @@ describe("Engine/Driver.lua through the engine frame", function()
     local H, f, upd, runs, ran, t
 
     before_each(function()
-        H = headless.new({ character = ww.character(), pack = ww.PACK })
+        H = headless.new({ character = ww.Raid.character(), pack = ww.PACK })
         assert.are.same({}, H.loadErrors)
         H.ctl.inRange.target, H.ctl.level.target = true, 60
         H.Fire("PLAYER_TARGET_CHANGED")

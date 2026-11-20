@@ -6,12 +6,33 @@ on:
       trace_only:
         type: boolean
         default: false
+      baseline_only:
+        type: boolean
+        default: false
+      record_only:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
+  baseline:
+    if: ${{ inputs.baseline_only }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: b0de8a77c2f5c124ec05b0017c7c9faec2eac78b
+      - uses: jdx/mise-action@v2
+      - uses: actions/cache@v4
+        with:
+          path: .lua
+          key: lua-${{ runner.os }}-${{ hashFiles('scripts/bootstrap.sh') }}
+      - run: make bootstrap
+      - run: .lua/bin/busted tests/Forever/loop_warrior_fury24_spec.lua tests/Forever/loop_warrior_fury_spec.lua
   trace:
+    if: ${{ inputs.trace_only && !inputs.baseline_only }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -45,7 +66,7 @@ jobs:
           PY
       - run: REPLAY_TRACE=1 TIMING=record .lua/bin/busted --filter='Fury.*follows' tests/Forever/wowsims_warrior_spec.lua
   loops:
-    if: ${{ !inputs.trace_only }}
+    if: ${{ !inputs.trace_only && !inputs.baseline_only && !inputs.record_only }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -61,7 +82,7 @@ jobs:
       - run: make bootstrap
       - run: BUSTED_JOBS=1 make test-${{ matrix.tag }}
   record:
-    if: ${{ !inputs.trace_only }}
+    if: ${{ !inputs.trace_only && !inputs.baseline_only }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -73,6 +94,7 @@ jobs:
       - run: make bootstrap
       - run: ARMS_RECS=record .lua/bin/busted tests/Forever/arms_recs_spec.lua
       - run: TIMING=record .lua/bin/busted tests/Forever/wowsims_warrior_spec.lua
+      - run: .lua/bin/busted tests/Forever/driver_alloc_spec.lua tests/Forever/wowsims_warlock_spec.lua
       - uses: actions/upload-artifact@v4
         if: always()
         with:

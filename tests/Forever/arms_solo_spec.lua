@@ -33,6 +33,7 @@ local function warrior(level, rage, options)
     ctl.creature.target = options.creature
     ctl.groupMembers = options.group or 0
     ctl.isInRaid = options.raid == true
+    ctl.healthPlain = true -- explicit fixture health; SECRET cases remain unreadable
     ctl.unitHealth.player = options.health or 1000
     ctl.itemCount[5512] = options.healthstone and 1 or 0
     ctl.items[5512] = { "Minor Healthstone", icon = 538745 }

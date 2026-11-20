@@ -209,7 +209,10 @@ describe("the Warrior wowsims.com packs #slow #wowsims", function()
             -- (R46 latency) overpower -> rend 12.00, -> bloodthirst 18.10, -> whirlwind 29.40 and 51.61, -> reckless_swings
             -- 139.36; whirlwind -> sunder_armor 0.00 (the opening) and 117.30, -> rend 53.15, -> reckless_swings 62.26;
             -- sunder_armor -> overpower 124.96; execute -> sunder_armor 161.30 (not traced per row)
-            0.89,
+            -- Fork CN15: keep white-swing Reckless rage observation-driven. On this pin the fork scores
+            -- 89/101 (0.881), versus upstream 90/101 (0.891): Rend at 136.96 is held for rage.
+            -- Raise the pre-merge fork floor 0.86 -> 0.88; upstream's 0.89 assumes its white-swing model.
+            0.88,
             FURY_REPLAY
         )
     end)

@@ -94,6 +94,7 @@ local function warrior(level, rage, options)
     ctl.exists.targettarget = engaged == true and victim ~= false
     ctl.unitIs.targettarget = engaged == true and victim or nil
     ctl.level.target = options.boss and -1 or level
+    ctl.healthPlain = true -- this fixture explicitly supplies readable health, including its maximum
     ctl.unitHealth.player = options.health or 1000
     if not options.noBattleShout then
         ctl.auras.player.HELPFUL[1] = { spellId = 6673, expirationTime = ctl.now + 100, applications = 0 }

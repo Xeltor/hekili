@@ -16,8 +16,8 @@ local function content(spec, base, pack, level, extra)
         o[k] = v
     end
     local C = ws.content(base, o)
-    -- The pinned profiles are sustained boss fights. Lower brackets exercise the outdoor leveling rules instead.
-    return level == 60 and W.raid(C) or C
+    -- This gate measures sustained spell/rank fallbacks; warlock_pve_spec covers field health and recovery policy.
+    return W.raid(C)
 end
 
 -- recipe, world content, pack, the replay floor (the first clean run's; lowered only with its cause beside it),

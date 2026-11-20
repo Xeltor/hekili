@@ -955,34 +955,24 @@ local function interruptReadyTime()
 end
 
 -- A landed Heroic Strike or Cleave (wowsims talents_fury.go:65-87 and :374-420 at ab0f00e4fc; EV-0148, EV-0138): it
--- rolls Unbridled Wrath (its expected rage; the floor gains none, as no proc is seen) and spends one Reckless Swings
--- charge for 5 rage once a cast. Paid at the cast, which comes with its swing (onNextSwing): an `onLand` would idle on
--- live (target rows secret). Its own avoid (strikeAvoid) takes both back and gives the charge back. Its Flurry charge
+-- rolls Unbridled Wrath (its expected rage; the floor gains none, as no proc is seen). Paid at the cast, which
+-- comes with its swing (onNextSwing): an `onLand` would idle on live (target rows secret). Its own avoid
+-- (strikeAvoid) takes the estimate back. Reckless Swings remains unmodelled (CN15). Its Flurry charge
 -- (one a cast, landed or not) is not modelled: the belief reads the swings live.
 -- shortcut: one Unbridled Wrath roll a Cleave, as on one target (wowsims rolls each target it lands on: a second target
 -- is a roll short, the low side); upgrade with the belief's enemy count if a pack line reads rage after a Cleave.
-local strikeWrath, strikeCharge = 0, 0 -- the latest strike's Unbridled Wrath rage and its charge's expiry (0: none)
+local strikeWrath = 0
 local function strikeNow()
     strikeWrath = wrathRage(talent.unbridled_wrath.rank)
-    strikeCharge = 0
     if strikeWrath > 0 then
         gain(strikeWrath, "rage", strikeWrath)
-    end
-    if buff.reckless_swings.up then
-        strikeCharge = buff.reckless_swings.expires
-        gain(5, "rage")
-        removeStack("reckless_swings")
     end
 end
 local function strikeAvoid()
     if strikeWrath > 0 then
         spend(strikeWrath, "rage")
     end
-    if strikeCharge > now then -- the charge back, to the aura's own expiry
-        spend(5, "rage")
-        addStack("reckless_swings", strikeCharge - now)
-    end
-    strikeWrath, strikeCharge = 0, 0
+    strikeWrath = 0
 end
 
 spec:RegisterAbilities({

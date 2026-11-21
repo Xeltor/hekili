@@ -114,6 +114,50 @@ end
 
 local LSM = LibStub("LibSharedMedia-3.0", true)
 
+local function styleKeybinding( text, conf, queued, height )
+    local kb = conf.classic.keybindings
+    text:SetFont( LSM:Fetch( "font", queued and kb.queuedFont or kb.font or conf.font ),
+        queued and kb.queuedFontSize or kb.fontSize or 12,
+        ns.UI.FontFlags( queued and kb.queuedFontStyle or kb.fontStyle or "OUTLINE" ) )
+    text:SetTextColor( unpack( queued and kb.queuedColor or kb.color ) )
+    text:SetHeight( height / 2 )
+    text:SetWordWrap( false )
+end
+
+-- The cue and all its children inherit the same client-controlled visibility.
+function Classic.DrawHealthCueDetails( layer, button, choice, conf, rebuild )
+    local kb = conf.classic.keybindings
+    if kb.enabled then
+        if not layer.Keybinding then
+            layer.Keybinding = layer:CreateFontString( nil, "OVERLAY" )
+            rebuild = true
+        end
+        if rebuild then styleKeybinding( layer.Keybinding, conf, false, button:GetHeight() ) end
+        setKeybinding( layer, Hekili:GetBindingForAction( choice.action, conf, 1 ), kb, conf.classic.gamepad )
+    elseif layer.Keybinding then
+        layer.Keybinding:SetText( nil )
+    end
+
+    if choice.gcdStart then
+        if not layer.swipe then
+            layer.swipe = CreateFrame( "Cooldown", nil, layer, "CooldownFrameTemplate" )
+            layer.swipe:SetAllPoints( layer )
+            layer.swipe:SetDrawBling( false )
+            layer.swipe:SetDrawEdge( false )
+            layer.swipe:SetHideCountdownNumbers( true )
+            layer.swipe.noCooldownCount = true
+        end
+        layer.swipe:SetSwipeColor( 0, 0, 0, conf.cooldownSwipeAlpha )
+        if layer.gcdStart ~= choice.gcdStart or layer.gcdDuration ~= choice.gcdDuration then
+            layer.swipe:SetCooldown( choice.gcdStart, choice.gcdDuration )
+            layer.swipe:Show()
+        end
+    elseif layer.gcdStart then
+        layer.swipe:Hide()
+    end
+    layer.gcdStart, layer.gcdDuration = choice.gcdStart, choice.gcdDuration
+end
+
 local function CreateButton( dispID, id )
     local self = Hekili
     local d = dPool[ dispID ]
@@ -244,18 +288,13 @@ local function CreateButton( dispID, id )
     b.Keybinding = b.Keybinding or b:CreateFontString(bName .. "_KB", "OVERLAY")
 
     local queued = id > 1 and conf.classic.keybindings.separateQueueStyle
-    local kbFont = queued and conf.classic.keybindings.queuedFont or conf.classic.keybindings.font or conf.font
-
-    b.Keybinding:SetFont( LSM:Fetch("font", kbFont), queued and conf.classic.keybindings.queuedFontSize or conf.classic.keybindings.fontSize or 12, ns.UI.FontFlags( queued and conf.classic.keybindings.queuedFontStyle or conf.classic.keybindings.fontStyle or "OUTLINE" ) )
+    styleKeybinding( b.Keybinding, conf, queued, b:GetHeight() )
 
     local kbAnchor = conf.classic.keybindings.anchor or "TOPRIGHT"
     b.Keybinding:ClearAllPoints()
     b.Keybinding:SetPoint( kbAnchor, b, kbAnchor, conf.classic.keybindings.x or 0, conf.classic.keybindings.y or 0 )
-    b.Keybinding:SetHeight( b:GetHeight() / 2 )
     b.Keybinding:SetJustifyH( kbAnchor:match("RIGHT") and "RIGHT" or ( kbAnchor:match( "LEFT" ) and "LEFT" or "CENTER" ) )
     b.Keybinding:SetJustifyV( kbAnchor:match("TOP") and "TOP" or ( kbAnchor:match( "BOTTOM" ) and "BOTTOM" or "MIDDLE" ) )
-    b.Keybinding:SetTextColor( unpack( queued and conf.classic.keybindings.queuedColor or conf.classic.keybindings.color ) )
-    b.Keybinding:SetWordWrap( false )
     b.Keybinding.kbAnchor = nil -- Build set the points: the next text sets them again if it differs
 
     local kbText = b.Keybinding:GetText()

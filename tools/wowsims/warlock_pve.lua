@@ -6,6 +6,8 @@ local function addPvE(recipe)
     local field = "warlock_contextual&warlock_engaged"
     local short = field .. "&warlock_short_pull"
     local durable = field .. "&!warlock_short_pull"
+    local dungeonTrash = field .. "&warlock_dungeon_trash"
+    local dotBudget = name == "Affliction" and "&warlock_dungeon_dot_budget" or ""
     local leech = "combat>0&warlock_defensive_target&toggle.defensives&warlock_spell_in_range"
     local finishWithDirectDamage = "warlock_short_pull&warlock_target_low"
 
@@ -16,6 +18,8 @@ local function addPvE(recipe)
     }
 
     local priority = {
+        -- A ready instant self-heal also ends the priority scan. Record the demon's rescue before it.
+        "health_funnel,display_pet_below=30,if=combat>0&warlock_funnel_available",
         "will_to_survive,if=warlock_alive&warlock_stunned",
         "will_of_the_forsaken,if=warlock_alive&warlock_forsaken_control",
         "escape_artist,if=warlock_alive&warlock_movement_control&!warlock_hard_controlled&buff.escape_artist.down",
@@ -31,7 +35,7 @@ local function addPvE(recipe)
         "soul_link,if=warlock_alive&(combat>0|warlock_can_prepare)&buff.soul_link.down",
         "drain_life,display_below=65,if=" .. leech .. "&warlock_drain_healing_display&!moving",
         "death_coil,display_below=65,if=" .. leech,
-        "health_funnel,if=warlock_funnel_safe",
+        "health_funnel,display_pet_below=55,if=combat=0&warlock_funnel_available",
         "life_tap,if=warlock_can_prepare&warlock_life_tap_safe&mana.hi<0.65*mana.max",
         "summon_felhunter,if=warlock_can_summon&warlock_pvp_instance&buff.fel_stamina.down",
         "summon_voidwalker,if=warlock_can_summon&warlock_outdoors&solo&buff.fel_energy.down",
@@ -41,7 +45,7 @@ local function addPvE(recipe)
         "create_healthstone,if=warlock_can_prepare&warlock_needs_healthstone&!action.create_healthstone.executing",
         "demon_armor,if=warlock_can_prepare&buff.demon_armor.down",
         "demon_skin,if=warlock_can_prepare&!action.demon_armor.known&buff.demon_skin.down&(!action.demon_armor.known|buff.demon_armor.down)",
-        "shadow_bolt,focus=1,if=" .. field .. "&buff.shadow_trance.up&warlock_spell_in_range",
+        "shadow_bolt,focus=1,if=" .. field .. "&buff.shadow_trance.up&warlock_spell_in_range" .. dotBudget,
     }
     recipe.levelingFirst = priority
 
@@ -59,12 +63,23 @@ local function addPvE(recipe)
         addTarget(action, condition .. "&(!moving|action." .. spell .. ".cast=0)")
     end
 
-    -- A finishing channel can refill shards on non-boss NPCs, including a party's engaged dungeon trash.
-    add(
-        "drain_soul",
-        field
-            .. "&combat>0&!moving&!boss&!target.is_boss&warlock_shard_count<2&!warlock_health_low&warlock_shard_window"
-    )
+    -- Keep a chosen shard finish ahead of routine DoTs. The client can render the initial cue from target health.
+    local shardFinish = field
+        .. "&combat>0&!moving&!boss&!target.is_boss&warlock_shard_count<2&!warlock_health_low&!action.drain_soul.executing"
+        .. "&warlock_shard_target"
+    add("drain_soul", shardFinish .. "&warlock_continue_drain_soul")
+    add("drain_soul,display_target_below=25", shardFinish)
+
+    if name == "Affliction" then
+        -- On a dungeon pack, cover the tank's engaged mobs before spending on additional DoTs or AoE.
+        local pack = dungeonTrash .. "&warlock_dungeon_corruption_targets>1"
+        local fresh = "&debuff.corruption.down&!action.corruption.executing"
+        addCast("corruption,focus=2", pack .. fresh)
+        addCast(
+            "corruption,cycle_targets=1,focus=2",
+            pack .. "&active_dot.corruption<warlock_dungeon_corruption_targets" .. fresh
+        )
+    end
 
     -- Blood Fury can boost the spells applied during setup.
     local burst = "combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|("
@@ -81,11 +96,11 @@ local function addPvE(recipe)
         local action = "curse_of_" .. (curse == "elements" and "the_elements" or curse)
         addTarget(
             action .. ",focus=2",
-            durable .. "&settings.assigned_curse='" .. curse .. "'&debuff." .. action .. ".down"
+            durable .. "&settings.assigned_curse='" .. curse .. "'&debuff." .. action .. ".down" .. dotBudget
         )
     end
 
-    add("rain_of_fire", field .. "&combat>0&warlock_aoe&!moving")
+    add("rain_of_fire", field .. "&combat>0&warlock_aoe&!moving" .. dotBudget)
     if destruction then
         add(
             "bane_of_havoc,use_off_gcd=1,other_target=1",
@@ -144,14 +159,14 @@ local function addPvE(recipe)
         needsAgony
             .. "&combat>0&warlock_can_amplify_agony&(!action.bane_of_agony.known|action.bane_of_agony.ready)&buff.amplify_curse.down"
     )
-    addTarget("bane_of_agony,focus=2", needsAgony)
+    addTarget("bane_of_agony,focus=2", needsAgony .. dotBudget)
     if recipe.spec == "affliction" then
-        addTarget("siphon_life,focus=2", durable .. "&debuff.siphon_life.down")
+        addTarget("siphon_life,focus=2", durable .. "&debuff.siphon_life.down" .. dotBudget)
     end
     if not destruction then
         addCast(
             "immolate,focus=2",
-            durable .. "&debuff.immolate.remains<=action.immolate.cast&!action.immolate.executing"
+            durable .. "&debuff.immolate.remains<=action.immolate.cast&!action.immolate.executing" .. dotBudget
         )
         -- Before talents, rank-one Immolate and Corruption both pay off on healthy starter mobs.
         addCast(
@@ -160,11 +175,11 @@ local function addPvE(recipe)
                 .. "&(level<10|!action.corruption.known)&!warlock_target_low&debuff.immolate.down&!action.immolate.executing"
         )
     end
-    -- The swap icon does not identify a unit. Only offer it with one possible partner and one tracked application.
-    -- An unknown count saturates active_dot at the enemy count, suppressing the cue.
+    -- Other field rotations keep their two-target cleave. An unknown active_dot count suppresses the cue.
+    local cleave = name == "Affliction" and durable .. "&!warlock_dungeon_trash" or durable
     add(
         "corruption,cycle_targets=1,max_cycle_targets=2,focus=2",
-        durable
+        cleave
             .. "&combat>0&true_active_enemies=2&warlock_cleave&active_dot.corruption=1&debuff.corruption.down&!action.corruption.executing"
             .. "&(!moving|action.corruption.cast=0)"
     )
@@ -181,8 +196,9 @@ local function addPvE(recipe)
     if destruction then
         addTarget("shadowburn", field .. "&combat>0&talent.shadow_and_flame.rank=5")
     end
-    -- Agony is instant at every rank and can occupy a moving GCD when the main DoT needs a cast.
-    addTarget("bane_of_agony,focus=2", short .. "&moving&!warlock_target_low" .. noBane)
+    -- Agony also fills a moving GCD when Corruption needs a cast.
+    local shortAgony = name == "Affliction" and "(moving|warlock_leveling_agony)" or "moving"
+    addTarget("bane_of_agony,focus=2", short .. "&" .. shortAgony .. "&!warlock_target_low" .. noBane .. dotBudget)
 
     -- Ordinary outdoor fights can trade Drain Life's healing for later Life Taps. Keep the opener,
     -- a dying target, and the dungeon and raid priorities on their existing paths.
@@ -206,9 +222,6 @@ local function addPvE(recipe)
         .. "&warlock_damage_display&toggle.defensives&!moving&!warlock_health_low&!warlock_target_low&warlock_leveling_drain&mana.lo>=action.drain_life.cost"
         .. drainWhen
     addTarget("drain_life", drain)
-    -- Shoot starts off the GCD. After a Tap, let its GCD finish if the planned drain is already affordable and in reach.
-    local afterTap = "&!(prev_gcd.1.life_tap&gcd.remains>0&warlock_drain_life_in_range&" .. drain .. ")"
-
     -- Only compare a delayed Shadow Bolt with the wand when Bolt would actually be the direct filler.
     local nextBolt = "action.shadow_bolt.known"
     if name == "Affliction" then
@@ -230,18 +243,24 @@ local function addPvE(recipe)
         .. "&"
         .. outdoorWand
         .. "))"
-    add("shoot,use_off_gcd=1", field .. "&" .. wand .. afterTap)
-    local filler = field .. "&!(warlock_wanding&" .. wand .. ")"
-    add("life_tap", filler .. "&combat>0&warlock_life_tap_safe&mana.hi<0.30*mana.max")
     if name == "Affliction" then
-        addCast("wrack", filler)
+        wand = "(" .. wand .. "|warlock_dungeon_trash&!action.wrack.known)"
+    end
+    -- Starting a wand can occupy the next spell window. Compare Shoot and spells at the same GCD boundary.
+    local fieldFiller = field .. "&warlock_filler_fits"
+    -- Tap after affordable DoTs and before starting or continuing a wand. Its display floor prices the learned rank.
+    add("life_tap,display_below=100", fieldFiller .. "&combat>0&mana.hi<0.50*mana.max")
+    add("shoot", fieldFiller .. "&" .. wand)
+    local filler = fieldFiller .. "&!(warlock_wanding&" .. wand .. ")"
+    if name == "Affliction" then
+        addCast("wrack", filler .. dotBudget)
     elseif name == "Demonology" then
         addCast("searing_pain", filler .. "&warlock_pet_on_target&talent.demonic_brand.enabled")
     elseif destruction then
         addCast("incinerate", filler)
     end
-    addCast("shadow_bolt", filler)
-    add("shoot,use_off_gcd=1", field .. afterTap)
+    addCast("shadow_bolt", filler .. dotBudget)
+    add("shoot", fieldFiller)
     add("auto_attack,use_off_gcd=1", field)
 
     -- PvP pressure pauses while Fear or Howl is observed on the current opponent.
@@ -278,10 +297,10 @@ local function addPvE(recipe)
             add("soul_fire", stationary .. "&buff.decimation.up")
         end
     elseif destruction then
-        add("incinerate", stationary)
+        add("incinerate", stationary .. "&warlock_filler_fits")
     end
-    add("shadow_bolt", stationary)
-    add("shoot,use_off_gcd=1", "warlock_pvp_pressure")
+    add("shadow_bolt", stationary .. "&warlock_filler_fits")
+    add("shoot", "warlock_pvp_pressure&warlock_filler_fits")
 
     -- Both an idle dungeon target and an exhausted field rotation must stay out of the raid damage list.
     local baseline = "warlock_sustained"

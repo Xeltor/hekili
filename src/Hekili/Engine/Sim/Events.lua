@@ -1386,6 +1386,8 @@ do
     end )
 
     RegisterEvent( "PLAYER_TARGET_CHANGED", function( event )
+        local status = ns.Output.status
+        status.targetRevision = status.targetRevision + 1
         instanceDB = targetInstances
         wipe( instanceDB )
 
@@ -1531,9 +1533,23 @@ local REFUSED = { DODGE = true, PARRY = true, MISS = true }
 -- moves UnitExists( "pet" ) with no event, so UNIT_PET alone can't hold them; it only drops them within a moment.
 local petAt, petExists, petGUID
 
+-- A pet rescue can depend on the demon, its opponent and the selected enemy.
+local function invalidatePetHealthCue()
+    ns.Output.status.petHealthRevision = ns.Output.status.petHealthRevision + 1
+end
 RegisterUnitEvent( "UNIT_PET", "player", nil, function()
     petAt = nil
+    invalidatePetHealthCue()
 end )
+RegisterUnitEvent( "UNIT_TARGET", "target", "pet", invalidatePetHealthCue )
+
+-- A health cost expressed as a percentage must be repriced when maximum health, stats or gear change.
+local function invalidatePlayerFloor()
+    ns.Output.status.playerFloorRevision = ns.Output.status.playerFloorRevision + 1
+end
+RegisterUnitEvent( "UNIT_MAXHEALTH", "player", nil, invalidatePlayerFloor )
+RegisterUnitEvent( "UNIT_STATS", "player", nil, invalidatePlayerFloor )
+RegisterEvent( "PLAYER_EQUIPMENT_CHANGED", invalidatePlayerFloor )
 
 local function CLEU_HANDLER( event, timestamp, subtype, hideCaster, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName, destFlags, destRaidFlags, spellID, spellName, school, amount, interrupt, a, b, c, d, offhand, multistrike, ... )
     -- This is used by both RegisterCombatLogEvent( x ) and RegisterHook( "COMBAT_LOG_EVENT_UNFILTERED", x ).

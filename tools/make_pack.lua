@@ -39,6 +39,8 @@ local OPTIONS = {
     other_target = "other_target",
     focus = "focus",
     display_below = "display_below",
+    display_target_below = "display_target_below",
+    display_pet_below = "display_pet_below",
     label = "label",
     label_if = "label_if",
     icon = "icon",
@@ -116,6 +118,7 @@ local function entry(body, line, enabled)
         e.criteria = piped(e.criteria)
     end
     opts = opts:gsub(",if=.*$", "")
+    local cueField
     for opt in opts:gmatch("[^,]+") do
         local k, v = opt:match("^([%w_]+)=(.+)$")
         if not OPTIONS[k] then
@@ -125,8 +128,16 @@ local function entry(body, line, enabled)
         if k == "focus" and not v:match("^[1-9]%d*$") then
             value = nil -- a focus tier is a positive integer, 1 highest
         end
-        if k == "display_below" and (not value or value <= 0 or value >= 100 or value % 1 ~= 0) then
-            value = nil
+        if k == "display_below" or k == "display_target_below" or k == "display_pet_below" then
+            if cueField and cueField ~= k then
+                error("a health cue must name only one unit in: " .. line, 0)
+            end
+            cueField = k
+            -- A player cue may stay visible up to full health, subject to the ability's minimum.
+            local upper = k == "display_below" and 100 or 99
+            if not value or value <= 0 or value > upper or value % 1 ~= 0 then
+                value = nil
+            end
         end
         if value == nil then
             error("bad value " .. opt .. " in: " .. line, 0)
@@ -177,6 +188,8 @@ local function text(e)
         .. (e.other_target and ",other_target=" .. e.other_target or "")
         .. (e.focus and ",focus=" .. e.focus or "")
         .. (e.display_below and ",display_below=" .. e.display_below or "")
+        .. (e.display_target_below and ",display_target_below=" .. e.display_target_below or "")
+        .. (e.display_pet_below and ",display_pet_below=" .. e.display_pet_below or "")
         .. (e.label and ",label=" .. e.label or "")
         .. (e.label_if and ",label_if=" .. e.label_if or "")
         .. (e.icon and ",icon=" .. e.icon or "")

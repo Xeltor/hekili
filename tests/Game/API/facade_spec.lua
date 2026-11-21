@@ -362,6 +362,23 @@ describe("ns.Facade", function()
         end
     end)
 
+    it("uses the plain GCD timing when a GCD-locked spell's own times are secret", function()
+        local start, duration = 1005.2, 1.5
+        I.Sources.Direct(VS.Obs.Cooldown, start, 0, 1, 1)
+        I.Fold(start, false)
+        ctl.now = start + 0.1
+        ctl.cooldown[I.GCD_SPELL] = { startTime = start, duration = duration, isActive = true, isOnGCD = false }
+        ctl.cooldown[fs.SPENDER_C] = {
+            startTime = fake.SECRET,
+            duration = fake.SECRET,
+            isActive = true,
+            isOnGCD = true,
+        }
+        local spell = Facade.C_Spell.GetSpellCooldown(fs.SPENDER_C)
+        assert.are.same({ start, duration, true }, { spell.startTime, spell.duration, spell.isOnGCD })
+        assert.is_false(Facade.C_Spell.GetSpellCooldown(I.GCD_SPELL).isOnGCD)
+    end)
+
     it("answers a cooldown from the belief and the plain flag", function()
         I.CooldownModel(3, 40, 30, 10, VS.Obs.CastSuccess)
         ctl.now = 20

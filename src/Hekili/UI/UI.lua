@@ -1140,7 +1140,7 @@ do
                 style.Draw( self, conf, out, Status )
                 if self.truthOn then ns.UI.Truth.Draw( self, conf, out ) end
                 if out.healthCues and style == ns.UI.Styles.classic then
-                    ns.UI.Truth.DrawHealthCue( self, out )
+                    ns.UI.Truth.DrawHealthCue( self, out, conf )
                 end
             end
         end

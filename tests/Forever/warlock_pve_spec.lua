@@ -104,6 +104,168 @@ describe("Forever Warlock leveling and PvE", function()
         assert.are.equal("shoot", H.Hekili.Engine.Output.Primary.recs[2].actionName)
     end)
 
+    describe("starting the wand during a global cooldown", function()
+        local function startGCD(H)
+            local gcd = H.Hekili.Engine.Registry.GCD_SPELL
+            H.ctl.cooldown[gcd] = { isActive = true, isOnGCD = true, startTime = H.ctl.now, duration = 1.5 }
+            H.Fire("SPELL_UPDATE_COOLDOWN")
+            return gcd
+        end
+
+        local function checkDebuff(H, action, id)
+            H.Fire("START_AUTOREPEAT_SPELL")
+            local gcd = startGCD(H)
+            assert.are.equal(action, pick(H, 0.1))
+            assert.is_true(H.Hekili.Engine.Output.Primary.recs[1].time > 0)
+            H.Fire("STOP_AUTOREPEAT_SPELL")
+            for _, delay in ipairs({ 0.1, 0.5, 0.5 }) do
+                assert.are.equal(action, pick(H, delay))
+            end
+            H.ctl.cooldown[gcd] = nil
+            H.Fire("SPELL_UPDATE_COOLDOWN")
+            assert.are.equal(action, pick(H, 0.4))
+            assert.are.equal("shoot", cast(H, id))
+            H.Fire("START_AUTOREPEAT_SPELL")
+            assert.are_not.equal("shoot", pick(H))
+        end
+
+        it("keeps the shard cue over expired Agony through the wand's global cooldown", function()
+            local H = warlock("Affliction", 11, { 172, 980, 1120, 5019 }, {
+                targetHealth = SECRET,
+                weapon = WAND,
+                shootUsable = true,
+            })
+            assert.are.equal("corruption", pick(H))
+            assert.are.equal("bane_of_agony", cast(H, 172))
+            assert.are.equal("shoot", cast(H, 980))
+            H.Fire("START_AUTOREPEAT_SPELL")
+            pick(H, 23)
+            H.Fire("STOP_AUTOREPEAT_SPELL")
+            assert.are.equal("bane_of_agony", cast(H, 172))
+            H.Fire("START_AUTOREPEAT_SPELL")
+            H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-wand-shot", 5019)
+            local gcd = startGCD(H)
+            local out = H.Hekili.Engine.Output.Primary
+            for _, delay in ipairs({ 0.1, 0.5 }) do
+                assert.are.equal("bane_of_agony", pick(H, delay))
+                assert.are.equal(1, out.healthCues.n)
+                local cue = out.healthCues[1]
+                assert.are.same({ "drain_soul", "target", 25 }, { cue.action, cue.unit, cue.percent })
+                assert.is_true(out.recs[1].time > 0)
+                assert.is_near(out.recs[1].time, cue.gcdStart + cue.gcdDuration - H.ctl.now, 0.01)
+            end
+            H.ctl.itemCount[6265] = 2
+            H.Fire("BAG_UPDATE_DELAYED")
+            assert.are.equal("bane_of_agony", pick(H, 0.1))
+            assert.are.equal(0, out.healthCues.n)
+
+            H.ctl.itemCount[6265] = 1
+            H.Fire("BAG_UPDATE_DELAYED")
+            H.ctl.cooldown[gcd] = nil
+            H.Fire("SPELL_UPDATE_COOLDOWN")
+            assert.are.equal("bane_of_agony", pick(H, 1))
+            assert.are.equal(1, out.healthCues.n)
+            assert.are.equal("drain_soul", out.healthCues[1].action)
+            assert.is_nil(out.healthCues[1].gcdStart)
+            assert.is_nil(out.healthCues[1].gcdDuration)
+        end)
+
+        it("waits for Drain Soul's separate cooldown before showing the shard cue", function()
+            local H = warlock("Affliction", 11, { 172, 1120, 5019 }, {
+                targetHealth = SECRET,
+                weapon = WAND,
+                shootUsable = true,
+            })
+            H.Fire("START_AUTOREPEAT_SPELL")
+            H.ctl.cooldown[1120] = { isActive = true, isOnGCD = false }
+            startGCD(H)
+            assert.are.equal("corruption", pick(H, 0.1))
+            local out, state = H.Hekili.Engine.Output.Primary, H.Hekili.State
+            assert.are.equal(0, out.healthCues.n)
+            state.reset("Primary")
+            local remains = state.cooldown.drain_soul.remains
+            assert.is_true(remains > 0 and remains < state.gcd.remains)
+
+            H.ctl.cooldown[1120].isOnGCD = true
+            H.Fire("SPELL_UPDATE_COOLDOWN")
+            assert.are.equal("corruption", pick(H, 0.1))
+            assert.are.equal(1, out.healthCues.n)
+            assert.are.equal("drain_soul", out.healthCues[1].action)
+            assert.is_true(out.healthCues[1].gcdDuration > 0)
+        end)
+
+        for _, build in ipairs({ "Affliction", "Demonology", "Destruction", "SMRuin", "ShadowBrand" }) do
+            it(build .. " keeps Corruption first after wanding stops on one leveling target", function()
+                local H = warlock(build, 6, { 695, 172, 5019 }, { weapon = WAND, shootUsable = true })
+                checkDebuff(H, "corruption", 172)
+            end)
+        end
+
+        it("keeps the assigned curse first on an elite and the damage debuff first against a player", function()
+            local elite = warlock("Affliction", 6, { 702, 5019 }, {
+                weapon = WAND,
+                shootUsable = true,
+                classification = "elite",
+            })
+            elite.Hekili:CmdLine("set spec assigned_curse weakness")
+            checkDebuff(elite, "curse_of_weakness", 702)
+            local opponent = warlock("Affliction", 6, { 172, 5019 }, {
+                weapon = WAND,
+                shootUsable = true,
+                playerTarget = true,
+            })
+            checkDebuff(opponent, "corruption", 172)
+        end)
+
+        it("still offers a wand when no spell is available", function()
+            local H = warlock("Affliction", 6, { 5019 }, { weapon = WAND, shootUsable = true })
+            startGCD(H)
+            assert.are.equal("shoot", pick(H, 0.1))
+        end)
+
+        it("restarts the wand when its first shot fits or the Corruption refresh is unaffordable", function()
+            for _, case in ipairs({
+                { remaining = 0.29, action = "corruption" },
+                { remaining = 3.29, action = "shoot" },
+                { remaining = 0.29, action = "shoot", lowMana = true },
+            }) do
+                local H = warlock("Affliction", 10, { 172, 695, 5019 }, {
+                    weapon = WAND,
+                    shootUsable = true,
+                    beforeLoad = function(h)
+                        h.ctl.ranged = { 1.5, 12, 20, 0, 0, 1 }
+                    end,
+                })
+                assert.are.equal("corruption", pick(H))
+                H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-refresh", 172)
+                H.Fire("START_AUTOREPEAT_SPELL")
+                pick(H, 0.1)
+                local state = H.Hekili.State
+                state.reset("Primary")
+                assert.is_near(11.9, state.debuff.corruption.remains, 0.01)
+
+                pick(H, state.debuff.corruption.remains - case.remaining - 1.51)
+                local gcd = startGCD(H)
+                pick(H, 0.05)
+                H.Fire("STOP_AUTOREPEAT_SPELL")
+                pick(H, 0.05)
+                H.ctl.now = H.ctl.now + 1.4
+                H.ctl.cooldown[gcd] = nil
+                H.Fire("SPELL_UPDATE_COOLDOWN")
+                if case.lowMana then
+                    H.ctl.power[0] = 1
+                    H.Fire("UNIT_POWER_FREQUENT", "player", "MANA")
+                end
+                local first = pick(H, 0.01)
+                state.reset("Primary")
+                assert.are.equal(0, state.gcd.remains)
+                assert.is_near(case.remaining, state.debuff.corruption.remains, 0.01)
+                assert.are.equal(case.action, first)
+                assert.are.equal(case.lowMana and "shoot" or "corruption", pick(H, case.remaining + 0.1))
+            end
+        end)
+    end)
+
     it("sets up a dungeon elite with its assigned Curse, then Corruption and Bane", function()
         local H = warlock("Affliction", 22, { 1088, 6222, 980, 440892, 1094 }, {
             instanceType = "party",
@@ -329,7 +491,7 @@ describe("Forever Warlock leveling and PvE", function()
             { instanceType = "party", group = 5, idleTarget = true },
             { instanceType = "party", group = 5, partyAggro = true, boss = true },
             { targetHealth = 400 },
-            { targetHealth = SECRET },
+            { targetHealth = SECRET, items = { [6265] = 1 } },
             { trivial = true },
             { trivial = SECRET },
             { range = 35 },
@@ -339,13 +501,175 @@ describe("Forever Warlock leveling and PvE", function()
         end
     end)
 
-    it("suggests Drain Soul behind a tanking pet once a DoT is established", function()
-        local spells = { 695, 172, 1120 }
-        for _, petTanking in ipairs({ true, false }) do
-            local H =
-                warlock("Affliction", 10, spells, { targetHealth = SECRET, petHealth = 800, petTanking = petTanking })
+    it("wands after the level-ten opener and offers a target health cue for the first shard", function()
+        for _, build in ipairs({ "Affliction", "Demonology", "Destruction", "SMRuin", "ShadowBrand" }) do
+            local fire = build == "Destruction"
+            local dot = fire and 348 or 172
+            local H = warlock(build, 10, { 695, dot, 1120, 5019 }, {
+                targetHealth = SECRET,
+                weapon = WAND,
+                shootUsable = true,
+            })
+            H.Fire("START_AUTOREPEAT_SPELL")
+            assert.are.equal(fire and "immolate" or "corruption", pick(H), build)
+            H.Fire("STOP_AUTOREPEAT_SPELL")
+            assert.are.equal("shoot", cast(H, dot), build)
+            local cues = H.Hekili.Engine.Output.Primary.healthCues
+            assert.are.equal(1, cues.n, build)
+            assert.are.same({ "drain_soul", "target", 25 }, { cues[1].action, cues[1].unit, cues[1].percent }, build)
+        end
+    end)
+
+    it("offers the shard cue while the Warlock, pet or party tanks and clears it at two shards", function()
+        for _, o in ipairs({
+            {},
+            { petHealth = 800, petTanking = true },
+            { instanceType = "party", group = 5, partyAggro = true, classification = "elite" },
+        }) do
+            o.targetHealth, o.items = SECRET, { [6265] = 1 }
+            local H = warlock("Affliction", 10, { 695, 172, 1120 }, o)
             assert.are.equal("corruption", pick(H))
-            assert.are.equal(petTanking and "drain_soul" or "shadow_bolt", cast(H, 172))
+            assert.are.equal("shadow_bolt", cast(H, 172))
+            assert.are.equal("drain_soul", H.Hekili.Engine.Output.Primary.healthCues[1].action)
+            H.ctl.itemCount[6265] = 2
+            H.Fire("BAG_UPDATE_DELAYED")
+            assert.are.equal("shadow_bolt", pick(H))
+            assert.are.equal(0, H.Hekili.Engine.Output.Primary.healthCues.n)
+        end
+    end)
+
+    it("keeps both the player's Healthstone cue and the target's shard cue when health is hidden", function()
+        local H = warlock("Affliction", 11, { 172, 1120 }, {
+            health = SECRET,
+            targetHealth = SECRET,
+            items = { [5512] = 1 },
+        })
+        assert.are.equal("corruption", pick(H))
+        local cues = H.Hekili.Engine.Output.Primary.healthCues
+        assert.are.equal(2, cues.n)
+        assert.are.same({ "healthstone", 30 }, { cues[1].action, cues[1].percent })
+        assert.are.same({ "drain_soul", "target", 25 }, { cues[2].action, cues[2].unit, cues[2].percent })
+    end)
+
+    local function startDrain(H, targetName)
+        local start = H.ctl.now
+        H.Fire("UNIT_SPELLCAST_SENT", "player", targetName or "target", "Cast-harvest", 1120)
+        H.ctl.channel = { start * 1000, (start + 15) * 1000, spell = 1120 }
+        H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-harvest", 1120)
+        H.Fire("UNIT_SPELLCAST_CHANNEL_START", "player", "Cast-harvest", 1120)
+        return start + 15
+    end
+
+    local function stopDrain(H)
+        H.ctl.channel = nil
+        H.Fire("UNIT_SPELLCAST_CHANNEL_STOP", "player", "Cast-harvest", 1120)
+    end
+
+    it("continues the chosen shard finish past expiring DoTs until a shard arrives", function()
+        local H = warlock("Affliction", 11, { 172, 980, 1120, 5019 }, {
+            targetHealth = SECRET,
+            weapon = WAND,
+            shootUsable = true,
+        })
+        assert.are.equal("corruption", pick(H))
+        assert.are.equal("bane_of_agony", cast(H, 172))
+        assert.are.equal("shoot", cast(H, 980))
+        H.Fire("START_AUTOREPEAT_SPELL")
+        -- The player wands, then chooses Drain Soul. Both DoTs expire during the channel.
+        pick(H, 8)
+        H.Fire("STOP_AUTOREPEAT_SPELL")
+        local finish = startDrain(H)
+        pick(H, 0.1)
+        assert.are.equal(0, H.Hekili.Engine.Output.Primary.healthCues.n)
+        assert.are.equal("drain_soul", pick(H, 14.7))
+        assert.is_true(H.Hekili.Engine.Output.Primary.recs[1].time >= finish - H.ctl.now - 0.05)
+        local state = H.Hekili.State
+        state.reset("Primary", true)
+        assert.is_true(state:IsChanneling("drain_soul"))
+        assert.is_true(state.debuff.corruption.down)
+        assert.is_true(state.debuff.bane_of_agony.down)
+        assert.are.equal(0, state.warlock_shard_count)
+        H.ctl.now = finish
+        stopDrain(H)
+        assert.are.equal("drain_soul", pick(H))
+        H.ctl.itemCount[6265] = 1
+        H.Fire("BAG_UPDATE_DELAYED")
+        assert.are.equal("corruption", pick(H))
+        assert.are.equal("drain_soul", H.Hekili.Engine.Output.Primary.healthCues[1].action)
+    end)
+
+    it("drops the shard finish after a canceled drain or a change of target", function()
+        for _, changeTarget in ipairs({ false, true }) do
+            local H = warlock("Affliction", 11, { 172, 1120 }, { targetHealth = SECRET })
+            local finish = startDrain(H)
+            pick(H, changeTarget and 14.8 or 3.1)
+            if changeTarget then
+                H.ctl.now = finish
+            end
+            stopDrain(H)
+            if changeTarget then
+                H.ctl.guid.target = "Creature-0-0-0-0-999-000002"
+                H.Fire("PLAYER_TARGET_CHANGED")
+            end
+            assert.are.equal("corruption", pick(H))
+        end
+    end)
+
+    it("keeps a shard gained during the channel and resumes damage when the channel ends", function()
+        local H = warlock("Affliction", 11, { 172, 1120 }, { targetHealth = SECRET })
+        local finish = startDrain(H)
+        pick(H, 3.1)
+        H.ctl.itemCount[6265] = 1
+        H.Fire("BAG_UPDATE_DELAYED")
+        assert.are.equal("corruption", pick(H, finish - H.ctl.now - 0.2))
+        assert.is_true(H.Hekili.Engine.Output.Primary.recs[1].time >= finish - H.ctl.now - 0.05)
+        H.ctl.now = finish
+        stopDrain(H)
+        assert.are.equal("corruption", pick(H))
+    end)
+
+    it("honors the reported channel end and a matching interrupt on that frame", function()
+        for _, interrupted in ipairs({ false, true }) do
+            local H = warlock("Affliction", 11, { 172, 1120 }, { targetHealth = SECRET })
+            local finish = startDrain(H) - 3
+            H.ctl.channel[2] = finish * 1000
+            H.Fire("UNIT_SPELLCAST_CHANNEL_UPDATE", "player", "Cast-harvest", 1120)
+            H.ctl.now = finish
+            stopDrain(H)
+            if interrupted then
+                H.Fire("UNIT_SPELLCAST_INTERRUPTED", "player", "Cast-harvest", 1120)
+            end
+            assert.are.equal(interrupted and "corruption" or "drain_soul", pick(H))
+        end
+    end)
+
+    it("does not renew a shard finish on a different or unidentified cast target", function()
+        for _, targetName in ipairs({ "focus", "Unknown cast recipient" }) do
+            local H = warlock("Affliction", 11, { 172, 1120 }, { targetHealth = SECRET })
+            H.ctl.exists.focus = true
+            H.ctl.guid.focus = "Creature-0-0-0-0-999-000002"
+            local finish = startDrain(H, targetName)
+            pick(H, 14.8)
+            H.ctl.now = finish
+            stopDrain(H)
+            assert.are.equal("corruption", pick(H), targetName)
+        end
+    end)
+
+    it("requires a usable Drain Soul on an engaged shard-eligible enemy even with empty bags", function()
+        for _, o in ipairs({
+            { untrained = true },
+            { mana = 1 },
+            { moving = true },
+            { idleTarget = true },
+            { trivial = true },
+            { range = SECRET },
+            { boss = true },
+        }) do
+            o.targetHealth, o.weapon, o.shootUsable = SECRET, WAND, true
+            local H = warlock("Affliction", 10, o.untrained and { 695, 5019 } or { 695, 5019, 1120 }, o)
+            assert.is_not_equal("drain_soul", pick(H))
+            assert.are.equal(0, H.Hekili.Engine.Output.Primary.healthCues.n)
         end
     end)
 

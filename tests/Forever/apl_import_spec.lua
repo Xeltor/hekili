@@ -96,6 +96,30 @@ describe("the priority importer", function()
         assert.are.same({ 2, 3 }, { #got[1].steps, #got[3].steps })
     end)
 
+    it("imports target and pet health cues and disables malformed health conditions", function()
+        local out = H.Hekili:ParseActionList(
+            "actions=slam,display_target_below=25\nactions+=/slam,display_pet_below=55\nactions+=/slam,display_below=100\n"
+        )
+        assert.are.equal(25, out[1].display_target_below)
+        assert.are.equal(55, out[2].display_pet_below)
+        assert.are.equal(100, out[3].display_below)
+        for _, modifiers in ipairs({
+            "display_below=101",
+            "display_target_below=101",
+            "display_target_below=abc",
+            "display_below=30,display_target_below=25",
+            "display_pet_below=0",
+            "display_pet_below=10.5",
+            "display_pet_below=55,display_target_below=25",
+            "display_below=80,display_pet_below=55",
+        }) do
+            out = H.Hekili:ParseActionList("actions=slam," .. modifiers .. "\n")
+            assert.is_false(out[1].enabled)
+            assert.is_nil(out[1].display_target_below)
+            assert.is_nil(out[1].display_pet_below)
+        end
+    end)
+
     it("splits a line only at commas outside parentheses", function()
         local out = H.Hekili:ParseActionList("actions+=/slam,use_off_gcd=1,if=min(rage,energy)>max(1,2),focus=2\n")
         assert.are.equal(1, #out)

@@ -414,14 +414,25 @@ end, "target secret always [W PR14], player secret in combat (owner L1461); Heal
 -- without a call. Allocates nothing.
 local realUnitHealth, realUnitHealthMax = resolve("UnitHealth"), resolve("UnitHealthMax")
 
+local function readableHealthMaximum(unit)
+    local maximum = realUnitHealthMax and realUnitHealthMax(unit)
+    if not issecretvalue(maximum) and type(maximum) == "number" and maximum > 0 then
+        return maximum
+    end
+end
+
+function Facade.PlayerHealthMaximum()
+    return readableHealthMaximum("player")
+end
+
 -- Health-cost checks use current readings. Nil means there is no readable health fraction.
 local function healthFraction(unit)
     local health = realUnitHealth and realUnitHealth(unit)
     if issecretvalue(health) or type(health) ~= "number" then
         return nil
     end
-    local maximum = realUnitHealthMax and realUnitHealthMax(unit)
-    if not issecretvalue(maximum) and type(maximum) == "number" and maximum > 0 then
+    local maximum = readableHealthMaximum(unit)
+    if maximum then
         return health / maximum
     end
 end
@@ -432,6 +443,10 @@ end
 
 function Facade.PetHealthFraction()
     return healthFraction("pet")
+end
+
+function Facade.TargetHealthFraction()
+    return healthFraction("target")
 end
 
 function Facade.ObservedStat(name, arg)
@@ -1018,8 +1033,7 @@ local CD = { startTime = 0, duration = 0, isEnabled = true, modRate = 1, isActiv
 local CHARGES = { currentCharges = 1, maxCharges = 1, cooldownStartTime = 0, cooldownDuration = 0, chargeModRate = 1 }
 
 -- The real call's plain flags: isActive, isOnGCD (each nil when secret or unreadable).
-local function flags(spellID)
-    local info = realGetSpellCooldown and realGetSpellCooldown(spellID) -- secret: tested next, then each field
+local function flags(info)
     if issecretvalue(info) or type(info) ~= "table" then
         return nil, nil
     end
@@ -1033,20 +1047,27 @@ local function flags(spellID)
     return active, onGcd
 end
 
-local function cooldownPolicy(spellID)
-    local t = now()
+local function spellCooldown(spellID)
+    -- The global spell ID is filled when the registry builds, including on a mid-combat reload.
+    local info = spellID and realGetSpellCooldown and realGetSpellCooldown(spellID)
+    if plainTimes(info, "startTime", "duration") then
+        return info
+    end
+    modelled = true
     if spellID == I.GCD_SPELL then
-        local s, d = VS.GcdInfo(t)
+        local s, d = VS.GcdInfo(now())
         CD.startTime, CD.duration, CD.isActive, CD.isOnGCD = s, d, d > 0, false
         return CD
     end
-    local active, onGcd = flags(spellID)
+    local active, onGcd = flags(info)
     if onGcd == true then
-        -- bit-identical to the GCD's numbers, so Hekili zeroes it (State.lua:2972-2975, spec §7.5)
-        local s, d = VS.GcdInfo(t)
-        CD.startTime, CD.duration, CD.isActive, CD.isOnGCD = s, d, true, true
+        -- The GCD's own times can be plain even when this spell's are secret. Match them exactly so the simulator
+        -- recognizes the shared cooldown. The GCD spell above always returns before reading these flags.
+        local gcd = spellCooldown(I.GCD_SPELL)
+        CD.startTime, CD.duration, CD.isActive, CD.isOnGCD = gcd.startTime, gcd.duration, true, true
         return CD
     end
+    local t = now()
     local rec = VS.Cooldown(spellID, t)
     CD.isOnGCD = false
     -- Reloads have no observed cast yet, and a live flag can lead the belief by an event. Never turn an active
@@ -1088,13 +1109,7 @@ end
 -- Asked by the known rank (as range, H10): a rank that a later rank supersedes is no longer known and reads plain not
 -- active while the known rank's cooldown runs, which the policy would take over the belief's cooldown.
 kept("C_Spell.GetSpellCooldown", "hybrid", function(spellID)
-    spellID = VS.KnownID(spellID)
-    local info = realGetSpellCooldown and realGetSpellCooldown(spellID)
-    if plainTimes(info, "startTime", "duration") then
-        return info
-    end
-    modelled = true
-    return cooldownPolicy(spellID)
+    return spellCooldown(VS.KnownID(spellID))
 end, "times secret in combat, flags plain [W PR4, PR11]; Cooldown(), GcdInfo()")
 
 local function chargesPolicy(spellID)

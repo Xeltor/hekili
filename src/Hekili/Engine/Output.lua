@@ -88,6 +88,9 @@ local Displays = {
         combat = false,
         combatStart = 0, -- the combat start time (state.combat), 0 out of combat
         numTargets = 0,
+        targetRevision = 0,
+        petHealthRevision = 0,
+        playerFloorRevision = 0,
         specID = nil,
         specKey = nil,
         specName = nil,
@@ -178,6 +181,9 @@ function Output.Begin(name)
     end
     if cues then
         cues.n = 0
+        cues.targetRevision = Displays.status.targetRevision
+        cues.petHealthRevision = Displays.status.petHealthRevision
+        cues.playerFloorRevision = Displays.status.playerFloorRevision
     end
     return scratch, cues
 end

@@ -179,6 +179,43 @@ local function frame(H, d, dt)
     d.__scripts.OnUpdate(d, dt)
 end
 
+-- Stand in for the client evaluating a curve. The secret sentinel can only be forwarded to a frame.
+local function mockHealthCurves(H)
+    local api = H.ns.Facade.Display
+    local health = { player = 1, target = 1, pet = 1 }
+    H.env.Enum.LuaCurveType = { Step = 1 }
+    api.C_CurveUtil.CreateCurve = function()
+        return {
+            points = {},
+            SetType = function(_, kind)
+                assert.are.equal(1, kind)
+            end,
+            ClearPoints = function(self)
+                self.points = {}
+            end,
+            AddPoint = function(self, x, y)
+                self.points[#self.points + 1] = { x, y }
+            end,
+        }
+    end
+    api.UnitHealthPercent = function(unit, predicted, curve)
+        assert.is_false(predicted)
+        local value = assert(health[unit])
+        if rawequal(value, fake.SECRET) then
+            return value
+        end
+        local alpha
+        for _, point in ipairs(curve.points) do
+            if value < point[1] then
+                break
+            end
+            alpha = point[2]
+        end
+        return alpha
+    end
+    return health
+end
+
 -- What each button shows, with its contract fields and the style's own surfaces: its cooldown as set, desaturation,
 -- vertex colour, alpha and glow (the R1 parity key). b.Cooldown's shown state is left out: Truth swaps it for its real
 -- swipe (R2), asserted on its own.
@@ -680,8 +717,8 @@ describe("Modern's real cooldown swipe (R2, §3.4)", function()
         assert.are.equal(4, #reads)
         assert.is_truthy(reads[1]:match("^local Display = ns%.Facade%.Display$"), reads[1])
         assert.is_truthy(reads[2]:match("^ov%.dur = Display%.C_Spell%.GetSpellCooldownDuration%(.*%)$"), reads[2])
-        assert.are.equal("curve = Display.C_CurveUtil.CreateCurve()", reads[3])
-        assert.are.equal('local ok, alpha = pcall( Display.UnitHealthPercent, "player", false, layer.curve )', reads[4])
+        assert.are.equal("local curve = Display.C_CurveUtil.CreateCurve()", reads[3])
+        assert.are.equal("local ok, alpha = pcall( Display.UnitHealthPercent, unit, false, curve )", reads[4])
         local H, d = boot("classic", true)
         local A = ids(H)
         usableAll(H)
@@ -700,34 +737,7 @@ describe("Modern's real cooldown swipe (R2, §3.4)", function()
     it("draws exactly one health band over Classic Primary and forwards the protected alpha", function()
         local H, d = boot("classic")
         local api = H.ns.Facade.Display
-        H.env.Enum.LuaCurveType = { Step = 1 }
-        api.C_CurveUtil.CreateCurve = function()
-            return {
-                points = {},
-                SetType = function(_, kind)
-                    assert.are.equal(1, kind)
-                end,
-                AddPoint = function(self, x, y)
-                    self.points[#self.points + 1] = { x, y }
-                end,
-            }
-        end
-        local hp = 1
-        api.UnitHealthPercent = function(unit, predicted, curve)
-            assert.are.equal("player", unit)
-            assert.is_false(predicted)
-            if rawequal(hp, fake.SECRET) then
-                return hp
-            end
-            local alpha
-            for _, point in ipairs(curve.points) do
-                if hp < point[1] then
-                    break
-                end
-                alpha = point[2]
-            end
-            return alpha
-        end
+        local health = mockHealthCurves(H)
 
         local shieldWall, potion = { texture = 132362, percent = 25 }, { texture = 134831, percent = 40 }
         publish(H, SET, { shieldWall, potion })
@@ -744,16 +754,45 @@ describe("Modern's real cooldown swipe (R2, §3.4)", function()
         instrument(second)
 
         for _, band in ipairs({ { 0.45, 0, 0 }, { 0.4, 0, 1 }, { 0.251, 0, 1 }, { 0.25, 1, 0 }, { 0.1, 1, 0 } }) do
-            hp = band[1]
+            health.player = band[1]
             H.Fire("UNIT_HEALTH", "player")
             assert.are.same({ band[2], band[3] }, { first.__alpha, second.__alpha })
         end
-        hp = fake.SECRET
+        health.player = fake.SECRET
         H.Fire("UNIT_HEALTH", "player")
         assert.is_true(rawequal(fake.SECRET, first.__alpha))
         assert.is_true(rawequal(fake.SECRET, second.__alpha))
 
-        hp = 0.2
+        -- Both units can qualify at once. The player band above the finisher keeps higher visual priority.
+        local drain = { texture = 136163, percent = 25, unit = "target" }
+        first.SetFrameLevel = function(self, level)
+            self.__level = level
+        end
+        second.SetFrameLevel = first.SetFrameLevel
+        health.player, health.target = 0.2, fake.SECRET
+        publish(H, SET, { shieldWall, drain, potion })
+        frame(H, d, 0.2)
+        assert.is_true(first.__level > second.__level)
+        assert.are.equal(1, first.__alpha)
+        assert.is_true(rawequal(fake.SECRET, second.__alpha))
+        health.player, health.target = 0.9, 0.1
+        H.Fire("UNIT_HEALTH", "player")
+        H.Fire("UNIT_HEALTH", "target")
+        assert.are.same({ 0, 1 }, { first.__alpha, second.__alpha })
+
+        health.target = 0
+        H.Fire("UNIT_HEALTH", "target")
+        assert.are.equal(0, second.__alpha)
+        health.target = 0.1
+        H.Fire("PLAYER_TARGET_CHANGED")
+        H.Fire("UNIT_HEALTH", "target")
+        frame(H, d, 0.3)
+        assert.are.equal(0, second.__alpha)
+        publish(H, SET, { shieldWall, drain, potion })
+        frame(H, d, 0.3)
+        assert.are.equal(1, second.__alpha)
+
+        health.player = 0.2
         publish(H, SET, { potion })
         frame(H, d, 0.2)
         assert.are.equal(134831, first.texture)
@@ -770,6 +809,183 @@ describe("Modern's real cooldown swipe (R2, §3.4)", function()
         assert.is_false(cue:IsEventRegistered("UNIT_HEALTH"))
         assert.is_false(cue.__shown)
         assert.are.equal("tex1", d.Buttons[1].Texture.__tex)
+        assert.are.same({}, H.errors)
+    end)
+
+    it("applies a player-health reserve between pulls and removes it for a combat pet rescue", function()
+        local H, d = boot("classic")
+        local health = mockHealthCurves(H)
+        local funnel = { action = "health_funnel", unit = "pet", percent = 55, playerFloor = 80, texture = 136168 }
+        local fallback = { action = "mend_pet", unit = "pet", percent = 65, texture = 132179 }
+        local function draw()
+            publish(H, SET, { funnel, fallback })
+            frame(H, d, 0.2)
+        end
+        draw()
+        local first, second = unpack(d.healthCue.layers)
+        local gate = first:GetParent()
+        assert.are_not.equal(d.healthCue, gate)
+        instrument(first)
+        instrument(second)
+        instrument(gate)
+        for _, case in ipairs({
+            { 0.55, 0.80, 1, 1, 1 },
+            { 0.55, 0.799, 1, 0, 1 },
+            { 0.551, 1, 0, 1, 1 },
+            { 0, 1, 0, 1, 0 },
+        }) do
+            health.pet, health.player = case[1], case[2]
+            H.Fire("UNIT_HEALTH", "pet")
+            H.Fire("UNIT_HEALTH", "player")
+            assert.are.same({ case[3], case[4], case[5] }, { first.__alpha, gate.__alpha, second.__alpha })
+        end
+        health.pet, health.player = fake.SECRET, fake.SECRET
+        H.Fire("UNIT_HEALTH", "pet")
+        H.Fire("UNIT_HEALTH", "player")
+        assert.is_true(rawequal(fake.SECRET, first.__alpha))
+        assert.is_true(rawequal(fake.SECRET, gate.__alpha))
+
+        health.pet, health.player = 0.25, 0.85
+        H.Fire("UNIT_PET", "player")
+        H.Fire("UNIT_HEALTH", "pet")
+        assert.are.equal(0, first.__alpha)
+        draw()
+        assert.are.equal(1, first.__alpha)
+        H.Fire("UNIT_MAXHEALTH", "player")
+        H.Fire("UNIT_HEALTH", "pet")
+        assert.are.equal(0, first.__alpha)
+        funnel.playerFloor = 85.5
+        draw()
+        assert.are.equal(0, gate.__alpha)
+        health.player = 0.855
+        H.Fire("UNIT_HEALTH", "player")
+        assert.are.equal(1, gate.__alpha)
+        for _, unit in ipairs({ "target", "pet" }) do
+            H.Fire("UNIT_TARGET", unit)
+            H.Fire("UNIT_HEALTH", "pet")
+            assert.are.equal(0, first.__alpha)
+            draw()
+            assert.are.equal(1, first.__alpha)
+        end
+        health.player = 0.50
+        H.Fire("UNIT_HEALTH", "player")
+        assert.are.equal(0, gate.__alpha)
+        H.Fire("PLAYER_TARGET_CHANGED")
+        assert.are.equal(0, first.__alpha)
+        funnel.percent, funnel.playerFloor = 30, nil
+        health.pet, health.player = 0.30, 0.10
+        draw()
+        assert.is_nil(first.playerFloor)
+        assert.are.equal(1, gate.__alpha)
+        assert.are.equal(1, first.__alpha)
+        health.pet = 0.301
+        H.Fire("UNIT_HEALTH", "pet")
+        assert.are.equal(0, first.__alpha)
+        assert.are.same({}, H.errors)
+    end)
+
+    it("keeps Life Tap above its cost floor and leaves lower health available to later cues", function()
+        local H, d = boot("classic")
+        local health = mockHealthCurves(H)
+        local funnel = { action = "health_funnel", unit = "pet", percent = 30, texture = 136168 }
+        local tap = { action = "life_tap", percent = 100, playerFloor = 60, texture = 136126 }
+        local drain = { action = "drain_life", percent = 65, texture = 136169 }
+        local function draw()
+            publish(H, SET, { funnel, tap, drain })
+            frame(H, d, 0.2)
+        end
+        draw()
+        local rescue, spend, heal = unpack(d.healthCue.layers)
+        local gate = spend:GetParent()
+        instrument(rescue)
+        instrument(spend)
+        instrument(gate)
+        instrument(heal)
+        health.pet = 0.30
+        H.Fire("UNIT_HEALTH", "pet")
+        for _, sample in ipairs({
+            { 0.599, 0, 1 },
+            { 0.60, 1, 1 },
+            { 0.65, 1, 1 },
+            { 0.651, 1, 0 },
+            { 1.0, 1, 0 },
+        }) do
+            health.player = sample[1]
+            H.Fire("UNIT_HEALTH", "player")
+            assert.are.same(
+                { 1, 1, sample[2], sample[3] },
+                { rescue.__alpha, spend.__alpha, gate.__alpha, heal.__alpha }
+            )
+        end
+        assert.is_true(rescue.order > spend.order and spend.order > heal.order)
+        health.player = fake.SECRET
+        H.Fire("UNIT_HEALTH", "player")
+        assert.is_true(rawequal(fake.SECRET, gate.__alpha))
+        assert.is_true(rawequal(fake.SECRET, spend.__alpha))
+        health.player = 0.70
+        H.Fire("UNIT_MAXHEALTH", "player")
+        H.Fire("UNIT_HEALTH", "player")
+        assert.are.equal(0, spend.__alpha)
+        assert.are.equal(1, rescue.__alpha)
+        tap.playerFloor = 75
+        draw()
+        assert.are.same({ 1, 0 }, { spend.__alpha, gate.__alpha })
+        health.player = 0.75
+        H.Fire("UNIT_HEALTH", "player")
+        assert.are.equal(1, gate.__alpha)
+        H.Fire("UNIT_STATS", "player")
+        H.Fire("UNIT_HEALTH", "player")
+        assert.are.equal(0, spend.__alpha)
+        assert.are.same({}, H.errors)
+    end)
+
+    it("shows the health cue's own binding and global cooldown over a different primary action", function()
+        local H, d = boot("classic")
+        local api = H.ns.Facade.Display
+        H.env.Enum.LuaCurveType = { Step = 1 }
+        api.C_CurveUtil.CreateCurve = function()
+            return { SetType = function() end, AddPoint = function() end }
+        end
+        api.UnitHealthPercent = function()
+            return fake.SECRET
+        end
+        local function recordText(self, value)
+            self.__text = value
+        end
+        local conf = H.Hekili.DB.profile.displays.Primary
+        local choice = { action = "drain_soul", texture = 136163, percent = 25, unit = "target" }
+        H.Hekili.GetBindingForAction = function(_, action, display, slot)
+            assert.are.equal(conf, display)
+            assert.are.equal(1, slot)
+            assert.are.equal("drain_soul", action)
+            return "5"
+        end
+        local function draw()
+            publish(H, SET, { choice })
+            frame(H, d, 0.1)
+        end
+        choice.gcdStart, choice.gcdDuration = H.ctl.now, 1.5
+        draw()
+        local layer = assert(d.healthCue.layers[1])
+        assert.are.equal(layer, layer.swipe:GetParent())
+        assert.are.equal(layer, layer.Keybinding:GetParent())
+        instrument(layer.swipe)
+        layer.Keybinding.SetText, d.Buttons[1].Keybinding.SetText = recordText, recordText
+        choice.gcdStart = H.ctl.now
+        draw()
+        assert.are.same(
+            { choice.gcdStart, 1.5, true },
+            { layer.swipe.__cdStart, layer.swipe.__cdDuration, layer.swipe:IsShown() }
+        )
+        assert.are.equal("5", layer.Keybinding.__text)
+        assert.are.equal("K1", d.Buttons[1].Keybinding.__text)
+        choice.gcdStart, choice.gcdDuration = nil, nil
+        draw()
+        assert.is_false(layer.swipe:IsShown())
+        assert.are.equal("5", layer.Keybinding.__text)
+        conf.classic.keybindings.enabled = false
+        draw()
+        assert.is_nil(layer.Keybinding.__text)
         assert.are.same({}, H.errors)
     end)
 

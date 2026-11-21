@@ -39,6 +39,53 @@ describe("a priority without a precombat list", function()
     end)
 end)
 
+describe("a priority with pet health cues", function()
+    it("preserves overlapping pet cues with a less restrictive player-health floor", function()
+        local field = require("Forever.helpers.warlock_field")
+        local secret = require("Game.State.helpers.fake_api").SECRET
+        local H = field.warlock("Affliction", 11, { 172, 980, 695 }, {
+            health = secret,
+            petHealth = secret,
+            targetHealth = secret,
+        })
+        local abilities = H.Hekili.Class.abilities
+        abilities.corruption.displayPlayerFloor = 90
+        abilities.bane_of_agony.displayPlayerFloor = 80
+        H.Hekili.DB.profile.packs["Affliction (wowsims.com)"].lists = {
+            default = {
+                { enabled = true, action = "corruption", display_pet_below = 55 },
+                { enabled = true, action = "bane_of_agony", display_pet_below = 30 },
+                { enabled = true, action = "corruption", display_pet_below = 40 },
+                { enabled = true, action = "bane_of_agony", display_target_below = 25 },
+                { enabled = true, action = "shadow_bolt" },
+            },
+        }
+        H.Hekili:LoadScripts()
+        assert.are.equal("shadow_bolt", field.pick(H))
+        local cues = H.Hekili.Engine.Output.Primary.healthCues
+        assert.are.equal(3, cues.n)
+        assert.are.same({ "pet", 55, 90 }, { cues[1].unit, cues[1].percent, cues[1].playerFloor })
+        assert.are.same({ "pet", 30, 80 }, { cues[2].unit, cues[2].percent, cues[2].playerFloor })
+        assert.are.same({ "target", 25 }, { cues[3].unit, cues[3].percent })
+        assert.is_nil(cues[3].playerFloor)
+
+        H.ctl.unitHealth.pet = 250
+        assert.are.equal("shadow_bolt", field.pick(H))
+        H.ctl.unitHealth.player = 800
+        assert.are.equal("bane_of_agony", field.pick(H))
+        H.ctl.unitHealth.player = 900
+        assert.are.equal("corruption", field.pick(H))
+        abilities.corruption.displayPlayerFloor = 101
+        assert.are.equal("bane_of_agony", field.pick(H))
+        abilities.corruption.displayPlayerFloor = secret
+        assert.are.equal("bane_of_agony", field.pick(H))
+        H.ctl.unitHealth.player, H.ctl.unitHealthMax.player = secret, secret
+        abilities.corruption.displayPlayerFloor = 0
+        assert.are.equal("corruption", field.pick(H))
+        assert.is_nil(H.Hekili.Engine.Output.Primary.healthCues[1].playerFloor)
+    end)
+end)
+
 describe("a priority naming another race's racial", function()
     it("a Human skips a blood_fury line as unknown, without raising", function()
         local H = boot("Human")

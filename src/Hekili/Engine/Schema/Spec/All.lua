@@ -58,8 +58,9 @@ all:RegisterAuras( {
                 endCast = ( endCast or 0 ) / 1000
                 local duration = endCast - startCast
 
-                -- Channels greater than 10 seconds are nonsense.  Probably.
-                if spell and duration <= 10 then
+                -- Use the client's actual end time for a recognized player channel, including long drains.
+                local channel = spell and class.abilities[ spellID ]
+                if spell and duration > 0 and ( duration <= 10 or unit == "player" and channel and channel.channeled ) then
                     t.name = spell
                     t.count = 1
                     t.expires = endCast
@@ -70,7 +71,7 @@ all:RegisterAuras( {
                     t.v3 = 1 -- channeled.
                     t.caster = unit
 
-                    if class.abilities[ spellID ] and class.abilities[ spellID ].dontChannel then
+                    if channel and channel.dontChannel then
                         removeBuff( "casting" )
                         return
                     end

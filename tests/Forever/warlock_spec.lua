@@ -476,18 +476,21 @@ describe("Forever Warlock", function()
         assert.are.equal(6353, w.auras.decimation.overlay) -- Soul Fire's glow
     end)
 
-    it("a landed Shadow Bolt or Searing Pain at a target under 35% applies Decimation, with the talent only", function()
-        local function run(key, ranks, pct)
+    it("forecasts Decimation only on a living target measured below 35% with the talent learned", function()
+        local function run(key, ranks, measured)
             local e = env(ranks)
-            e.target = { health = { pct = pct } }
+            w.game.targetHealthFraction = measured
+            e.target = { health = { pct = 30 } } -- The simulated estimate can stay low even when health is hidden.
             ld.run(w.abilities[key].handler, e)
             return e.applied
         end
         for _, key in ipairs({ "shadow_bolt", "searing_pain" }) do
-            assert.are.same({ "decimation" }, run(key, { decimation = 2 }, 30), key)
-            assert.are.same({}, run(key, { decimation = 2 }, 35), key)
-            assert.are.same({}, run(key, { decimation = 2 }, 100), key)
-            assert.are.same({}, run(key, {}, 30), key)
+            assert.are.same({ "decimation" }, run(key, { decimation = 2 }, 0.34), key)
+            assert.are.same({}, run(key, { decimation = 2 }, 0.35), key)
+            assert.are.same({}, run(key, { decimation = 2 }, 1), key)
+            assert.are.same({}, run(key, { decimation = 2 }, 0), key)
+            assert.are.same({}, run(key, { decimation = 2 }, nil), key)
+            assert.are.same({}, run(key, {}, 0.30), key)
         end
         -- the belief's `now` context has no target to read: it writes no Decimation (the glow read carries it)
         local e = env({ decimation = 2 })

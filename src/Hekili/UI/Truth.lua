@@ -271,30 +271,85 @@ end
 
 local healthCurves = {}
 
-local function healthCurve( floor, percent )
+local function newHealthCurve()
+    if not Enum.LuaCurveType then return end
+    local curve = Display.C_CurveUtil.CreateCurve()
+    if curve then curve:SetType( Enum.LuaCurveType.Step ) end
+    return curve
+end
+
+local function healthCurve( floor, percent, unit )
     local key = floor * 100 + percent
+    local livingUnit = unit ~= "player" and floor == 0
+    if livingUnit then key = -key end
     local curve = healthCurves[ key ]
-    if not curve and Enum.LuaCurveType then
-        curve = Display.C_CurveUtil.CreateCurve()
+    if not curve then
+        curve = newHealthCurve()
         if curve then
-            curve:SetType( Enum.LuaCurveType.Step )
-            curve:AddPoint( 0, floor == 0 and 1 or 0 )
-            if floor > 0 then curve:AddPoint( floor / 100 + 0.000001, 1 ) end
-            curve:AddPoint( percent / 100 + 0.000001, 0 ) -- Include the threshold itself.
+            curve:AddPoint( 0, floor == 0 and not livingUnit and 1 or 0 )
+            if livingUnit then
+                curve:AddPoint( 2^-64, 1 ) -- At least one HP, even at a 64-bit maximum.
+            elseif floor > 0 then
+                curve:AddPoint( floor / 100 + 0.000001, 1 )
+            end
+            if percent == 100 then
+                curve:AddPoint( 1, 1 )
+            else
+                curve:AddPoint( percent / 100 + 0.000001, 0 ) -- Include the threshold itself.
+            end
             healthCurves[ key ] = curve
         end
     end
     return curve
 end
 
-local function refreshHealthCue( cue )
+local function applyHealthCurve( frame, unit, curve )
+    if curve then
+        local ok, alpha = pcall( Display.UnitHealthPercent, unit, false, curve )
+        if ok and ( Facade.issecretvalue( alpha ) or type( alpha ) == "number" ) then
+            frame:SetAlpha( alpha )
+            return
+        end
+    end
+    frame:SetAlpha( 0 )
+end
+
+-- The client combines the health band and the independent player-health minimum through frame inheritance.
+local function setPlayerFloor( layer, floor )
+    local gate = layer:GetParent()
+    if floor then
+        gate.curve = gate.curve or newHealthCurve()
+        if gate.curve then
+            gate.curve:ClearPoints()
+            gate.curve:AddPoint( 0, 0 )
+            gate.curve:AddPoint( floor / 100, 1 )
+        end
+    else
+        gate:SetAlpha( 1 )
+    end
+    layer.playerFloor = floor
+end
+
+local function refreshHealthCue( cue, event, unit )
+    if event == "PLAYER_EQUIPMENT_CHANGED" then unit = nil end -- The event's first argument is an inventory slot.
+    if Facade.issecretvalue( unit ) or ( unit and unit ~= "player" and unit ~= "target" and unit ~= "pet" ) then return end
+    local status = Hekili.Engine.Output.status
+    local targetChanged = event == "PLAYER_TARGET_CHANGED" or cue.targetRevision ~= status.targetRevision
+    local floorChanged = ( event == "UNIT_MAXHEALTH" and unit == "player" ) or event == "UNIT_STATS"
+        or event == "PLAYER_EQUIPMENT_CHANGED" or cue.playerFloorRevision ~= status.playerFloorRevision
+    local petChanged = event == "UNIT_PET" or event == "UNIT_TARGET" or cue.petHealthRevision ~= status.petHealthRevision
     for i = 1, cue.count do
         local layer = cue.layers[ i ]
-        local ok, alpha = pcall( Display.UnitHealthPercent, "player", false, layer.curve )
-        if ok and ( Facade.issecretvalue( alpha ) or type( alpha ) == "number" ) then
-            layer:SetAlpha( alpha )
-        else
+        if ( layer.unit == "target" and targetChanged ) or ( layer.unit == "pet" and ( petChanged or targetChanged ) )
+            or ( layer.playerFloor and ( floorChanged or targetChanged ) ) then
+            -- Recheck combat eligibility and reprice health spends against a changed player maximum.
             layer:SetAlpha( 0 )
+        else
+            if not unit or unit == layer.unit then applyHealthCurve( layer, layer.unit, layer.curve ) end
+            if layer.playerFloor and ( not unit or unit == "player" ) then
+                local gate = layer:GetParent()
+                applyHealthCurve( gate, "player", gate.curve )
+            end
         end
     end
 end
@@ -303,11 +358,17 @@ function Truth.ClearHealthCue( d )
     local cue = d.healthCue
     if not cue or not cue.button then return end
     cue:UnregisterEvent( "UNIT_HEALTH" )
+    cue:UnregisterEvent( "UNIT_MAXHEALTH" )
+    cue:UnregisterEvent( "UNIT_STATS" )
+    cue:UnregisterEvent( "PLAYER_EQUIPMENT_CHANGED" )
+    cue:UnregisterEvent( "UNIT_PET" )
+    cue:UnregisterEvent( "UNIT_TARGET" )
+    cue:UnregisterEvent( "PLAYER_TARGET_CHANGED" )
     cue:Hide()
-    cue.button = nil
+    cue.button, cue.watchesPet = nil, nil
 end
 
-function Truth.DrawHealthCue( d, out )
+function Truth.DrawHealthCue( d, out, conf )
     local button, cues = d.Buttons[ 1 ], out.healthCues
     if not button or not cues or cues.n == 0 or out.version == d.blankVersion or d.alpha == 0 or Hekili.Pause then
         Truth.ClearHealthCue( d )
@@ -329,40 +390,73 @@ function Truth.DrawHealthCue( d, out )
         cue:ClearAllPoints()
         cue:SetAllPoints( button )
         cue:SetFrameLevel( button:GetFrameLevel() + 4 )
-        cue:RegisterUnitEvent( "UNIT_HEALTH", "player" )
+        cue:RegisterUnitEvent( "UNIT_MAXHEALTH", "player", "pet" )
+        cue:RegisterUnitEvent( "UNIT_STATS", "player" )
+        cue:RegisterEvent( "PLAYER_EQUIPMENT_CHANGED" )
+        cue:RegisterUnitEvent( "UNIT_PET", "player" )
+        cue:RegisterUnitEvent( "UNIT_TARGET", "target", "pet" )
+        cue:RegisterEvent( "PLAYER_TARGET_CHANGED" )
     end
 
-    local count, floor = 0, 0
+    if cue.targetRevision ~= cues.targetRevision or cue.petHealthRevision ~= cues.petHealthRevision
+        or cue.playerFloorRevision ~= cues.playerFloorRevision then changed = true end
+    cue.targetRevision, cue.petHealthRevision, cue.playerFloorRevision = cues.targetRevision, cues.petHealthRevision, cues.playerFloorRevision
+    local count, playerFloor, targetFloor, watchesPet = 0, 0, 0, false
     for i = 1, cues.n do
         local choice = cues[ i ]
-        local curve = choice.texture and healthCurve( floor, choice.percent )
+        local unit = choice.unit or "player"
+        -- Only an unconditional lower band covers every smaller health value. Layer the rest in priority order.
+        local floor = unit == "target" and targetFloor or unit == "player" and playerFloor or 0
+        local curve = choice.texture and healthCurve( floor, choice.percent, unit )
         if curve then
             count = count + 1
-            floor = choice.percent
+            if unit == "target" then targetFloor = choice.percent
+            elseif unit == "player" then
+                if not choice.playerFloor then playerFloor = choice.percent end
+            else watchesPet = true end
             local layer = cue.layers[ count ]
             if not layer then
-                layer = CreateFrame( "Frame", nil, cue )
+                local gate = CreateFrame( "Frame", nil, cue )
+                gate:SetAllPoints( cue )
+                layer = CreateFrame( "Frame", nil, gate )
                 layer:SetAllPoints( cue )
                 layer.icon = layer:CreateTexture( nil, "ARTWORK" )
                 layer.icon:SetAllPoints( layer )
                 cue.layers[ count ] = layer
             end
-            if changed or layer.texture ~= choice.texture or layer.curve ~= curve or count > cue.count then
-                layer.texture, layer.curve = choice.texture, curve
+            if layer.playerFloor ~= choice.playerFloor then
+                setPlayerFloor( layer, choice.playerFloor )
+                changed = true
+            end
+            -- Different units can both satisfy a health band. Paint the earlier APL entry on top.
+            local order = cues.n - i + 1
+            if changed or layer.texture ~= choice.texture or layer.curve ~= curve or layer.unit ~= unit or layer.order ~= order or count > cue.count then
+                layer.texture, layer.curve, layer.unit, layer.order = choice.texture, curve, unit, order
+                -- Leave room for this layer's cooldown below the next higher-priority icon.
+                layer:SetFrameLevel( cue:GetFrameLevel() + 2 * order )
                 layer.icon:SetTexture( choice.texture )
                 layer.icon:SetTexCoord( unpack( button.texCoords ) )
                 layer:Show()
                 changed = true
             end
+            d.style.DrawHealthCueDetails( layer, button, choice, conf, changed )
         end
     end
     for i = count + 1, cue.count do cue.layers[ i ]:Hide() end
     cue.count = count
     if count == 0 then
         Truth.ClearHealthCue( d )
-    elseif changed then
-        refreshHealthCue( cue )
-        cue:Show()
+    else
+        if cue.watchesPet ~= watchesPet then
+            -- The event facade filters two units per subscription. Filter all three here while a pet cue is present.
+            if watchesPet then cue:RegisterEvent( "UNIT_HEALTH" )
+            else cue:RegisterUnitEvent( "UNIT_HEALTH", "player", "target" ) end
+            cue.watchesPet = watchesPet
+        end
+        if changed then
+            refreshHealthCue( cue )
+            cue:Show()
+        end
     end
 end
 

@@ -115,21 +115,199 @@ describe("Forever Warlock defensives", function()
         end
     end)
 
-    it("rescues a critically wounded solo tanking demon when the caster can pay for Health Funnel", function()
+    it("rescues a critically wounded demon when WoW allows the channel to start", function()
         local function pick(opts)
             return field.pick(field.warlock("Demonology", 20, { 755 }, opts))
         end
         assert.are.equal("health_funnel", pick({ petHealth = 290, petTanking = true }))
+        -- Enough for rank one's initial 11 health, even though a full channel would cost more.
+        assert.are.equal("health_funnel", pick({ petHealth = 200, petTanking = true, health = 12 }))
         for _, case in ipairs({
             { petHealth = 310, petTanking = true },
-            { petHealth = 200, petTanking = false },
-            { petHealth = 200, petTanking = true, group = 5 },
-            { petHealth = 200, petTanking = true, health = 650 },
+            { petHealth = 200, petTanking = true, group = 5, instanceType = "party" },
             { petHealth = 200, petTanking = true, moving = true },
             { petHealth = 200, petTanking = true, petRange = 22 },
             { petHealth = 200, petTanking = true, defensives = false },
         }) do
             assert.is_nil(pick(case))
+        end
+        local dead = field.warlock("Affliction", 14, { 755 }, { petHealth = 200, petTanking = true })
+        dead.ctl.dead.player = true
+        assert.is_nil(field.pick(dead))
+        assert.are.equal(0, dead.Hekili.Engine.Output.Primary.healthCues.n)
+    end)
+
+    it("rescues a level 14 demon in an engaged outdoor pull whoever has aggro", function()
+        for _, opts in ipairs({
+            { group = 2, petTanking = true },
+            { group = 2, partyAggro = true },
+            { group = 2 },
+            {},
+        }) do
+            opts.petHealth = 300
+            local h = field.warlock("Affliction", 14, { 755 }, opts)
+            h.ctl.unitCombat.pet = SECRET
+            assert.are.equal("health_funnel", field.pick(h))
+            h.ctl.unitHealth.pet = 301
+            assert.is_nil(field.pick(h))
+        end
+    end)
+
+    it("uses Health Funnel on a living pet the spell can heal even when its identity is unavailable", function()
+        local h = field.warlock("Affliction", 14, { 755 }, {
+            group = 2,
+            partyAggro = true,
+            petHealth = 275,
+            petGUID = SECRET,
+            beforeLoad = function(client)
+                -- The pet predates login, so a recent simulated summon cannot identify it.
+                client.ctl.now = 5000
+            end,
+        })
+        local facade = h.ns.Facade
+        assert.is_nil(facade.UnitGUID("pet"))
+        assert.is_true(facade.PetAlive())
+        assert.is_true((facade.C_Spell.IsSpellInRange(755, "pet")))
+        assert.is_true((facade.C_Spell.IsSpellUsable(755)))
+        assert.are.equal("health_funnel", field.pick(h))
+
+        h.ctl.guid.pet = "Pet-0-0-0-0-99999-000002"
+        h.Fire("UNIT_PET", "player")
+        assert.are.equal("health_funnel", field.pick(h))
+        local out = h.Hekili.Engine.Output.Primary
+        for _, usable in ipairs({ false, SECRET }) do
+            h.ctl.usable[755] = { usable, false }
+            assert.is_nil(field.pick(h))
+            assert.are.equal(0, out.healthCues.n)
+        end
+        h.ctl.usable[755] = { true, false }
+        h.ctl.distance.pet = 21
+        assert.is_nil(field.pick(h))
+        assert.are.equal(0, out.healthCues.n)
+        h.ctl.distance.pet, h.ctl.dead.pet = 10, true
+        assert.is_nil(field.pick(h))
+        assert.are.equal(0, out.healthCues.n)
+    end)
+
+    it("keeps the level 14 party rescue available when the enemy is no longer selected", function()
+        for _, selectPet in ipairs({ false, true }) do
+            local h = field.warlock("Affliction", 14, { 755 }, {
+                group = 2,
+                health = SECRET,
+                petHealth = SECRET,
+                noTarget = not selectPet,
+                friendly = selectPet,
+            })
+            if selectPet then
+                h.ctl.unitIs.target = "pet"
+                h.ctl.guid.target = h.ctl.guid.pet
+            end
+            h.ctl.exists.pettarget = true
+            h.ctl.unitCombat.pet = true
+            h.Fire("PLAYER_TARGET_CHANGED")
+            assert.is_nil(field.pick(h))
+            local out = h.Hekili.Engine.Output.Primary
+            assert.are.equal(1, out.healthCues.n)
+            local cue = out.healthCues[1]
+            assert.are.same({ "health_funnel", "pet", 30 }, { cue.action, cue.unit, cue.percent })
+            assert.is_nil(cue.playerFloor)
+            for _, petCombat in ipairs({ false, SECRET }) do
+                h.ctl.unitCombat.pet = petCombat
+                assert.is_nil(field.pick(h))
+                assert.are.equal(0, out.healthCues.n)
+            end
+            h.ctl.unitCombat.pet = true
+            for _, isPlayer in ipairs({ true, SECRET }) do
+                h.ctl.isPlayer.pettarget = isPlayer
+                assert.is_nil(field.pick(h))
+                assert.are.equal(0, out.healthCues.n)
+            end
+        end
+    end)
+
+    it("keeps an outdoor party rescue out of dungeons, raids and PvP", function()
+        for _, opts in ipairs({
+            { instanceType = "party" },
+            { instanceType = "raid" },
+            { instanceType = "pvp" },
+            { playerTarget = true },
+        }) do
+            opts.group, opts.partyAggro, opts.petHealth = 2, true, 200
+            local h = field.warlock("Affliction", 14, { 755 }, opts)
+            assert.is_nil(field.pick(h))
+            assert.are.equal(0, h.Hekili.Engine.Output.Primary.healthCues.n)
+        end
+    end)
+
+    it("uses pet health alone for a combat rescue even when the player's health and maximum are hidden", function()
+        for _, case in ipairs({
+            { petHealth = SECRET, health = 900, petTanking = true },
+            { petHealth = 300, health = SECRET, petTanking = true, expected = "health_funnel" },
+            { petHealth = SECRET, health = SECRET, petTanking = true },
+        }) do
+            local h = field.warlock("Affliction", 12, { 755 }, case)
+            h.ctl.unitHealthMax.player = SECRET
+            assert.are.equal(case.expected, field.pick(h))
+            local cues = h.Hekili.Engine.Output.Primary.healthCues
+            assert.are.equal(1, cues.n)
+            assert.are.same({ "health_funnel", "pet", 30 }, { cues[1].action, cues[1].unit, cues[1].percent })
+            assert.is_nil(cues[1].playerFloor)
+            local state = h.Hekili.State
+            state.reset("Primary", true)
+            assert.are.equal(case.expected == "health_funnel", state.warlock_funnel_safe)
+        end
+    end)
+
+    it("keeps the full-channel reserve and current maximum requirement between pulls", function()
+        local h = field.warlock("Demonology", 12, { 755 }, {
+            petHealth = 550,
+            health = SECRET,
+            prepull = true,
+            noTarget = true,
+        })
+        h.ctl.unitHealthMax.player = 250
+        assert.is_nil(field.pick(h))
+        local cues = h.Hekili.Engine.Output.Primary.healthCues
+        -- Rank one's full-channel budget is 71 health. Starting at 221 reserves exactly 150 (60%).
+        assert.are.equal(1, cues.n)
+        assert.are.equal(55, cues[1].percent)
+        assert.are.equal(88.4, cues[1].playerFloor)
+        h.ctl.unitHealth.player = 220
+        assert.is_nil(field.pick(h))
+        h.ctl.unitHealth.player = 221
+        assert.are.equal("health_funnel", field.pick(h))
+        h.ctl.unitHealthMax.player = SECRET
+        assert.is_nil(field.pick(h))
+        assert.are.equal(0, h.Hekili.Engine.Output.Primary.healthCues.n)
+    end)
+
+    it("routes the protected pet heal to the selected Defensives display in all five builds", function()
+        for _, build in ipairs(builds) do
+            local h = field.warlock(build, 12, { 755 }, { petHealth = SECRET, health = SECRET, petTanking = true })
+            local engine = h.Hekili.Engine
+            engine.settings.toggles.defensives.separate = true
+            assert.is_true(engine.Subscribe("Defensives", function() end))
+            assert.is_nil(field.pick(h), build)
+            assert.are.equal(0, engine.Output.Primary.healthCues.n, build)
+            assert.are.equal(0, engine.Output.Defensives.count, build)
+            local cues = engine.Output.Defensives.healthCues
+            assert.are.equal(1, cues.n, build)
+            assert.are.equal("health_funnel", cues[1].action, build)
+        end
+    end)
+
+    it("withholds the pet-health cue when Funnel is untrained or the pet rescue is unavailable", function()
+        for _, case in ipairs({
+            { untrained = true, petTanking = true },
+            { moving = true, petTanking = true },
+            { idleTarget = true },
+            { petRange = 22, petTanking = true },
+            { defensives = false, petTanking = true },
+        }) do
+            case.petHealth, case.health = SECRET, SECRET
+            local h = field.warlock("Demonology", case.untrained and 11 or 12, case.untrained and {} or { 755 }, case)
+            assert.is_nil(field.pick(h))
+            assert.are.equal(0, h.Hekili.Engine.Output.Primary.healthCues.n)
         end
     end)
 end)

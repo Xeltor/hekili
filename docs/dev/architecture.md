@@ -138,7 +138,7 @@ the snapshot panel whichever display is picked. One engine registry, no AceEvent
 `results` with the values of the entry's conditions (`mod` nil) or of one modifier (`"value"`, `"value_else"`,
 `"strict_if"`). Returns `results, list, action`.
 
-**Target swaps on Forever** (option D, owner 2026-11-11). The per-spec toggle (`settings.cycle`, "Recommend Target
+**Target swaps on Forever** (option D, owner 2026-11-11). The per-spec toggle (`settings.cycle`, "Allow Target
 Swaps", off by default) arms upstream's cycle machinery for a line with `cycle_targets=1` (optionally
 `max_cycle_targets=N`): while the current target carries the line's debuff and fewer enemies carry it than
 `cycle_enemies`, the line reads the debuff as down and its record shows the cycle icon. `other_target=1` is a forced
@@ -149,7 +149,8 @@ is saturated, every enemy counted as carrying it, so no swap is suggested; the c
 at 1. A swapped cast's handler runs with `state.cycle` set: its debuffs add to `active_dot` and leave the current
 target's alone. Time to die is never known on Forever, so `cycle_min` and the TTD filters exclude nobody (`FEED` is
 off); no pack may declare `min_ttd` or `max_ttd` (`tests/Forever/packs_spec.lua`), and the slider is hidden. Under the
-Map restriction `active_enemies` is 1 until a GUID-free enemy count exists, so no cycle arms in dungeons yet.
+Map restriction, visible enemy nameplate tokens can supply the count. If the selected enemy cannot be associated
+with a remembered slot, the unknown DoT count suppresses a swap.
 
 **`Engine.Configure(profile)`** and **`Engine.settings`** (`Engine/Settings.lua`). The engine reads configuration only
 from `Engine.settings`. `Configure` assigns `specs`, `packs`, `toggles`, `displays`, `performance` and
@@ -484,6 +485,10 @@ records, so a buff that falls removes exactly its part and one gained adds it. O
 read, the read stands. `VS.Stat` and `VS.SpellHaste` answer the composed value, so the facade hybrids, the GCD and a
 `now`'s `haste` and `stat(...)` all see it. Melee haste keeps `swingHaste`'s event form.
 
+A registered player channel can name an `interruptAction` or supply a function that returns its key.
+Hekili can recommend switching to that action as soon as its conditions pass and its global cooldown permits.
+For a health cue, Classic can show the switch using WoW's health curve while the underlying forecast continues the channel.
+
 **What only a landed hit or a full channel gives** (aura audit C10, C11). An ability's `onLand` (bound like `onCrit`)
 runs in the `now` context once its cast is settled as landed: `Game/Events/Rows.lua` stages `Obs.Landed` once per
 direct-hit ticket (not a tick's or a swing's), when a wound or crit is paid to it or a provisional payment is final.
@@ -673,11 +678,13 @@ a fight that never ends soon, a grey (trivial) target's too (wowsims's `remainin
 `GetNumTTDsAfter` counts every enemy as after any time. The tracker's 0.5 s ticker is not started. A priority may read them without a load warning (`Engine/Sim/AplWarnings.lua` warns only
 on target and player health); wowsims's `remainingTime` maps to `fight_remains` with that deviation.
 
-**Player health.** The client hides the player's own health in combat (`UnitHealth`/`UnitHealthMax("player")` secret;
-owner L1461; the headless fake client answers so): `health.pct`, `health.current`, `health.deficit` read the plain
-value out of combat and full while the answer is secret (`Game/State/Families/Player.lua`), never a stale read from
-before the pull, and the facade's row never hands the core a secret. A defensive line (`health.pct<50`) never fires in
-combat and a `health.pct>50` gate always passes there, so a custom line reading it gets a load warning
+**Player health.** In the PH1 capture on build 70862, the player's current health was secret before, during and
+after combat. Maximum health was readable (see [in-game measurements](ingame-ledger.md)). `health.pct`,
+`health.current` and `health.deficit` use a plain reading when available and assume full health while the answer
+is secret (`Game/State/Families/Player.lua`). With that fallback, `health.pct<50` is false and `health.pct>50` is true.
+Classic can still render health cues through the client's percentage curves. A player cue with a positive
+`displayPlayerFloor` uses a measured fraction for the forecast. A `display_below=100` line can display
+through full health, with WoW applying the ability's minimum in the frame. A custom line reading `health.pct` gets a load warning
 (`Engine/Sim/AplWarnings.lua`), and the translator omits every wowsims entry reading `currentHealthPercent` or
 `currentHealth` (its rule 23, owner L1462).
 

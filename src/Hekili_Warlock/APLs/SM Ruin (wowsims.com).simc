@@ -13,7 +13,8 @@
 # Omitted: default #9: spellExpectedDpet
 # Omitted: default #10: spellExpectedDpet
 
-actions=will_to_survive,if=warlock_alive&warlock_stunned
+actions=health_funnel,display_pet_below=30,if=combat>0&warlock_funnel_available
+actions+=/will_to_survive,if=warlock_alive&warlock_stunned
 actions+=/will_of_the_forsaken,if=warlock_alive&warlock_forsaken_control
 actions+=/escape_artist,if=warlock_alive&warlock_movement_control&!warlock_hard_controlled&buff.escape_artist.down
 actions+=/shatter_curse,if=warlock_alive&!warlock_hard_controlled&buff.dispellable_curse.up&buff.shatter_curse.down
@@ -28,7 +29,7 @@ actions+=/shadow_ward,if=combat>0&warlock_alive&warlock_recent_shadow_damage&buf
 actions+=/soul_link,if=warlock_alive&(combat>0|warlock_can_prepare)&buff.soul_link.down
 actions+=/drain_life,display_below=65,if=combat>0&warlock_defensive_target&toggle.defensives&warlock_spell_in_range&warlock_drain_healing_display&!moving
 actions+=/death_coil,display_below=65,if=combat>0&warlock_defensive_target&toggle.defensives&warlock_spell_in_range
-actions+=/health_funnel,if=warlock_funnel_safe
+actions+=/health_funnel,display_pet_below=55,if=combat=0&warlock_funnel_available
 actions+=/life_tap,if=warlock_can_prepare&warlock_life_tap_safe&mana.hi<0.65*mana.max
 actions+=/summon_felhunter,if=warlock_can_summon&warlock_pvp_instance&buff.fel_stamina.down
 actions+=/summon_voidwalker,if=warlock_can_summon&warlock_outdoors&solo&buff.fel_energy.down
@@ -39,7 +40,8 @@ actions+=/create_healthstone,if=warlock_can_prepare&warlock_needs_healthstone&!a
 actions+=/demon_armor,if=warlock_can_prepare&buff.demon_armor.down
 actions+=/demon_skin,if=warlock_can_prepare&!action.demon_armor.known&buff.demon_skin.down&(!action.demon_armor.known|buff.demon_armor.down)
 actions+=/shadow_bolt,focus=1,if=warlock_contextual&warlock_engaged&buff.shadow_trance.up&warlock_spell_in_range
-actions+=/drain_soul,if=warlock_contextual&warlock_engaged&combat>0&!moving&!boss&!target.is_boss&warlock_shard_count<2&!warlock_health_low&warlock_shard_window
+actions+=/drain_soul,if=warlock_contextual&warlock_engaged&combat>0&!moving&!boss&!target.is_boss&warlock_shard_count<2&!warlock_health_low&!action.drain_soul.executing&warlock_shard_target&warlock_continue_drain_soul
+actions+=/drain_soul,display_target_below=25,if=warlock_contextual&warlock_engaged&combat>0&!moving&!boss&!target.is_boss&warlock_shard_count<2&!warlock_health_low&!action.drain_soul.executing&warlock_shard_target
 actions+=/blood_fury,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|(warlock_contextual&warlock_engaged&(!warlock_short_pull|warlock_cleave)&!warlock_target_low))&buff.blood_fury.down
 actions+=/eureka,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|(warlock_contextual&warlock_engaged&(!warlock_short_pull|warlock_cleave)&!warlock_target_low))&buff.eureka.down&warlock_eureka_setup
 actions+=/curse_of_the_elements,focus=2,if=warlock_contextual&warlock_engaged&!warlock_short_pull&settings.assigned_curse='elements'&debuff.curse_of_the_elements.down&warlock_spell_in_range
@@ -60,10 +62,10 @@ actions+=/eureka,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_p
 actions+=/bane_of_agony,focus=2,if=warlock_contextual&warlock_engaged&warlock_short_pull&moving&!warlock_target_low&(!action.bane_of_agony.known|debuff.bane_of_agony.down)&(!action.bane_of_doom.known|debuff.bane_of_doom.down)&(!action.bane_of_havoc.known|debuff.bane_of_havoc.down)&warlock_spell_in_range
 actions+=/life_tap,if=warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&toggle.defensives&!moving&!warlock_target_low&mana.hi<0.30*mana.max&warlock_can_tap_for_drain&!prev_gcd.1.life_tap&!warlock_restorative_filler&warlock_life_tap_safe
 actions+=/drain_life,if=warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&warlock_damage_display&toggle.defensives&!moving&!warlock_health_low&!warlock_target_low&warlock_leveling_drain&mana.lo>=action.drain_life.cost&(warlock_restorative_filler|mana.pct_lo<55|!(talent.ruin.enabled))&warlock_spell_in_range
-actions+=/shoot,use_off_gcd=1,if=warlock_contextual&warlock_engaged&(warlock_short_pull&(!(talent.ruin.enabled)|mana.pct_lo<55|warlock_target_low)|(warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&action.shadow_bolt.known&warlock_wand_over_bolt))&!(prev_gcd.1.life_tap&gcd.remains>0&warlock_drain_life_in_range&warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&warlock_damage_display&toggle.defensives&!moving&!warlock_health_low&!warlock_target_low&warlock_leveling_drain&mana.lo>=action.drain_life.cost&(warlock_restorative_filler|mana.pct_lo<55|!(talent.ruin.enabled)))
-actions+=/life_tap,if=warlock_contextual&warlock_engaged&!(warlock_wanding&(warlock_short_pull&(!(talent.ruin.enabled)|mana.pct_lo<55|warlock_target_low)|(warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&action.shadow_bolt.known&warlock_wand_over_bolt)))&combat>0&warlock_life_tap_safe&mana.hi<0.30*mana.max
-actions+=/shadow_bolt,if=warlock_contextual&warlock_engaged&!(warlock_wanding&(warlock_short_pull&(!(talent.ruin.enabled)|mana.pct_lo<55|warlock_target_low)|(warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&action.shadow_bolt.known&warlock_wand_over_bolt)))&(!moving|action.shadow_bolt.cast=0)&warlock_spell_in_range
-actions+=/shoot,use_off_gcd=1,if=warlock_contextual&warlock_engaged&!(prev_gcd.1.life_tap&gcd.remains>0&warlock_drain_life_in_range&warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&warlock_damage_display&toggle.defensives&!moving&!warlock_health_low&!warlock_target_low&warlock_leveling_drain&mana.lo>=action.drain_life.cost&(warlock_restorative_filler|mana.pct_lo<55|!(talent.ruin.enabled)))
+actions+=/life_tap,display_below=100,if=warlock_contextual&warlock_engaged&warlock_filler_fits&combat>0&mana.hi<0.50*mana.max
+actions+=/shoot,if=warlock_contextual&warlock_engaged&warlock_filler_fits&(warlock_short_pull&(!(talent.ruin.enabled)|mana.pct_lo<55|warlock_target_low)|(warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&action.shadow_bolt.known&warlock_wand_over_bolt))
+actions+=/shadow_bolt,if=warlock_contextual&warlock_engaged&warlock_filler_fits&!(warlock_wanding&(warlock_short_pull&(!(talent.ruin.enabled)|mana.pct_lo<55|warlock_target_low)|(warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&action.shadow_bolt.known&warlock_wand_over_bolt)))&(!moving|action.shadow_bolt.cast=0)&warlock_spell_in_range
+actions+=/shoot,if=warlock_contextual&warlock_engaged&warlock_filler_fits
 actions+=/auto_attack,use_off_gcd=1,if=warlock_contextual&warlock_engaged
 actions+=/curse_of_tongues,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.casting.up&debuff.curse_of_tongues.down
 actions+=/curse_of_exhaustion,if=warlock_pvp_pressure&warlock_spell_in_range&warlock_pvp_kiting&debuff.curse_of_exhaustion.down&(!action.curse_of_tongues.known|debuff.curse_of_tongues.down)
@@ -72,8 +74,8 @@ actions+=/shadowburn,if=warlock_pvp_pressure&warlock_spell_in_range&warlock_targ
 actions+=/corruption,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.corruption.down&!warlock_target_low&(!moving|action.corruption.cast=0)&!action.corruption.executing
 actions+=/siphon_life,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.siphon_life.down&!warlock_target_low
 actions+=/bane_of_agony,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.bane_of_agony.down&!warlock_target_low&(!action.bane_of_havoc.known|debuff.bane_of_havoc.down)
-actions+=/shadow_bolt,if=warlock_pvp_pressure&warlock_spell_in_range&!moving
-actions+=/shoot,use_off_gcd=1,if=warlock_pvp_pressure
+actions+=/shadow_bolt,if=warlock_pvp_pressure&warlock_spell_in_range&!moving&warlock_filler_fits
+actions+=/shoot,if=warlock_pvp_pressure&warlock_filler_fits
 actions+=/eureka,use_off_gcd=1,if=warlock_sustained&!moving&!warlock_incapacitated
 actions+=/blood_fury,use_off_gcd=1,if=warlock_sustained&!moving&!warlock_incapacitated
 actions+=/berserking,use_off_gcd=1,if=warlock_sustained&!moving&!warlock_incapacitated

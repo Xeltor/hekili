@@ -2586,10 +2586,11 @@ do
             -- Don't reset.
 
             -- Channels.
-            elseif k == "channel" then
+            elseif k == "channel" or k == "channel_interrupt" then
                 if t.buff.casting.down or t.buff.casting.v3 ~= 1 then return nil end
                 local chan = class.abilities[ t.buff.casting.v1 ]
 
+                if k == "channel_interrupt" then return chan and chan.interruptAction end
                 if chan then return chan.key end
                 return tostring( t.buff.casting.v1 )
 
@@ -7788,10 +7789,13 @@ function state:TimeToReady( action, pool )
 
     if not state.channel_breakable and not ability.dual_cast then
         z = self.buff.casting.remains
-        -- use_while_casting=1 (SimC): an instant need not wait for the player's cast or channel (read only when it
-        -- would); one with its own cast time would end that cast, so it still waits
-        if z > wait and not ( self.safebool( self.args.use_while_casting ) and ( ability.cast or 0 ) == 0 ) then
-            wait = z
+        if z > wait then
+            if self.channel_interrupt == action then
+                -- This spell ends the channel and must be ready for its own GCD to do so.
+                if ability.gcd ~= "off" then wait = max( wait, self.cooldown.global_cooldown.remains ) end
+            elseif not ( self.safebool( self.args.use_while_casting ) and ( ability.cast or 0 ) == 0 ) then
+                wait = z
+            end
         end
     end
 

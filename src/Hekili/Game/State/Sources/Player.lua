@@ -66,6 +66,7 @@ local function readStat(api, i, t)
     v[5], v[6], v[7] = Plain(api, r5) or 0, Plain(api, r6) or 0, Plain(api, r7) or 0
     I.statT[i] = t
     I.statObserved[i] = type(r1) == "number"
+        and (e[1] ~= "UnitStat" or type(r2) == "number")
         and (e[1] ~= "UnitRangedDamage" or type(r2) == "number" and type(r3) == "number")
     if e[1] == "UnitDamage" then
         I.damageForm = Plain(api, api.GetShapeshiftForm()) -- secret: Plain; the form the weapon damage is for (Rows.lua)
@@ -192,6 +193,8 @@ S.On("UNIT_ATTACK_POWER", "player", onPlayerStats)
 S.On("UNIT_STATS", "player", function(api, t, unit)
     if unit == "player" then
         I.statObserved[I.statIndex.GetSpellCritChance[0]] = nil
+        -- A change invalidates the observation. Keep the numerical fallback until the usual out-of-combat read.
+        I.statObserved[I.statIndex.UnitStat[5]] = nil
         readStats(api, t)
     end
 end)

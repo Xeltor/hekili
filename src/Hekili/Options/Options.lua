@@ -8689,6 +8689,7 @@ do
 
     -- (windows design v6 §3.3) the sequence entries: not abilities, handled by the walk (Engine/Sim/Core.lua)
     local SEQ_LINE = { sequence = true, strict_sequence = true, restart_sequence = true }
+    local healthCueFields = { "display_below", "display_target_below", "display_pet_below" }
 
     -- (re-pin design §3a) a window line's name: one any spec of the loaded class registered (RegisterWindow)
     local function knownWindow( name )
@@ -8768,13 +8769,18 @@ do
         if result.interrupt_global then result.interrupt_global = tonumber( result.interrupt_global ) end
 
         if result.use_off_gcd then result.use_off_gcd = tonumber( result.use_off_gcd ) end
-        if result.display_below then
-            local percent = tonumber( result.display_below )
-            if not percent or percent <= 0 or percent >= 100 or percent % 1 ~= 0 then
-                result.enabled = false
-                result.display_below = nil
-            else
-                result.display_below = percent
+        local cueField
+        for _, field in ipairs( healthCueFields ) do
+            if result[ field ] then
+                local percent = tonumber( result[ field ] )
+                local upper = field == "display_below" and 100 or 99
+                if cueField or not percent or percent <= 0 or percent > upper or percent % 1 ~= 0 then
+                    result.enabled = false
+                    result.display_below, result.display_target_below, result.display_pet_below = nil, nil, nil
+                    break
+                end
+                result[ field ] = percent
+                cueField = field
             end
         end
         if result.focus then

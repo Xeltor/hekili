@@ -100,6 +100,9 @@ function M.load(vs, file, class)
         UnitIsDead = function(unit)
             return game.dead[unit] == true
         end,
+        TargetHealthFraction = function()
+            return game.targetHealthFraction
+        end,
         CombatLogGetCurrentEventInfo = function()
             return unpack(game.row, 1, 24)
         end,

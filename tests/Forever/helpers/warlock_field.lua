@@ -13,7 +13,6 @@ local function warlock(build, level, known, options)
     character.power.max, character.power.value = o.maxMana or 1000, o.mana or 1000
     character.items = { [16] = o.mainHand, [18] = o.weapon }
     character.ranges[5019] = { 0, 30 }
-    character.ranges[755] = { 0, 20 }
     character.ranges[19028] = { 0, 100 }
     for _, id in ipairs({ 1714, 11719, 18223 }) do
         character.ranges[id] = { 0, 30 }
@@ -50,6 +49,10 @@ local function warlock(build, level, known, options)
     })
     assert.are.same({}, H.loadErrors)
     local ctl = H.ctl
+    local tap = H.ns.VirtualState.KnownID(1454)
+    if ctl.known[tap] and not ctl.usable[tap] then
+        ctl.usable[tap] = { true, false }
+    end
     ctl.distance.target, ctl.level.target = o.range or 15, o.boss and -1 or level
     ctl.classification, ctl.groupMembers = o.classification or "normal", o.group or 0
     ctl.unitHealth.player, ctl.unitHealthMax.player = o.health or 1000, 1000
@@ -66,10 +69,15 @@ local function warlock(build, level, known, options)
     end
     ctl.exists.pet, ctl.dead.pet = o.petHealth ~= nil, o.petDead
     if ctl.exists.pet then
-        ctl.guid.pet = "Pet-0-0-0-0-416-000001"
+        ctl.guid.pet = o.petGUID or "Pet-0-0-0-0-416-000001"
         ctl.unitHealth.pet, ctl.unitHealthMax.pet = o.petHealth, 1000
         ctl.distance.pet, ctl.petPower = o.petRange or 10, 1000
         ctl.exists.pettarget, ctl.unitIs.pettarget = o.petTarget ~= nil, o.petTarget
+        local funnel = H.ns.VirtualState.KnownID(755)
+        if ctl.known[funnel] then
+            ctl.ranges[funnel] = { 0, 20 }
+            ctl.usable[funnel] = { not o.petDead, false }
+        end
     end
     for id, count in pairs(o.items or {}) do
         ctl.itemCount[id] = count

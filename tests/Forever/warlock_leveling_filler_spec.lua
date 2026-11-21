@@ -175,11 +175,13 @@ describe("Forever Warlock outdoor leveling filler", function()
         assert.are.equal("life_tap", pick(h))
         local recs = h.Hekili.Engine.Output.Primary.recs
         assert.are.equal("drain_life", recs[2].actionName)
-        for _, health in ipairs({ 800, SECRET }) do
+        for _, health in ipairs({ 680, SECRET }) do
             assert.are.equal("shoot", pick(lowMana(health, 709)), health == SECRET and "hidden health" or "wounded")
         end
-        assert.are.equal("shoot", pick(lowMana(1000, 699)))
-        assert.are.equal("shoot", pick(lowMana(1000, 709, 25)))
+        -- General mana recovery only needs enough health for the Tap, even when the drain is lower rank or out of range.
+        assert.are.equal("life_tap", pick(lowMana(800, 709)))
+        assert.are.equal("life_tap", pick(lowMana(1000, 699)))
+        assert.are.equal("life_tap", pick(lowMana(1000, 709, 25)))
     end)
 
     it(
@@ -225,7 +227,7 @@ describe("Forever Warlock outdoor leveling filler", function()
         end
     end)
 
-    it("does not spend health preparing a disabled drain or compare it with a disabled wand", function()
+    it("recovers low mana with a disabled drain and does not compare a drain with a disabled wand", function()
         local function disable(h, key)
             local spec = h.Hekili.State.spec.id
             h.Hekili.Engine.settings.specs[spec].abilities[key].disabled = true
@@ -236,7 +238,11 @@ describe("Forever Warlock outdoor leveling filler", function()
             weapon = WAND,
             shootUsable = true,
         })
-        assert.are.equal("shoot", disable(lowMana, "drain_life"))
+        assert.are.equal("life_tap", disable(lowMana, "drain_life"))
+        local out = lowMana.Hekili.Engine.Output.Primary
+        for i = 1, out.count do
+            assert.are_not.equal("drain_life", out.recs[i].actionName)
+        end
         local wounded = warlock("Affliction", 22, { 5019, 1088, 699 }, {
             health = 800,
             weapon = WAND,

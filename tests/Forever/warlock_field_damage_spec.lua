@@ -4,6 +4,324 @@ local SECRET = require("Game.State.helpers.fake_api").SECRET
 local warlock, pick, cast = field.warlock, field.pick, field.cast
 
 describe("Forever Warlock field damage", function()
+    describe("Affliction leveling pulls", function()
+        local function levelEleven(trainedAgony, options)
+            local spells = { 172, 695, 707, 1120, 5019 }
+            if trainedAgony then
+                spells[#spells + 1] = 980
+            end
+            options = options or {}
+            options.items = options.items or { [6265] = 2 }
+            options.weapon = { 11287, "Lesser Magic Wand", "INVTYPE_RANGEDRIGHT", 2, 19 }
+            options.shootUsable = true
+            return warlock("Affliction", 11, spells, options)
+        end
+
+        local function modelLowHealth(H)
+            local belief = H.ns.VirtualStateInternal.th
+            belief.lo0, belief.est0, belief.hi0 = 0, 0.1, 0.2
+            assert.is_nil(H.ns.Facade.TargetHealthFraction())
+            assert.are.same({ 0.2, false }, { H.ns.Facade.TargetHealthUpperFraction() })
+        end
+
+        it("opens with Corruption on an ordinary enemy, adds trained Agony, then wands", function()
+            local H = levelEleven(true)
+            assert.are.equal("corruption", pick(H))
+            assert.are.equal("bane_of_agony", cast(H, 172))
+            assert.are.equal("shoot", cast(H, 980))
+        end)
+
+        it("offers Agony over an active wand after manual Corruption despite a low health estimate", function()
+            local H = levelEleven(true, { targetHealth = SECRET })
+            modelLowHealth(H)
+            H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-manual-corruption", 172)
+            H.Fire("START_AUTOREPEAT_SPELL")
+            assert.are.equal("bane_of_agony", pick(H, 1.6))
+        end)
+
+        it("requires readable low health to top up one shard on an undotted target", function()
+            local H = warlock("Affliction", 11, { 695, 1120 }, { targetHealth = SECRET, items = { [6265] = 1 } })
+            modelLowHealth(H)
+            assert.are.equal("shadow_bolt", pick(H))
+            H.ctl.unitHealth.target = 200
+            assert.are.equal(0.2, H.ns.Facade.TargetHealthFraction())
+            assert.are.equal("drain_soul", pick(H))
+        end)
+
+        it("wands after the opening DoTs when health is hidden even with an empty shard bag", function()
+            local H = levelEleven(true, { targetHealth = SECRET, items = {} })
+            assert.are.equal("bane_of_agony", cast(H, 172))
+            assert.are.equal("shoot", cast(H, 980))
+        end)
+
+        it("finishes for a shard at 25 percent even when both DoTs are missing and the wand is firing", function()
+            local H = levelEleven(true, { targetHealth = 251, items = { [6265] = 1 } })
+            H.Fire("START_AUTOREPEAT_SPELL")
+            assert.are.equal("corruption", pick(H))
+            H.ctl.unitHealth.target = 250
+            H.Fire("UNIT_HEALTH", "target")
+            assert.are.equal("drain_soul", pick(H))
+            H.ctl.itemCount[6265] = 2
+            H.Fire("BAG_UPDATE_DELAYED")
+            assert.is_not_equal("drain_soul", pick(H))
+        end)
+
+        it("keeps Drain Soul through both DoT expirations when the wand stops after the channel starts", function()
+            local H = levelEleven(true, { targetHealth = SECRET, items = {} })
+            assert.are.equal("bane_of_agony", cast(H, 172))
+            assert.are.equal("shoot", cast(H, 980))
+            H.Fire("START_AUTOREPEAT_SPELL")
+            pick(H, 8)
+
+            local start = H.ctl.now
+            local finish = start + 15
+            H.Fire("UNIT_SPELLCAST_SENT", "player", "target", "Cast-wand-drain", 1120)
+            H.ctl.channel = { start * 1000, finish * 1000, spell = 1120 }
+            H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-wand-drain", 1120)
+            H.Fire("UNIT_SPELLCAST_CHANNEL_START", "player", "Cast-wand-drain", 1120)
+            H.Fire("STOP_AUTOREPEAT_SPELL")
+
+            assert.are.equal("drain_soul", pick(H, 14.8))
+            assert.is_true(H.Hekili.Engine.Output.Primary.recs[1].time >= finish - H.ctl.now - 0.05)
+            local state = H.Hekili.State
+            state.reset("Primary", true)
+            assert.is_true(state:IsChanneling("drain_soul"))
+            assert.is_true(state.debuff.corruption.down)
+            assert.is_true(state.debuff.bane_of_agony.down)
+        end)
+
+        it("wands after Corruption on a trivial enemy even with hidden health", function()
+            local H = levelEleven(true, { trivial = true, targetHealth = SECRET })
+            assert.are.equal("shoot", cast(H, 172))
+        end)
+
+        it("still offers missing Agony late in a manually applied Corruption", function()
+            local H = levelEleven(true, { targetHealth = SECRET })
+            assert.are.equal("bane_of_agony", cast(H, 172))
+            assert.are.equal("bane_of_agony", pick(H, 5)) -- 6.6 seconds into rank one's 12-second Corruption.
+        end)
+
+        it("uses trained Agony even when Corruption is untrained", function()
+            local H = warlock("Affliction", 11, { 695, 980 }, { targetHealth = SECRET })
+            assert.are.equal("bane_of_agony", pick(H))
+            assert.are.equal("shadow_bolt", cast(H, 980))
+        end)
+
+        it("renews each DoT independently and lets Agony finish its final tick", function()
+            local H = levelEleven(true, { targetHealth = SECRET })
+            assert.are.equal("bane_of_agony", cast(H, 172))
+            local expires = H.ctl.now + 24
+            assert.are.equal("shoot", cast(H, 980))
+            assert.are.equal("corruption", pick(H, 14))
+            assert.are.equal("shoot", cast(H, 172))
+
+            -- The display may queue the refresh before the last tick. It must schedule the cast at expiry.
+            if pick(H, expires - H.ctl.now - 0.4) == "bane_of_agony" then
+                assert.is_true(H.ctl.now + H.Hekili.Engine.Output.Primary.recs[1].time >= expires - 0.01)
+            end
+            assert.are.equal("bane_of_agony", pick(H, 0.6))
+            assert.is_not_equal("bane_of_agony", cast(H, 980))
+        end)
+
+        it("starts with Corruption again after switching to an undotted target", function()
+            local H = levelEleven(true, { targetHealth = SECRET })
+            assert.are.equal("bane_of_agony", cast(H, 172))
+            H.ctl.guid.target = "Creature-0-0-0-0-999-000002"
+            H.Fire("PLAYER_TARGET_CHANGED")
+            assert.are.equal("corruption", pick(H))
+        end)
+
+        it("wands after Corruption when the enemy is dying or Agony is untrained", function()
+            local dying = levelEleven(true)
+            assert.are.equal("corruption", pick(dying))
+            dying.ctl.unitHealth.target = 200
+            assert.are.equal("shoot", cast(dying, 172))
+
+            local untrained = levelEleven(false)
+            assert.are.equal("corruption", pick(untrained))
+            assert.are.equal("shoot", cast(untrained, 172))
+        end)
+
+        it("preserves an existing Bane of Doom when Agony is available while moving", function()
+            local H = warlock("Affliction", 60, { 11713, 603 }, { moving = true })
+            assert.are.equal("bane_of_agony", pick(H))
+            assert.is_not_equal("bane_of_agony", cast(H, 603))
+            assert.is_true(H.Hekili.State.debuff.bane_of_doom.up)
+        end)
+    end)
+
+    describe("level fourteen Drain Life in an outdoor duo", function()
+        local function duo(options)
+            options.group = 2
+            options.weapon = { 11287, "Lesser Magic Wand", "INVTYPE_RANGEDRIGHT", 2, 19 }
+            options.shootUsable, options.items = true, { [6265] = 2 }
+            return warlock("Affliction", 14, { 6222, 980, 705, 689, 755, 1120, 5019 }, options)
+        end
+
+        local function startGCD(H)
+            local gcd = H.Hekili.Engine.Registry.GCD_SPELL
+            H.ctl.cooldown[gcd] = { isActive = true, isOnGCD = true, startTime = H.ctl.now, duration = 1.5 }
+            H.Fire("SPELL_UPDATE_COOLDOWN")
+        end
+
+        local function startWandGCD(H)
+            H.Fire("START_AUTOREPEAT_SPELL")
+            H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-duo-wand", 5019)
+            startGCD(H)
+        end
+
+        local function startDrain(H, spell, duration)
+            local start = H.ctl.now
+            H.Fire("UNIT_SPELLCAST_SENT", "player", "target", "Cast-duo-drain", spell)
+            H.ctl.channel = { start * 1000, (start + duration) * 1000, spell = spell }
+            H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-duo-drain", spell)
+            H.Fire("UNIT_SPELLCAST_CHANNEL_START", "player", "Cast-duo-drain", spell)
+            return start
+        end
+
+        local function findCue(out, action)
+            for i = 1, out.healthCues.n do
+                if out.healthCues[i].action == action then
+                    return out.healthCues[i]
+                end
+            end
+        end
+
+        it("offers the pet rescue during an ongoing drain without prompting another damage spell", function()
+            for _, channel in ipairs({ { 689, 5 }, { 1120, 15 } }) do
+                local H = duo({ health = 550, petHealth = SECRET, partyAggro = true })
+                local spell, duration = channel[1], channel[2]
+                local start = startDrain(H, spell, duration)
+                pick(H, 1.6) -- The cast's GCD is over; both drains still have ticks to come.
+                local out = H.Hekili.Engine.Output.Primary
+                local cue = assert(findCue(out, "health_funnel"), "missing rescue during " .. spell)
+                assert.are.same({ "pet", 30 }, { cue.unit, cue.percent })
+                assert.is_nil(cue.playerFloor)
+                assert.is_nil(cue.gcdStart)
+                H.ctl.unitHealth.pet = 900
+                H.Fire("UNIT_HEALTH", "pet")
+                pick(H, 0.1)
+                assert.is_true(out.count == 0 or out.recs[1].time >= start + duration - H.ctl.now - 0.05)
+                H.ctl.unitHealth.pet = 300
+                H.Fire("UNIT_HEALTH", "pet")
+                assert.are.equal("health_funnel", pick(H, 0.1))
+                assert.is_near(0, out.recs[1].time, 0.01)
+            end
+        end)
+
+        it("waits for the drain's global cooldown before a mid-channel pet rescue", function()
+            local H = duo({ health = 550, petHealth = SECRET, partyAggro = true })
+            local start = startDrain(H, 689, 5)
+            startGCD(H)
+            pick(H, 0.2)
+            local out = H.Hekili.Engine.Output.Primary
+            local cue = assert(findCue(out, "health_funnel"))
+            local readyAt = cue.gcdStart + cue.gcdDuration
+            assert.is_near(start + 1.5, readyAt, 0.01)
+            assert.is_true(out.count == 0 or out.recs[1].time >= start + 5 - H.ctl.now - 0.05)
+
+            H.ctl.unitHealth.pet = 300
+            H.Fire("UNIT_HEALTH", "pet")
+            pick(H, 0.1)
+            assert.are.equal("health_funnel", out.healthCues[1].action)
+            assert.are.equal("health_funnel", pick(H, 0.1)) -- the ordinary countdown settles on the next publish
+            assert.is_near(readyAt - H.ctl.now, out.recs[1].time, 0.01)
+        end)
+
+        it("holds the active Funnel and a Shadow Bolt cast while the demon is critically hurt", function()
+            for _, spell in ipairs({ 755, 705 }) do
+                local H = duo({ health = 250, petHealth = 200, partyAggro = true })
+                local start = H.ctl.now
+                local finish = start + (spell == 755 and 10 or 2.8)
+                H.Fire("UNIT_SPELLCAST_SENT", "player", spell == 755 and "pet" or "target", "Cast-duo-held", spell)
+                if spell == 755 then
+                    H.ctl.channel = { start * 1000, finish * 1000, spell = spell }
+                    H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-duo-held", spell)
+                    H.Fire("UNIT_SPELLCAST_CHANNEL_START", "player", "Cast-duo-held", spell)
+                else
+                    H.ctl.casting = { start * 1000, finish * 1000 }
+                    H.Fire("UNIT_SPELLCAST_START", "player", "Cast-duo-held", spell)
+                end
+                pick(H, 1.6) -- The GCD is over but the active spell has not finished.
+                local out = H.Hekili.Engine.Output.Primary
+                assert.is_nil(findCue(out, "health_funnel"), spell)
+                assert.is_true(out.count == 0 or out.recs[1].time >= finish - H.ctl.now - 0.05, spell)
+            end
+        end)
+
+        it("drains for the Warlock's missing health whether the enemy attacks the player, demon, or partner", function()
+            for _, victim in ipairs({ "player", "pet", "party1" }) do
+                local H = duo({
+                    health = 650,
+                    petHealth = 900,
+                    petTanking = victim == "pet",
+                    partyAggro = victim == "party1",
+                })
+                H.ctl.threat.target = nil -- identify the engaged enemy by its victim alone
+                assert.are.equal("drain_life", pick(H), victim)
+                H.ctl.unitHealth.player, H.ctl.unitHealth.pet = 1000, 250
+                H.Fire("UNIT_HEALTH", "player")
+                H.Fire("UNIT_HEALTH", "pet")
+                assert.are.equal("health_funnel", pick(H), victim)
+            end
+        end)
+
+        it("rescues a critical demon before self-healing even when the Warlock also needs health", function()
+            local H = duo({ health = 250, petHealth = 300, partyAggro = true })
+            H.ctl.itemCount[5512] = 1
+            H.Fire("BAG_UPDATE_DELAYED")
+            assert.are.equal("health_funnel", pick(H))
+
+            H.ctl.unitHealth.pet = SECRET
+            H.Fire("UNIT_HEALTH", "pet")
+            assert.are.equal("healthstone", pick(H))
+            local out = H.Hekili.Engine.Output.Primary
+            assert.are.equal("health_funnel", out.healthCues[1].action)
+            assert.is_nil(out.healthCues[1].playerFloor)
+            H.ctl.unitHealth.pet, H.ctl.unitHealth.player = 300, SECRET
+            H.Fire("UNIT_HEALTH", "player")
+            H.Fire("UNIT_HEALTH", "pet")
+            assert.are.equal("health_funnel", pick(H))
+
+            local moving = duo({ moving = true, health = 250, petHealth = 300, partyAggro = true })
+            assert.is_not_equal("health_funnel", pick(moving))
+            assert.is_nil(findCue(moving.Hekili.Engine.Output.Primary, "health_funnel"))
+        end)
+
+        it("keeps the player-health Drain Life cue through a wand global cooldown", function()
+            local H = duo({ health = SECRET, petHealth = SECRET, partyAggro = true })
+            H.ctl.itemCount[5512] = 1 -- a Minor Healthstone can still be used immediately
+            H.Fire("BAG_UPDATE_DELAYED")
+            assert.are.equal("corruption", pick(H))
+            startWandGCD(H)
+            assert.are.equal("corruption", pick(H, 0.1))
+            local out = H.Hekili.Engine.Output.Primary
+            assert.is_true(out.recs[1].time > 0)
+            assert.are.equal("health_funnel", out.healthCues[1].action)
+            local cue = assert(findCue(out, "drain_life"))
+            assert.are.equal(65, cue.percent)
+            assert.is_nil(cue.unit) -- this threshold is the Warlock's health
+            assert.is_near(out.recs[1].time, cue.gcdStart + cue.gcdDuration - H.ctl.now, 0.01)
+            local funnel = assert(findCue(out, "health_funnel"))
+            assert.are.same({ "pet", 30 }, { funnel.unit, funnel.percent })
+            assert.is_nil(funnel.playerFloor)
+            assert.are.same({ cue.gcdStart, cue.gcdDuration }, { funnel.gcdStart, funnel.gcdDuration })
+            local stone = assert(findCue(out, "healthstone"))
+            assert.is_nil(stone.gcdStart)
+            assert.is_nil(stone.gcdDuration)
+        end)
+
+        it("holds Drain Life during a wand global cooldown when mana or spell range prevents the cast", function()
+            for _, options in ipairs({ { mana = 1 }, { range = 25 } }) do
+                options.health, options.petHealth, options.partyAggro = SECRET, 900, true
+                local H = duo(options)
+                startWandGCD(H)
+                pick(H, 0.1)
+                assert.is_nil(findCue(H.Hekili.Engine.Output.Primary, "drain_life"))
+            end
+        end)
+    end)
+
     it("stops setting up fresh DoTs on a dying ordinary enemy in all five builds", function()
         for _, build in ipairs({ "Affliction", "SMRuin", "Demonology", "ShadowBrand", "Destruction" }) do
             local H = warlock(build, 36, { 7641, 2941, 7648 }, { targetHealth = 200 })
@@ -141,7 +459,7 @@ describe("Forever Warlock field damage", function()
         assert.are.same({ "corruption", "cycle" }, { pair(true, true) })
         assert.are.equal("shadow_bolt", (pair(false, true)))
         assert.are.equal("shadow_bolt", (pair(true, false)))
-        assert.are.equal("shadow_bolt", (pair(true, true, true)))
+        assert.are.same({ "corruption", "cycle" }, { pair(true, true, true) })
         assert.are.equal("shadow_bolt", (pair(true, true, false, false)))
     end)
 end)

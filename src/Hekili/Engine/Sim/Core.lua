@@ -344,6 +344,76 @@ local default_modifiers = {
     interrupt = return_false
 }
 
+-- A health cue can be the next spell while an auto-repeat is firing. Show the shared cooldown even for
+-- defensives the predictor treats as ready. For a delayed pick, verify nothing else holds it now.
+local function healthCueGCD( action )
+    local delay = state.delay
+    state.delay = 0
+    local gcd = state.cooldown.global_cooldown
+    local remains = gcd.remains
+    local ready = remains > 0
+    if ready and delay > 0 then
+        ready = delay == remains and ( not state.buff.casting.up or state.channel_interrupt == action )
+            and state.cooldown[ action ].ready and state:HasRequiredResources( action )
+            and state:IsUsable( action ) and Hekili:CheckStack() and scripts:CheckScript( state.scriptID )
+    end
+    state.delay = delay
+    if ready then return gcd.expires - gcd.duration, gcd.duration end
+end
+
+-- Record visual alternatives in APL order. A stricter player-health floor leaves part of a lower cue's band uncovered.
+local function healthCuePasses( slot, entry, action, ability )
+    local unit = entry.display_pet_below and "pet" or entry.display_target_below and "target" or nil
+    local percent = entry.display_pet_below or entry.display_target_below or entry.display_below
+    local playerFloor
+    if unit ~= "target" then
+        playerFloor = ability.displayPlayerFloor
+        if Facade.issecretvalue( playerFloor ) then return false end
+        if playerFloor == 0 then
+            playerFloor = nil -- This context has no minimum player health.
+        elseif playerFloor ~= nil or ability.funcs.displayPlayerFloor then
+            if type( playerFloor ) ~= "number" or not ( playerFloor > 0 and playerFloor <= 100 ) then return false end
+        end
+    end
+    local cues = slot.healthCues
+    local gcdStart, gcdDuration
+    if cues and state.offset == 0 and entry.use_off_gcd ~= 1 and ability.gcd ~= "off" then
+        gcdStart, gcdDuration = healthCueGCD( action )
+    end
+    if cues and state.offset == 0 and ( state.delay == 0 or gcdStart ) then
+        local covered = 0
+        for i = 1, cues.n do
+            local previous = cues[ i ]
+            if previous.unit == unit and ( previous.playerFloor or 0 ) <= ( playerFloor or 0 ) then
+                covered = max( covered, previous.percent )
+            end
+        end
+        if percent > covered then
+            local i = cues.n + 1
+            local cue = cues[ i ] or {}
+            cue.action, cue.percent, cue.unit = action, percent, unit
+            cue.playerFloor = playerFloor
+            cue.gcdStart, cue.gcdDuration = gcdStart, gcdDuration
+            cues[ i ], cues.n = cue, i
+        end
+    end
+    if unit == "pet" then
+        local fraction = Facade.PetHealthFraction()
+        if not fraction or fraction <= 0 or fraction > percent / 100 then return false end
+        if not playerFloor then return true end
+        local player = Facade.PlayerHealthFraction()
+        return player ~= nil and player >= playerFloor / 100
+    elseif unit == "target" then
+        local fraction = Facade.TargetHealthFraction()
+        return fraction ~= nil and fraction > 0 and fraction <= percent / 100
+    elseif playerFloor then
+        -- A hidden player-health belief defaults to full. Only a real reading can put a health spend in the queue.
+        local fraction = Facade.PlayerHealthFraction()
+        return fraction ~= nil and fraction >= playerFloor / 100 and fraction <= percent / 100
+    end
+    return state.health.pct <= percent
+end
+
 function Hekili:CheckChannel( ability, prio )
     if not state.channeling then
         if self.ActiveDebug then self:Debug( "CC: We aren't channeling; CheckChannel is false." ) end
@@ -1440,22 +1510,8 @@ function Hekili:GetPredictionFromAPL( dispName, packName, listName, slot, action
 
                                                 Timer:Track("Post Recheck")
 
-                                                if aScriptPass and entry.display_below then
-                                                    -- Keep the readable-health recommendation. With hidden HP only
-                                                    -- the ready candidate goes to the display's renderer.
-                                                    local cues = slot.healthCues
-                                                    if cues and state.offset == 0 and state.delay == 0 then
-                                                        local previous = cues[ cues.n ]
-                                                        local floor = cues.n > 0 and previous.percent or 0
-                                                        -- Higher APL entries already cover every value through floor.
-                                                        if entry.display_below > floor then
-                                                            local i = cues.n + 1
-                                                            local cue = cues[ i ] or {}
-                                                            cue.action, cue.percent = action, entry.display_below
-                                                            cues[ i ], cues.n = cue, i
-                                                        end
-                                                    end
-                                                    aScriptPass = state.health.pct <= entry.display_below
+                                                if aScriptPass and ( entry.display_below or entry.display_target_below or entry.display_pet_below ) then
+                                                    aScriptPass = healthCuePasses( slot, entry, action, ability )
                                                 end
 
                                                 if aScriptPass then
@@ -2119,11 +2175,11 @@ function Hekili.Update()
                                 state.channel_breakable = false
                             end
 
-                            local casting, shouldCheck = state:IsCasting(), false
+                            local casting = state:IsCasting()
+                            -- A channel may yield to one named action. The rest of the list still waits for it to end.
+                            local shouldCheck = channeling and not shouldBreak and state.channel_interrupt ~= nil
 
-                            if ( casting or ( channeling and not shouldBreak ) ) and state.spec.can_dual_cast then
-                                shouldCheck = false
-
+                            if not shouldCheck and ( casting or ( channeling and not shouldBreak ) ) and state.spec.can_dual_cast then
                                 for spell in pairs( state.spec.dual_cast ) do
                                     if debug then Hekili:Debug( "CWC: %s | %s | %s | %s | %.2f | %s | %.2f | %.2f", spell, tostring( state:IsKnown( spell ) ), tostring( state:IsUsable( spell ) ), tostring( class.abilities[ spell ].dual_cast ), state:TimeToReady( spell ), tostring( state:TimeToReady( spell ) <= t ), state.offset, state.delay ) end
                                     if class.abilities[ spell ].dual_cast and state:IsKnown( spell ) and state:IsUsable( spell ) and state:TimeToReady( spell ) <= t then

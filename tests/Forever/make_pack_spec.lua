@@ -419,6 +419,26 @@ describe("tools/make_pack.lua", function()
         assert.are.equal(simc, mp.unparse(lists))
     end)
 
+    it("round-trips target and pet health cues and rejects ambiguous units or invalid cutoffs", function()
+        local simc = "actions=drain_soul,display_target_below=25,if=x\nactions+=/health_funnel,display_pet_below=30\n"
+            .. "actions+=/life_tap,display_below=100\n"
+        assert.are.equal(simc, mp.unparse(mp.parse(simc)))
+        for _, modifiers in ipairs({
+            "display_target_below=0",
+            "display_below=101",
+            "display_target_below=25.5",
+            "display_below=30,display_target_below=25",
+            "display_pet_below=100",
+            "display_pet_below=10.5",
+            "display_pet_below=55,display_target_below=25",
+            "display_below=80,display_pet_below=55",
+        }) do
+            assert.has_error(function()
+                mp.parse("actions=drain_soul," .. modifiers)
+            end)
+        end
+    end)
+
     it("round-trips focus=N for any positive integer tier and refuses 0, negatives and non-integers", function()
         local simc = "actions=heroic_strike,use_off_gcd=1,focus=2,if=a\nactions+=/cleave,focus=12\n"
         local lists = mp.parse(simc)

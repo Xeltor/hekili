@@ -15,7 +15,7 @@ local M = {}
 
 --- The Fury (wowsims.com) content at `level`.
 function M.content(level)
-    return ws.content(ww.Fury, {
+    local C = ws.content(ww.Fury, {
         pack = "Fury (wowsims.com)",
         level = level,
         talents = ws.header("warrior_fury").talents,
@@ -23,6 +23,25 @@ function M.content(level)
         race = ws.race("warrior_fury"),
         kit = { "berserker_rage", "reckless_swings" },
     })
+    -- The world carries Spearing Strike from its Arms base and Reckless Swings in its simulated
+    -- ability kit. Neither is a trained spell. Only the points actually spent at this level grant it.
+    local character = C.character
+    function C.character()
+        local c = character()
+        for i = #c.known, 1, -1 do
+            local id = c.known[i]
+            if (id == 1310222 or id == 1329555) and not c.talents[id] then
+                table.remove(c.known, i)
+            end
+        end
+        return c
+    end
+    C.liveRequires = {
+        shatter_curse = function()
+            return false -- the melee mob never applies a dispellable curse
+        end,
+    }
+    return C
 end
 
 --- 20 fights at `level`, the `Fury L<level> solo:` line printed, pack_gate's gate, the Arms 20-fight gate's outcome

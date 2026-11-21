@@ -49,11 +49,22 @@
 -- our off-GCD icon shows it while wowsims waits (off the GCD: not scored).
 local outdoorCombat = "arms_open_world&combat>0"
 local pveCombat = "arms_pve_target&combat>0"
+local fieldAttack = "warrior_field&warrior_attack_target&combat>0"
+local shortPull = "(warrior_field&arms_short_pull&!boss&!target.is_boss)"
 local melee = "&target.within5&!target.outside5"
+local meleeTarget = "warrior_attack_target&(!warrior_field|(target.within5&!target.outside5))"
 local noLastStand = "&(!action.last_stand.known|!buff.last_stand.up)"
 local noShieldWall = "&(!action.shield_wall.known|!buff.shield_wall.up)"
+local pvpMelee = "warrior_pvp_target" .. melee
+local interrupt = "("
+    .. pveCombat
+    .. "&warrior_attack_target"
+    .. melee
+    .. "&debuff.casting.up&debuff.casting.v2=0)|warrior_pvp_interrupt"
+local spearBonus = "(target.creature_type='giant'|target.creature_type='dragonkin')"
+local preserveShield = "(!(warrior_field|warrior_pvp_target)|combat=0|!arms_shield_stance)"
 
-return {
+return require("tools.wowsims.warrior_dps")({
     class = "WARRIOR",
     pack = "Arms (wowsims.com)",
     spec = "arms",
@@ -84,11 +95,14 @@ return {
     -- player-facing lines of the in-game description (the user's audit rulings, 2026-10-21)
     notes = {
         "Cooldowns toggle hides: Death Wish, Recklessness (also behind its pack setting, off by default), Sweeping Strikes and the racials (Blood Fury, Berserking, Eureka, Elune's Light).",
-        "The endgame priority adapts as you learn abilities. Open-world pulls use earlier Rend and spend less rage on armor stacks.",
+        "Ordinary outdoor and dungeon enemies get earlier Rend and less armor stacking. Giants and Dragonkin give Spearing Strike its damage bonus.",
+        "Outside raids and level-60 boss fights, untalented Slam follows a main-hand swing. Improved Slam removes that timing requirement.",
+        "The Whirlwind stance swap on these pulls needs four nearby enemies, enough retained Rage for Whirlwind, and at most 15 Rage lost in the swap.",
         "While leveling or fighting outdoors, Bloodrage favors low rage. Readable health must be at least 65%; hidden health in combat leaves it eligible.",
         "Rend skips known bleed-immune targets and backs off briefly after an immune result in PvE.",
         "With Defensives enabled, use Demoralizing Shout early on outdoor pulls.",
         "Hamstring slows non-boss PvE humanoids in melee range when they enter Execute range.",
+        "Against a hostile player, Hamstring a visibly moving opponent and prioritize Mortal Strike to reduce incoming healing.",
         "PvE utility follows your Interrupts and Defensives toggles. Retaliation also follows Cooldowns.",
     },
     executePhase = "execute_phase",
@@ -100,37 +114,53 @@ return {
     -- ruling, 2026-10-22)
     focus = { overpower = 1, heroic_strike = 2, cleave = 2, rend = 2 },
     -- Rule 15: Thunder Clap, a setting off in game and on in the harness (the user's ruling, 2026-10-21); its only
-    -- line is the leveling line below (the slow missing: a need, R41). Fury casts no Thunder Clap, so its recipe names
-    -- none (rule 15 errors on a key with no cast line) and the setting is registered for Arms only.
+    -- line is the leveling line below (the slow missing: a need, R41). Fury uses Thunder Clap for pack damage.
     maintenance = { thunder_clap = "maintain_thunder_clap" },
     guard = {
         -- Bloodrage uses a health threshold only when the client supplies a readable value in combat.
         bloodrage = "arms_bloodrage_safe",
-        sunder_armor = "!(arms_open_world&arms_short_pull)",
+        sunder_armor = "!warrior_pvp_target&!" .. shortPull,
+        mortal_strike = "!warrior_pvp_target|(target.within5&!target.outside5)",
         rend = "!arms_skip_rend",
+        slam = "!warrior_field|(!moving&(talent.improved_slam.enabled|(mainhand_speed>0&mainhand_remains>=mainhand_speed-0.3)))",
+        spearing_strike = "!warrior_field|rage.lo>=65|" .. spearBonus,
+        sweeping_strikes = "!warrior_field|warrior_nearby_enemies>=2",
+        cleave = "!warrior_field|warrior_nearby_enemies>=2",
+        berserker_stance = "(!warrior_field|arms_whirlwind_ready)&" .. preserveShield,
+        whirlwind = "!warrior_field|warrior_nearby_enemies>=4",
         -- When stance dancing, a swap for Overpower still makes sense if Rend is blocked.
-        battle_stance = "!arms_skip_rend|!settings.wowsims_stance_dance|buff.overpower_ready.up",
+        battle_stance = "(!arms_skip_rend|!settings.wowsims_stance_dance|buff.overpower_ready.up)"
+            .. "&(!warrior_field|rage.hi<=stance_rage_limit+15)&"
+            .. preserveShield,
     },
     leveling = {
         -- Until Rend is trained, Heroic Strike is the only damage spender. After that, keep rage for Rend and Overpower.
-        "heroic_strike,use_off_gcd=1,focus=2,if=level<60&combat>0&!action.rend.known",
+        "heroic_strike,use_off_gcd=1,focus=2,if=level<60&combat>0&" .. meleeTarget .. "&!action.rend.known",
         -- One armor stack gives the early kit a useful alternative against a bleed-immune short pull.
         "sunder_armor,if="
-            .. outdoorCombat
-            .. "&arms_short_pull&arms_skip_rend&!action.mortal_strike.known&!execute_phase&debuff.sunder_armor.stack=0",
-        "heroic_strike,use_off_gcd=1,focus=2,if=!action.mortal_strike.known&(rage.lo>=40|(!arms_open_world|arms_skip_rend)&rage.lo>=30)",
-        "thunder_clap,if=!action.mortal_strike.known&!debuff.thunder_clap.up",
-        "sunder_armor,if=!action.mortal_strike.known&debuff.sunder_armor.stack<5&!(arms_open_world&arms_short_pull)",
+            .. fieldAttack
+            .. melee
+            .. "&"
+            .. shortPull
+            .. "&arms_skip_rend&!action.mortal_strike.known&!execute_phase&debuff.sunder_armor.stack=0",
+        "heroic_strike,use_off_gcd=1,focus=2,if="
+            .. meleeTarget
+            .. "&!action.mortal_strike.known&(rage.lo>=40|(!arms_open_world|arms_skip_rend)&rage.lo>=30)",
+        "thunder_clap,if=warrior_attack_target&(!warrior_field|(target.within8&!target.outside8))&!action.mortal_strike.known&!debuff.thunder_clap.up",
+        "sunder_armor,if="
+            .. meleeTarget
+            .. "&!warrior_pvp_target&!action.mortal_strike.known&debuff.sunder_armor.stack<5&!"
+            .. shortPull,
     },
     -- Situational PvE utility and short outdoor pulls use the same underlying damage priority.
     extra = {
         {
             before = "call_action_list",
-            line = "shield_bash,if=" .. pveCombat .. melee .. "&debuff.casting.up&debuff.casting.v2=0",
+            line = "shield_bash,if=" .. interrupt,
         },
         {
             before = "call_action_list",
-            line = "pummel,if=" .. pveCombat .. melee .. "&debuff.casting.up&debuff.casting.v2=0",
+            line = "pummel,if=" .. interrupt,
         },
         { before = "call_action_list", line = "healthstone,use_off_gcd=1,display_below=30,if=" .. pveCombat },
         { before = "call_action_list", line = "shield_wall,display_below=25,if=" .. pveCombat .. noLastStand },
@@ -140,11 +170,15 @@ return {
         },
         {
             before = "call_action_list",
-            line = "victory_rush,focus=1,if=" .. outdoorCombat,
+            line = "victory_rush,focus=1,if=" .. outdoorCombat .. "&" .. meleeTarget,
         },
         {
             before = "call_action_list",
-            line = "victory_rush,focus=1,display_below=75,if=" .. pveCombat .. "&!arms_open_world",
+            line = "victory_rush,focus=1,display_below=75,if="
+                .. pveCombat
+                .. "&"
+                .. meleeTarget
+                .. "&!arms_open_world",
         },
         {
             -- Icy Veins advises keeping a healing potion ready for dangerous leveling pulls.
@@ -156,7 +190,7 @@ return {
             line = "retaliation,display_below=45,if="
                 .. outdoorCombat
                 .. melee
-                .. "&toggle.defensives&active_enemies>=2"
+                .. "&warrior_attack_target&toggle.defensives&active_enemies>=2"
                 .. noLastStand
                 .. noShieldWall,
         },
@@ -165,17 +199,42 @@ return {
             -- Icy Veins' Forever leveling priority puts the shout after Victory Rush and before Rend.
             line = "demoralizing_shout,if="
                 .. outdoorCombat
-                .. "&target.within10&!target.outside10&toggle.defensives&!execute_phase&debuff.demoralizing_shout.down",
+                .. "&warrior_attack_target&target.within10&!target.outside10&toggle.defensives&!execute_phase&debuff.demoralizing_shout.down",
         },
         {
             before = "call_action_list",
             line = "hamstring,if="
                 .. pveCombat
                 .. melee
-                .. "&!boss&!target.is_boss&target.creature_type='humanoid'&execute_phase&debuff.hamstring.down",
+                .. "&warrior_attack_target&!boss&!target.is_boss&target.creature_type='humanoid'&execute_phase&debuff.hamstring.down",
         },
+        {
+            before = "call_action_list",
+            line = "hamstring,if="
+                .. pvpMelee
+                .. "&target.moving&debuff.hamstring.down"
+                .. "&(!action.piercing_howl.known|debuff.piercing_howl.down)",
+        },
+        { before = "call_action_list", line = "mortal_strike,if=" .. pvpMelee },
         -- Keep the upstream kill-window placement as well. The ability itself checks for Victorious.
-        { before = "mortal_strike", line = "victory_rush,focus=1" },
+        { before = "mortal_strike", translated = true, line = "victory_rush,focus=1,if=" .. meleeTarget },
+        {
+            before = "berserker_stance",
+            -- In automatic display mode, confirmed enemies in melee can outnumber the general target estimate.
+            line = "berserker_stance,use_off_gcd=1,if="
+                .. fieldAttack
+                .. "&!buff.berserker_stance.up&gcd.remains<=0&arms_whirlwind_ready",
+        },
+        {
+            before = "whirlwind",
+            line = "whirlwind,if=" .. fieldAttack .. "&arms_whirlwind_ready",
+        },
+        {
+            before = "mortal_strike",
+            translated = true,
+            -- Resume the ordinary Battle rotation when the pack disperses or Whirlwind has been spent.
+            line = "battle_stance,use_off_gcd=1,if=" .. fieldAttack .. "&arms_resume_battle",
+        },
         {
             before = "slam",
             line = "bloodrage,use_off_gcd=1,if="
@@ -184,13 +243,28 @@ return {
         },
         {
             before = "slam",
-            line = "rend,focus=2,if=" .. outdoorCombat .. "&!arms_skip_rend&!execute_phase&debuff.rend.down",
+            line = "reckless_swings,if=warrior_reckless_safe&(!action.bloodrage.known|"
+                .. "(cooldown.bloodrage.remains>gcd&buff.bloodrage.down))",
+        },
+        {
+            before = "slam",
+            line = "rend,focus=2,if="
+                .. fieldAttack
+                .. melee
+                .. "&(arms_open_world|"
+                .. shortPull
+                .. ")&!arms_skip_rend&!execute_phase&debuff.rend.down",
+        },
+        {
+            before = "slam",
+            line = "spearing_strike,if=" .. fieldAttack .. melee .. "&" .. spearBonus,
         },
         {
             before = "heroic_strike",
             line = "heroic_strike,use_off_gcd=1,focus=2,if="
                 .. outdoorCombat
-                .. "&arms_short_pull&action.mortal_strike.known&!execute_phase&active_enemies=1&rage.lo>=65",
+                .. melee
+                .. "&warrior_attack_target&arms_short_pull&action.mortal_strike.known&!execute_phase&active_enemies=1&rage.lo>=65",
         },
     },
-}
+})

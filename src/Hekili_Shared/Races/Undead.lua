@@ -21,6 +21,8 @@ race:RegisterAbility("will_of_the_forsaken", {
 
 race:RegisterAbility("cannibalize", {
     id = 20577,
+    copy = 20578, -- the self-channel named in the channel bar; 20577 is the learned activation
+    known = 20577,
     cast = 10,
     channeled = true,
     fixedCast = true, -- 20578's duration, not hasted
@@ -28,6 +30,10 @@ race:RegisterAbility("cannibalize", {
     gcd = "spell",
     startsCombat = false,
     toggle = "defensives",
+
+    usable = function()
+        return not moving, "cannot channel Cannibalize while moving"
+    end,
 
     start = function() -- a channel: Hekili's simulation runs `start`, not `handler` (State.lua runHandler)
         applyBuff("cannibalize")

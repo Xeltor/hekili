@@ -3,7 +3,7 @@
 -- The Orc's Forever racials (DB2 build 70707; Blood Fury's 120 s is that DB2 and the owner's ruling of 2026-11-02), for every class: Blood Fury (20572: +10% attack power and spell power
 -- for 15 s; 120 s, off the GCD), one ID for every class, which replaces `all`'s stock entry (its per-class IDs 33702
 -- and 33697 are absent on Forever; its aura, 20572 for 15 s, is right but registered here too, so the race owns it),
--- and Shatter Curse (1299026: removes curses, -15% magic damage taken and immunity to curses for 8 s; 180 s, on the
+-- and Shatter Curse (1299026: removes curses and banes, -5% magic damage taken for 8 s; 180 s, on the
 -- GCD). Hardiness (-20% stun duration) and Axe Specialization (+1% crit with an axe) are passives. No resource or cost
 -- modifier. No pack names either. Unknown for any other race (Engine/Schema/Races.lua).
 

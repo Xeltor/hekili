@@ -9,6 +9,7 @@ for _, action in ipairs({
     "reckless_swings",
     "shield_slam",
     "revenge",
+    "execute",
     "thunder_clap",
     "demoralizing_shout",
     "rend",
@@ -66,7 +67,6 @@ describe("Protection target and melee-pressure safety", function()
                 { key = "dead", value = true },
                 { key = "friendly", value = true },
                 { key = "exists", value = false },
-                { key = "isPlayer", value = true },
                 { key = "exists", value = SECRET },
                 { key = "friendly", value = SECRET },
                 { key = "isPlayer", value = SECRET },
@@ -88,6 +88,51 @@ describe("Protection target and melee-pressure safety", function()
             end
         end)
     end
+
+    it("practices the raid priority on a hostile training dummy", function()
+        local H = boot(60, 35, { target = "Creature-0-0-0-0-4952-000001", revenge = true })
+        H.Hekili:FireToggle("defensives", "off")
+        assert.are.equal("revenge", read(H, 0.2))
+        H.Hekili.State.reset("Primary")
+        assert.is_true(H.Hekili.State.target.is_dummy)
+        assert.is_true(H.Hekili.State.prot_sustained)
+        assert.is_false(H.Hekili.State.prot_contextual)
+        H.ctl.friendly.target = true
+        H.Fire("PLAYER_TARGET_CHANGED")
+        noOffense(H, "friendly practice target")
+    end)
+
+    it("uses trained melee attacks against hostile players already fighting", function()
+        local function opponent(level, rage, options)
+            options.instance = options.instance or "pvp"
+            local H = boot(level, rage, options)
+            H.ctl.isPlayer.target = true
+            H.Fire("PLAYER_TARGET_CHANGED")
+            return H
+        end
+        assert.are.equal("heroic_strike", read(opponent(1, 18, {})))
+        assert.are.equal("victory_rush", read(opponent(20, 20, { victorious = true, revenge = true })))
+        assert.are.equal("revenge", read(opponent(40, 5, { revenge = true })))
+        assert.are.equal("shield_slam", read(opponent(40, 30, { talents = { [23922] = 1 } })))
+        local H = opponent(24, 20, { form = 1, instance = "none" })
+        H.ctl.usable[5308] = { true, false }
+        assert.are.equal("execute", read(H))
+        H = opponent(24, 20, { form = 2 })
+        H.ctl.usable[5308] = { true, false }
+        assert.is_not_equal("execute", read(H))
+        assert.is_not_equal("shield_slam", read(opponent(40, 30, { noShield = true })))
+        assert.is_not_equal("revenge", read(opponent(40, 5, { revenge = true, noWeapon = true })))
+        for _, options in ipairs({
+            { distance = 12 },
+            { prepull = true },
+            { idleTarget = true },
+            { instance = "party" },
+            { instance = "raid" },
+        }) do
+            options.victorious, options.revenge, options.talents = true, true, { [23922] = 1 }
+            noOffense(opponent(40, 35, options), "PvP eligibility")
+        end
+    end)
 
     it("holds Charge, Attack and damage on idle dungeon targets both before and during another fight", function()
         for _, prepull in ipairs({ true, false }) do

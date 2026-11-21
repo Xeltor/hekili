@@ -3,9 +3,6 @@
 -- `potion` action and auras core reads by name, the Healthstone from Forever's items (DB2 1.60.1.70338: the five
 -- ranks and their Improved Healthstone variants), and the healing, mana and energy consumables as their own actions.
 -- The generic `potion` verb has no configured buff potion. Healing is simulated only when the APL picks the item.
--- ranks and their Improved Healthstone variants), the mana and energy consumables as their own actions, and the on-use
--- items that restore mana. No potion is registered for the `potion` verb, nor flask or food: the default priorities
--- leave them out.
 -- Neither `potion` nor the Healthstone has a `now`: the belief sees only spell casts (neither names a use spell), and a
 -- Healthstone's heal is health, which the belief does not track (spec §4.3). A mana refill names its use spell (below).
 
@@ -73,9 +70,32 @@ shared:RegisterAbility("potion", {
     copy = "potion_default",
 })
 
--- Highest heal first: Major, Greater, Healthstone, Lesser, Minor; each as Improved Healthstone 2/2, 1/2, then plain.
-local HEALTHSTONES =
-    { 19013, 19012, 9421, 19011, 19010, 5510, 19009, 19008, 5509, 19007, 19006, 5511, 19005, 19004, 5512 }
+-- Item ID, required use level and flat heal from Forever 1.60.1.70959 ItemSparse and SpellEffect.
+-- At each rank the base item heals as much as the old 2/2 Improved Healthstone item.
+local HEALTHSTONE_DATA = {
+    { 19013, 48, 1440 },
+    { 9421, 48, 1440 },
+    { 19012, 48, 1320 },
+    { 19011, 36, 960 },
+    { 5510, 36, 960 },
+    { 19010, 36, 880 },
+    { 19009, 24, 600 },
+    { 5509, 24, 600 },
+    { 19008, 24, 550 },
+    { 19007, 12, 300 },
+    { 5511, 12, 300 },
+    { 19006, 12, 275 },
+    { 19005, 1, 120 },
+    { 5512, 1, 120 },
+    { 19004, 1, 110 },
+}
+local HEALTHSTONES = {}
+for i, stone in ipairs(HEALTHSTONE_DATA) do
+    HEALTHSTONES[i] = stone[1]
+end
+-- Forever 1.60.1.70959 ItemEffect gives stones/runes category 1153 and potions category 4.
+-- Both categories last two minutes. The client supplies live cooldowns for the selected item ID.
+local RECOVERY_ITEM_COOLDOWN = 120
 
 -- The first of `items` in the bags and true (the last and false when none: the keybind and icon lookups need an item).
 -- A field read (`ability.item`) keeps only the first value.
@@ -89,17 +109,37 @@ local function inBags(items)
 end
 
 local function healthstone()
-    return inBags(HEALTHSTONES)
+    local level, carried
+    for _, stone in ipairs(HEALTHSTONE_DATA) do
+        if GetItemCount(stone[1]) > 0 then
+            level = level or UnitLevel("player") or 0
+            if level >= stone[2] then
+                if IsUsableItem(stone[1]) == true then
+                    return stone, true
+                end
+                carried = carried or stone
+            end
+        end
+    end
+    -- Keep the item's identity and suppress repeat conjuring while a carried stone is temporarily unusable.
+    return carried, false
 end
+
+shared:RegisterStateExpr("has_healthstone", function()
+    return healthstone() ~= nil
+end)
 
 shared:RegisterAbility("healthstone", {
     name = "Healthstone", -- l10n: verbatim
     listName = "|T538745:0|t |cff00ccff[Healthstone]|r",
     cast = 0,
-    cooldown = 120, -- Classic's shared Healthstone cooldown; the item's own is read in game (spec §7 Q5)
+    cooldown = RECOVERY_ITEM_COOLDOWN,
     gcd = "off",
 
-    item = healthstone,
+    item = function()
+        local stone = healthstone()
+        return stone and stone[1] or 5512
+    end,
     items = HEALTHSTONES,
     bagItem = true,
 
@@ -107,11 +147,11 @@ shared:RegisterAbility("healthstone", {
     toggle = "defensives",
 
     usable = function()
-        local item, inBags = healthstone()
-        if not inBags then
+        local stone, usable = healthstone()
+        if not stone then
             return false, "requires healthstone in bags"
-        elseif not IsUsableItem(item) then
-            return false, "healthstone on CD"
+        elseif not usable then
+            return false, "healthstone not usable"
         elseif health.current >= health.max and PlayerHealthFraction() == 1 then
             return false, "must be damaged"
         end
@@ -119,7 +159,11 @@ shared:RegisterAbility("healthstone", {
     end,
 
     handler = function()
-        gain(0.25 * health.max, "health")
+        local stone, usable = healthstone()
+        if usable then
+            gain(stone[3], "health")
+            setCooldown("demonic_rune", RECOVERY_ITEM_COOLDOWN)
+        end
     end,
 })
 
@@ -145,7 +189,7 @@ end
 shared:RegisterAbility("healing_potion", {
     name = "Healing Potion", -- l10n: verbatim
     cast = 0,
-    cooldown = 120,
+    cooldown = RECOVERY_ITEM_COOLDOWN,
     gcd = "off",
 
     item = healingPotion,
@@ -161,6 +205,7 @@ shared:RegisterAbility("healing_potion", {
 
     handler = function()
         gain(POTION_HEAL[healingPotion()], "health")
+        setCooldown("major_mana_potion", RECOVERY_ITEM_COOLDOWN)
     end,
 })
 
@@ -176,6 +221,7 @@ shared:RegisterAbility("healing_potion", {
 -- unseen, so it credits the average (owner L969): the `now` puts the estimate at the midpoint and the floor and top at
 -- the ends, the `handler` gains the midpoint. `worn`: an equipped item (offered only while worn, the core's `equipped`
 -- test), also under Potions (owner L1235).
+local defensiveItem = { demonic_rune = "healthstone", major_mana_potion = "healing_potion" }
 local function consume(key, items, cooldown, name, spells, mids, spreads, worn)
     local function best()
         return inBags(items)
@@ -219,6 +265,9 @@ local function consume(key, items, cooldown, name, spells, mids, spreads, worn)
         handler = spells and function()
             local r = byItem[(best())] or 1
             gain(mids[r], "mana")
+            if defensiveItem[key] then
+                setCooldown(defensiveItem[key], RECOVERY_ITEM_COOLDOWN)
+            end
         end or nil,
     })
 end
@@ -228,8 +277,8 @@ end
 -- gems' Replenish Mana 10058 1100 +- 100, 10057 850 +- 75, 10052 600 +- 50, 5405 400 +- 25, their cooldown the items'
 -- on-use category 1153, 120 s (the pin's db.json; sim/mage/mana_gems.go), not the spells' 60 s category 30; Robe of
 -- the Archmage's 18385 500 +- 125, its item's on-use 300 s (db.json).
-consume("major_mana_potion", { 13444 }, 120, nil, 17531, 1800, 450)
-consume("demonic_rune", { 12662 }, 120, nil, 16666, 1200, 300)
+consume("major_mana_potion", { 13444 }, RECOVERY_ITEM_COOLDOWN, nil, 17531, 1800, 450)
+consume("demonic_rune", { 12662 }, RECOVERY_ITEM_COOLDOWN, nil, 16666, 1200, 300)
 consume("thistle_tea", { 7676 }, 300)
 consume( -- Ruby, Citrine, Jade, Agate
     "mana_gem",

@@ -255,9 +255,10 @@ I.STATS = {
     { "GetCombatRating", "CR_VERSATILITY_DAMAGE_TAKEN" },
     { "GetCombatRatingBonus", "CR_VERSATILITY_DAMAGE_DONE" },
     { "GetCombatRatingBonus", "CR_VERSATILITY_DAMAGE_TAKEN" },
+    { "GetSpellBonusDamage", 6 }, -- Shadow; school 7 is Arcane.
 }
 -- statVal[i][1..7]: the cached returns; statT[i]: the read time; statIndex[name][arg or 0] = i.
-I.statVal, I.statT, I.statIndex = {}, {}, {}
+I.statVal, I.statT, I.statIndex, I.statObserved = {}, {}, {}, {}
 for i = 1, #I.STATS do
     I.statVal[i] = { 0, 0, 0, 0, 0, 0, 0 }
     I.statT[i] = 0
@@ -279,6 +280,16 @@ function VS.Stat(apiName, arg, now)
         return v[1], (base[i] + add) * mul, v[3], v[4], v[5], v[6], v[7]
     end
     return v[1], v[2], v[3], v[4], v[5], v[6], v[7]
+end
+
+-- Unlike Stat's zero defaults, distinguish a genuine observation from an
+-- unavailable value. Read the same cached tuple without querying the client.
+function VS.ObservedStat(apiName, arg)
+    local byArg = I.statIndex[apiName]
+    local i = byArg and byArg[arg or 0]
+    if i and I.statObserved[i] then
+        return VS.Stat(apiName, arg)
+    end
 end
 
 I.OnSnapshot(function(out, now)

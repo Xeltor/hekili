@@ -32,6 +32,7 @@ local max, min, HUGE = math.max, math.min, math.huge
 -- The class kit and one spec a talent tree (ids the core's: Assassination 100041, Combat 100042, Subtlety 100043; the
 -- client's one pseudo-spec, 1488, only keys the legacy profile the core migrates). Icons: the DB2 talent tabs'.
 local spec = Hekili:NewClass("ROGUE", {
+    supportsLeveling = true,
     specs = {
         {
             key = "assassination",
@@ -168,73 +169,6 @@ end
 local function pveInstance(instance)
     return instance == "none" or instance == "party" or instance == "raid" or instance == "scenario"
 end
-
--- Loss-of-control rows are plain on Forever, but reading each row creates a client table. Read them only when the
--- client announces a change (or when this class loads), and keep finite scalar expiries for prediction.
-local lossOfControl = Facade.C_LossOfControl
-local control = { stun = 0, forsaken = 0, movement = 0, incapacitated = 0 }
-local controlGroup = {
-    STUN = "stun",
-    STUN_MECHANIC = "stun",
-    FEAR = "forsaken",
-    FEAR_MECHANIC = "forsaken",
-    CHARM = "forsaken",
-    SLEEP = "forsaken",
-    ROOT = "movement",
-    SNARE = "movement",
-    CONFUSE = "incapacitated",
-    PACIFY = "incapacitated",
-    PACIFYSILENCE = "incapacitated",
-    DISARM = "incapacitated",
-    POSSESS = "incapacitated",
-}
-local function refreshRogueControl()
-    control.stun, control.forsaken, control.movement, control.incapacitated = 0, 0, 0, 0
-    if not lossOfControl then
-        return
-    end
-    local count = plain(lossOfControl.GetActiveLossOfControlDataCount())
-    local time = plain(Facade.GetTime())
-    if type(count) ~= "number" or type(time) ~= "number" or count < 0 or count >= HUGE or time >= HUGE then
-        return
-    end
-    for i = 1, min(32, count) do
-        local row = plain(lossOfControl.GetActiveLossOfControlData(i))
-        if type(row) == "table" then
-            local kind = plain(row.locType)
-            local group = type(kind) == "string" and controlGroup[kind]
-            if group then
-                local start, duration, remains = plain(row.startTime), plain(row.duration), plain(row.timeRemaining)
-                local expires
-                if type(start) == "number" and type(duration) == "number" and duration > 0 then
-                    expires = start + duration
-                elseif type(remains) == "number" and remains > 0 then
-                    expires = time + remains
-                end
-                if expires and expires > time and expires < HUGE then
-                    control[group] = max(control[group], expires)
-                end
-            end
-        end
-    end
-end
-spec:RegisterEvent("LOSS_OF_CONTROL_ADDED", refreshRogueControl)
-spec:RegisterEvent("LOSS_OF_CONTROL_UPDATE", refreshRogueControl)
-spec:RegisterEvent("PLAYER_ENTERING_WORLD", refreshRogueControl)
-refreshRogueControl()
-
-spec:RegisterStateExpr("rogue_stunned", function()
-    return control.stun > query_time
-end)
-spec:RegisterStateExpr("rogue_forsaken_control", function()
-    return control.forsaken > query_time
-end)
-spec:RegisterStateExpr("rogue_movement_control", function()
-    return control.movement > query_time
-end)
-spec:RegisterStateExpr("rogue_incapacitated", function()
-    return max(control.stun, control.forsaken, control.incapacitated) > query_time
-end)
 
 spec:RegisterStateExpr("rogue_pve_context", function()
     local _, instance = Facade.IsInInstance()

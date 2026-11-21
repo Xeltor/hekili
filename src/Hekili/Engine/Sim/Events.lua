@@ -1041,15 +1041,17 @@ end
 
 local lowLevelWarned = false
 local noClassWarned = false
--- Forever: the packs are tuned for level 60 content; warn once below that.
+-- Warn once for class kits that only target endgame.
 local minimumLevel = 60
 
 -- Need to make caching system.
 RegisterUnitEvent( "UNIT_SPELLCAST_SUCCEEDED", "player", "target", function( event, unit, _, spellID )
-    if not noClassWarned and not class.initialized then
-        Hekili:Notify( string.format( L["%s does not have any Hekili Forever modules loaded (yet).\nWatch for updates."], ( UnitClass( "player" ) ) ), 10 )
-        noClassWarned = true
-    elseif not lowLevelWarned and UnitLevel( "player" ) < minimumLevel then
+    if not class.initialized then
+        if not noClassWarned then
+            Hekili:Notify( string.format( L["%s does not have any Hekili Forever modules loaded (yet).\nWatch for updates."], ( UnitClass( "player" ) ) ), 10 )
+            noClassWarned = true
+        end
+    elseif not lowLevelWarned and not ( class.kit and class.kit.supportsLeveling ) and UnitLevel( "player" ) < minimumLevel then
         Hekili:Notify( string.format( L["Hekili Forever is designed for level %s content.\nIt may not work as expected below level %s."], minimumLevel, minimumLevel ), 10 )
         lowLevelWarned = true
     end

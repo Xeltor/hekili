@@ -46,8 +46,8 @@ M.TALENTS = { [12294] = 1, [12296] = 1, [12834] = 3, [12295] = 3, [16493] = 2, [
 -- How many of an ability's rank list (`id`, then `copy`) the character knows when the list runs past its trained ranks:
 -- Slam's list ends in Improved Slam's override IDs, which this build (no Improved Slam) does not know.
 M.RANKS = { slam = 5 }
--- Forever's Tactical Mastery passive (the user's Warrior knows it): the stance keep is 25 (the class file's swap_stance: 10 + 5 a rank of 3).
-M.PASSIVES = { 1310185 }
+-- Trained passives are absent from the active-ability DB2 export. Tactical Mastery retains 10 Rage from level 14.
+M.PASSIVE_LEARN = { [1310185] = 14 }
 
 -- Every known rank's spell ID of each kit ability (the class file reads the usability of the highest rank known).
 M.IDS = {}
@@ -77,12 +77,19 @@ function M.character()
             known[#known + 1] = id
         end
     end
-    for _, id in ipairs(M.PASSIVES) do
+    for id in pairs(M.PASSIVE_LEARN) do
         known[#known + 1] = id
     end
     local forms = {}
     for i, key in ipairs(M.FORMS) do
         forms[i] = w.abilities[key].id
+    end
+    -- Both gap closers have a minimum range. The fake client otherwise treats them as melee strikes.
+    local ranges = {}
+    for _, key in ipairs({ "charge", "intercept" }) do
+        for _, id in ipairs(M.IDS[key]) do
+            ranges[id] = { 8, 25 }
+        end
     end
     return {
         class = "WARRIOR",
@@ -96,6 +103,7 @@ function M.character()
         items = { [16] = { 1, "Two-Hander", "INVTYPE_2HWEAPON" } },
         forms = forms,
         form = 1,
+        ranges = ranges,
     }
 end
 

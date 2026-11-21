@@ -1139,7 +1139,7 @@ do
                 self.timer = pulseDisplay
                 style.Draw( self, conf, out, Status )
                 if self.truthOn then ns.UI.Truth.Draw( self, conf, out ) end
-                if self.id == "Primary" and style == ns.UI.Styles.classic then
+                if out.healthCues and style == ns.UI.Styles.classic then
                     ns.UI.Truth.DrawHealthCue( self, out )
                 end
             end

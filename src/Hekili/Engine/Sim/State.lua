@@ -2938,7 +2938,7 @@ local mt_stat = {
             t[k] = 0
 
         elseif k == "crit" then
-            t[k] = ( max( Facade.GetCritChance(), Facade.GetSpellCritChance( "player" ), Facade.GetRangedCritChance() ) + ( t.mod_crit_pct or 0 ) )
+            t[k] = ( max( Facade.GetCritChance(), Facade.GetSpellCritChance(), Facade.GetRangedCritChance() ) + ( t.mod_crit_pct or 0 ) )
 
         end
 
@@ -3257,6 +3257,12 @@ local mt_toggle = {
     end
 }
 ns.metatables.mt_toggle = mt_toggle
+
+-- A dual-purpose ability can route one use through the same toggle and display as a dedicated ability.
+function state.OnToggleDisplay( key )
+    local toggle = Hekili.Engine.settings.toggles[ key ]
+    return toggle and state.toggle[ key ] and state.filter == ( toggle.separate and key or "none" ) or false
+end
 
 
 local mt_settings = {
@@ -6768,6 +6774,19 @@ do
         -- every reset path (the pack editor's Evaluate, the scripts' load) starts fresh, after the display's filter
         Hekili:ResetSpellCaches()
 
+        -- Separate displays run before Primary. Even a partial reset needs this cycle's observed health.
+        if not state.health.initialized then
+            state.health.resource = "health"
+            state.health.meta = {}
+            state.health.percent = nil
+            setmetatable( state.health, mt_resource )
+            state.health.initialized = true
+        end
+        state.health.current = nil
+        state.health.actual = UnitHealth( "player" ) or 10000
+        state.health.max = max( 1, UnitHealthMax( "player" ) or 10000 )
+        state.health.regen = 0.001
+
         -- Trying again to have partial resets for the low-impact (single icon displays).
         if not full then
             state.resetting = false
@@ -6875,19 +6894,6 @@ do
             return false, "no available resources"
         end
 
-        -- Setting this here because the metatable would pull from UnitPower.
-        if not state.health.initialized then
-            state.health.resource = "health"
-            state.health.meta = {}
-            state.health.percent = nil
-            setmetatable( state.health, mt_resource )
-            state.health.initialized = true
-        end
-        state.health.current = nil
-        state.health.actual = UnitHealth( "player" ) or 10000
-        state.health.max = max( 1, UnitHealthMax( "player" ) or 10000 )
-        state.health.regen = 0.001
-
         -- TODO: All of this stuff for swings is terrible.
         state.swings.mh_speed = mhSpeed or 0
         state.swings.oh_speed = ohSpeed or 0
@@ -6974,7 +6980,7 @@ do
 
                     if tick_time and tick_time > 0 then
                         local next_tick = state.buff.casting.applied + tick_time
-                        local expires = state.buff.cast.expires
+                        local expires = state.buff.casting.expires
 
                         while next_tick < expires do
                             state:QueueEvent( casting, state.buff.casting.applied, next_tick, "CHANNEL_TICK", destGUID )

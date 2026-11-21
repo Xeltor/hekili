@@ -41,12 +41,14 @@ local function slots()
     return { false, false, false, false, false, false, false, false, n = 0 }
 end
 
-local function display()
+local function display(withHealthCues)
     return {
         version = 0,
         count = 0,
         recs = records(),
         scratch = records(),
+        healthCues = withHealthCues and { n = 0 },
+        scratchHealthCues = withHealthCues and { n = 0 },
         subs = slots(),
         passive = slots(),
         own = slots(), -- per subscriber slot: Hekili's own (Output.Subscribe), not an outside caller's
@@ -70,9 +72,9 @@ end
 --- Per display name the published output; `status` is the engine's own record (combat, targets, spec, pack).
 local Displays = {
     Interrupts = display(),
-    Defensives = display(),
+    Defensives = display(true),
     Cooldowns = display(),
-    Primary = display(),
+    Primary = display(true),
     AOE = display(),
     status = {
         version = 0,
@@ -92,9 +94,6 @@ local Displays = {
         packName = nil,
     },
 }
-
-Displays.Primary.healthCues = { n = 0 }
-Displays.Primary.scratchHealthCues = { n = 0 }
 
 -- Hekili.Engine.Output is the display table only; ns.Output (engine-private) holds the functions below and reads the
 -- displays through __index, so ns.Output.Primary still works while Begin/Publish stay off the public port.

@@ -152,6 +152,7 @@ local function newState(class, race)
         return 0
     end
     s.instant, s.cast_start = false, 0 -- and the cast-start pair (Families/Now.lua): a hard or instant cast is the test's to set
+    s.hardcast = false -- true only while the simulation handles a queued hard-cast finish
     s.cast_id = 0 -- and the cast ID (Families/Now.lua): 0 outside a cast success
     s.stat = function()
         return 0

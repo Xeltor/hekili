@@ -1,104 +1,10 @@
-local headless = require("Game.harness.headless")
-local warlockWorld = require("Forever.helpers.warlock_world")
+local field = require("Forever.helpers.warlock_field")
+local warlock, pick, cast = field.warlock, field.pick, field.cast
 local SECRET = require("Game.State.helpers.fake_api").SECRET
 
 local WAND = { 11287, "Lesser Magic Wand", "INVTYPE_RANGEDRIGHT", 2, 19 }
 local RANGED_WEAPON = { 2504, "Worn Shortbow", "INVTYPE_RANGED", 2, 2 }
 local STAFF = { 35, "Bent Staff", "INVTYPE_2HWEAPON", 2, 10 }
-
-local function warlock(build, level, known, options)
-    local o = options or {}
-    local baseline = warlockWorld[build]
-    local character = baseline.character()
-    character.level, character.known, character.talents = level, known, o.talents or {}
-    character.instanceType = o.instanceType
-    character.power.max, character.power.value = o.maxMana or 1000, o.mana or 1000
-    character.items = { [16] = o.mainHand, [18] = o.weapon }
-    character.ranges[5019] = { 0, 30 }
-    character.ranges[755] = { 0, 20 }
-
-    local H = headless.new({
-        character = character,
-        pack = baseline.PACK,
-        beforeLoad = function(h)
-            if o.moving then
-                h.env.GetUnitSpeed = function()
-                    return 7, 7, 7, 4.72
-                end
-            end
-        end,
-        beforeLogin = function(h)
-            if o.attacking == SECRET then
-                local current = h.Client.C_Spell.IsCurrentSpell
-                h.Client.C_Spell.IsCurrentSpell = function(id)
-                    if id == 6603 then
-                        return SECRET
-                    end
-                    return current(id)
-                end
-            end
-        end,
-    })
-    assert.are.same({}, H.loadErrors)
-    local ctl = H.ctl
-    ctl.distance.target, ctl.level.target = o.range or 15, o.boss and -1 or level
-    ctl.classification, ctl.groupMembers = o.classification or "normal", o.group or 0
-    ctl.unitHealth.player, ctl.unitHealthMax.player = o.health or 1000, 1000
-    ctl.unitHealth.target = o.targetHealth or 1000
-    ctl.trivial.target = o.trivial
-    ctl.isPlayer.target, ctl.friendly.target, ctl.dead.target = o.playerTarget, o.friendly, o.targetDead
-    ctl.exists.target = not o.noTarget
-    ctl.unitCombat.target = not o.prepull and not o.idleTarget
-    if ctl.unitCombat.target then
-        ctl.exists.targettarget = true
-        ctl.unitIs.targettarget = o.petTanking and "pet" or o.partyAggro and "party1" or "player"
-        ctl.inParty.targettarget = o.partyAggro
-        ctl.threat.target = o.petTanking and 0 or o.partyAggro and 1 or 3
-    end
-    ctl.exists.pet, ctl.dead.pet = o.petHealth ~= nil, o.petDead
-    if ctl.exists.pet then
-        ctl.guid.pet = "Pet-0-0-0-0-416-000001"
-        ctl.unitHealth.pet, ctl.unitHealthMax.pet = o.petHealth, 1000
-        ctl.distance.pet, ctl.petPower = o.petRange or 10, 1000
-        ctl.exists.pettarget, ctl.unitIs.pettarget = o.petTarget ~= nil, o.petTarget
-    end
-    for id, count in pairs(o.items or {}) do
-        ctl.itemCount[id] = count
-    end
-    if o.shootUsable then
-        ctl.usable[5019] = { true, false }
-    end
-    ctl.current[6603], ctl.current[5019] = o.attacking == true, o.shooting
-    for _, id in ipairs(o.buffs or {}) do
-        local rows = ctl.auras.player.HELPFUL
-        rows[#rows + 1] = { spellId = id, expirationTime = ctl.now + 30, applications = 0, sourceUnit = "player" }
-    end
-
-    H.Hekili:FireToggle("defensives", o.defensives == false and "off" or "on")
-    H.Fire("PLAYER_TARGET_CHANGED")
-    H.Fire("UNIT_AURA", "player")
-    H.Fire("UNIT_PET", "player")
-    assert(headless.cycle(H, ctl.now + 0.2))
-    if not o.prepull then
-        ctl.combat = true
-        H.Fire("PLAYER_REGEN_DISABLED")
-    end
-    assert.is_true(H.Hekili.Engine.Subscribe("Primary", function() end))
-    return H
-end
-
-local function pick(H, delay)
-    assert(headless.cycle(H, H.ctl.now + (delay or 0.2)))
-    assert.are.same({}, H.errors)
-    local out = H.Hekili.Engine.Output.Primary
-    local rec = out.count > 0 and out.recs[1]
-    return rec and rec.actionName
-end
-
-local function cast(H, spellID)
-    H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-test-" .. spellID, spellID)
-    return pick(H, 1.6)
-end
 
 describe("Forever Warlock leveling and PvE", function()
     for _, build in ipairs({ "Affliction", "Demonology", "Destruction", "SMRuin", "ShadowBrand" }) do
@@ -155,11 +61,47 @@ describe("Forever Warlock leveling and PvE", function()
             })
             assert.are.equal("corruption", pick(H))
             assert.are.equal("shoot", cast(H, 11672))
-            H.ctl.current[5019] = true
+            H.Fire("START_AUTOREPEAT_SPELL") -- between shots the cast/queue flag can already be off
             local whileWanding = pick(H)
             assert.is_not_equal("shoot", whileWanding)
             assert.is_not_equal("shadow_bolt", whileWanding)
+            H.Fire("STOP_AUTOREPEAT_SPELL")
+            assert.are.equal("shoot", pick(H))
         end
+    end)
+
+    it("uses learned damage on ordinary healthy enemies and finishes with a wand", function()
+        for _, scenario in ipairs({
+            { "Affliction", 1316697, "wrack", { [1316697] = 1 } },
+            { "Destruction", 412758, "incinerate", { [412758] = 1 } },
+            { "SMRuin", 11661, "shadow_bolt", { [17959] = 1 } },
+            { "ShadowBrand", 11661, "shadow_bolt", { [17793] = 1 } },
+        }) do
+            local H = warlock(scenario[1], 60, { 5019, scenario[2] }, {
+                weapon = WAND,
+                shootUsable = true,
+                talents = scenario[4],
+            })
+            assert.are.equal(scenario[3], pick(H), scenario[1])
+            H.ctl.unitHealth.target = 200
+            assert.are.equal("shoot", pick(H), scenario[1])
+        end
+    end)
+
+    it("lets an active wand yield to a confirmed shard finish", function()
+        local H = warlock("Affliction", 10, { 695, 5019, 1120 }, { weapon = WAND, shootUsable = true })
+        assert.are.equal("shoot", pick(H))
+        H.Fire("START_AUTOREPEAT_SPELL")
+        assert.is_not_equal("drain_soul", pick(H))
+        H.ctl.unitHealth.target = 200
+        assert.are.equal("drain_soul", pick(H))
+    end)
+
+    it("forecasts restarting the wand after casting Corruption", function()
+        local H = warlock("Affliction", 10, { 172, 695, 5019 }, { weapon = WAND, shootUsable = true })
+        H.Fire("START_AUTOREPEAT_SPELL")
+        assert.are.equal("corruption", pick(H))
+        assert.are.equal("shoot", H.Hekili.Engine.Output.Primary.recs[2].actionName)
     end)
 
     it("sets up a dungeon elite with its assigned Curse, then Corruption and Bane", function()
@@ -247,6 +189,19 @@ describe("Forever Warlock leveling and PvE", function()
         end
     end)
 
+    it("waits for a level-sixty dungeon boss to engage before suggesting sustained damage", function()
+        for _, idle in ipairs({ true, false }) do
+            local h = warlock("Demonology", 60, { 11661, 603 }, {
+                instanceType = "party",
+                group = 5,
+                boss = true,
+                idleTarget = idle,
+                partyAggro = true,
+            })
+            assert.are.equal(not idle, pick(h) == "bane_of_doom")
+        end
+    end)
+
     it("shows a learned Life Tap when mana is low and suppresses unsafe or unreadable health", function()
         for _, health in ipairs({ 1000, 560, 300, SECRET }) do
             local H = warlock("Demonology", 10, { 695, 1454 }, { health = health, mana = 10 })
@@ -265,7 +220,7 @@ describe("Forever Warlock leveling and PvE", function()
         end
     end)
 
-    it("uses Shoot only with a confirmed in-range wand and a hostile NPC", function()
+    it("uses Shoot only with an equipped usable wand on an eligible target", function()
         local function lowManaShot(options)
             options.mana = 10 -- lower than the only learned damaging spell's cost
             options.shootUsable = options.shootUsable ~= false
@@ -273,6 +228,7 @@ describe("Forever Warlock leveling and PvE", function()
         end
 
         assert.are.equal("shoot", lowManaShot({ weapon = WAND }))
+        assert.are.equal("shoot", lowManaShot({ weapon = WAND, playerTarget = true }))
         for _, options in ipairs({
             {},
             { weapon = RANGED_WEAPON },
@@ -280,8 +236,9 @@ describe("Forever Warlock leveling and PvE", function()
             { weapon = WAND, range = SECRET },
             { weapon = WAND, shootUsable = false },
             { weapon = WAND, shooting = true },
+            { weapon = WAND, shooting = SECRET },
             { weapon = WAND, moving = true },
-            { weapon = WAND, playerTarget = true },
+            { weapon = WAND, playerTarget = true, idleTarget = true },
             { weapon = WAND, targetDead = true },
             { weapon = WAND, friendly = true },
         }) do
@@ -354,7 +311,7 @@ describe("Forever Warlock leveling and PvE", function()
         assert.are.equal("shadow_bolt", pick(H))
     end)
 
-    it("suggests Drain Soul to finish a solo pull when running low on shards", function()
+    it("suggests Drain Soul to finish an eligible solo or party pull when running low on shards", function()
         local function lowTarget(options)
             options.targetHealth = options.targetHealth or 200
             return pick(warlock("Affliction", 10, { 695, 1120 }, options))
@@ -362,10 +319,15 @@ describe("Forever Warlock leveling and PvE", function()
 
         assert.are.equal("drain_soul", lowTarget({}))
         assert.are.equal("drain_soul", lowTarget({ items = { [6265] = 1 } }))
+        assert.are.equal("drain_soul", lowTarget({ group = 3 }))
+        assert.are.equal(
+            "drain_soul",
+            lowTarget({ instanceType = "party", group = 5, partyAggro = true, classification = "elite" })
+        )
         for _, options in ipairs({
             { items = { [6265] = 2 } },
-            { group = 3 },
-            { instanceType = "party", group = 5, partyAggro = true },
+            { instanceType = "party", group = 5, idleTarget = true },
+            { instanceType = "party", group = 5, partyAggro = true, boss = true },
             { targetHealth = 400 },
             { targetHealth = SECRET },
             { trivial = true },
@@ -385,6 +347,17 @@ describe("Forever Warlock leveling and PvE", function()
             assert.are.equal("corruption", pick(H))
             assert.are.equal(petTanking and "drain_soul" or "shadow_bolt", cast(H, 172))
         end
+    end)
+
+    it("continues dealing damage while the pet tanks an observably healthy target", function()
+        local h = warlock(
+            "Affliction",
+            10,
+            { 695, 172, 1120 },
+            { targetHealth = 900, petHealth = 800, petTanking = true }
+        )
+        assert.are.equal("corruption", pick(h))
+        assert.are.equal("shadow_bolt", cast(h, 172))
     end)
 
     it("recovers our health with a carried stone or a learned in-range Drain Life", function()
@@ -435,5 +408,109 @@ describe("Forever Warlock leveling and PvE", function()
         assert.is_not_equal("summon_imp", summon({ petHealth = 800 }))
         assert.is_not_equal("summon_imp", summon({ moving = true }))
         assert.is_not_equal("summon_imp", summon({ buffs = { 18789 }, talents = { [18788] = 1 } }))
+    end)
+end)
+
+describe("Forever Warlock preparation", function()
+    it("prepares a learned Felhunter between battleground fights and keeps an existing pet", function()
+        local function prepare(petHealth, shards)
+            return pick(warlock("SMRuin", 40, { 688, 691 }, {
+                instanceType = "pvp",
+                group = 10,
+                prepull = true,
+                noTarget = true,
+                petHealth = petHealth,
+                maxMana = 2500,
+                mana = 2500,
+                items = { [6265] = shards },
+            }))
+        end
+        assert.are.equal("summon_felhunter", prepare(nil, 1))
+        assert.are.equal("summon_imp", prepare(nil, 0))
+        assert.is_nil(prepare(800, 1))
+    end)
+
+    it("prepares learned Soul Link with a living demon", function()
+        for _, case in ipairs({
+            { petHealth = 1000, action = "soul_link" },
+            { petHealth = 1000, buffs = { 25228 } },
+            { petHealth = 1000, petDead = true },
+            { petHealth = 1000, defensives = false },
+            { moving = true, petHealth = 1000, action = "soul_link" },
+            {},
+        }) do
+            case.noTarget, case.prepull = true, true
+            case.talents = { [19028] = 1 }
+            assert.are.equal(case.action, pick(warlock("Demonology", 30, { 19028 }, case)))
+        end
+    end)
+
+    it("conjures one missing Healthstone at the highest learned rank", function()
+        for _, rank in ipairs({ { 10, 6201 }, { 22, 6202 }, { 34, 5699 }, { 46, 11729 }, { 58, 11730 } }) do
+            local h = warlock("Demonology", rank[1], { rank[2] }, {
+                prepull = true,
+                noTarget = true,
+                items = { [6265] = 1 },
+                maxMana = 2000,
+                mana = 2000,
+            })
+            assert.are.equal("create_healthstone", pick(h))
+            local output = h.Hekili.Engine.Output.Primary
+            for i = 2, output.count do
+                assert.is_not_equal("create_healthstone", output.recs[i].actionName)
+            end
+        end
+    end)
+
+    it("shows a future cast time while mana regenerates for Create Healthstone", function()
+        local h = warlock("Destruction", 10, { 6201 }, {
+            noTarget = true,
+            prepull = true,
+            mana = 1,
+            items = { [6265] = 1 },
+        })
+        assert.are.equal("create_healthstone", pick(h))
+        assert.is_true(h.Hekili.Engine.Output.Primary.recs[1].delay > 1)
+    end)
+
+    it("conjures an eligible Healthstone while carrying only a higher-level stone", function()
+        local h = warlock("Destruction", 10, { 6201 }, {
+            prepull = true,
+            noTarget = true,
+            items = { [6265] = 1, [9421] = 1 },
+        })
+        assert.are.equal("create_healthstone", pick(h))
+    end)
+
+    it("skips conjuring while fighting or moving, without resources, or while carrying an eligible stone", function()
+        for _, o in ipairs({
+            { items = {} },
+            { items = { [6265] = 3, [19005] = 1 } },
+            { items = { [6265] = 3, [5512] = 1, [9421] = 1 } },
+            { moving = true },
+            { mana = 1, maxMana = 90 },
+            { prepull = false },
+            { defensives = false },
+        }) do
+            o.noTarget = true
+            o.prepull = o.prepull ~= false
+            o.items = o.items or { [6265] = 1 }
+            assert.is_not_equal("create_healthstone", pick(warlock("Destruction", 10, { 6201 }, o)))
+        end
+    end)
+
+    it("summons a different demon with Demonic Pact while preserving the sacrificed demon's buff", function()
+        for _, case in ipairs({ { 18792, "summon_imp" }, { 18789, "summon_voidwalker" } }) do
+            local h = warlock("Demonology", 40, { 688, 697, 18788 }, {
+                prepull = true,
+                noTarget = true,
+                buffs = { case[1] },
+                talents = { [425464] = 1, [18788] = 1 },
+                items = { [6265] = 2 },
+                maxMana = 2400,
+                mana = 2400,
+            })
+            assert.are.equal(case[2], pick(h))
+        end
     end)
 end)

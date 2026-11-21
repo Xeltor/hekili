@@ -434,9 +434,15 @@ function Facade.PetHealthFraction()
     return healthFraction("pet")
 end
 
+function Facade.ObservedStat(name, arg)
+    return VS.ObservedStat(name, arg)
+end
+
 -- A hidden target may have a tighter health bound from observed execute windows and damage.
+-- The second result tells callers whether the bound came from a current health measurement.
 function Facade.TargetHealthUpperFraction()
-    return healthFraction("target") or VS.Health("target", now()).hi
+    local measured = healthFraction("target")
+    return measured or VS.Health("target", now()).hi, measured ~= nil
 end
 
 kept("UnitHealthMax", realUnitHealthMax and "hybrid" or "virtual", function(unit)
@@ -1139,6 +1145,12 @@ kept("C_Spell.GetSpellLossOfControlCooldown", "virtual", nothing, "absent on For
 -- Casts: the player's own are plain [W PR9], the target's secret [W PR8]
 
 local CAST_ICON = 136243
+
+-- A cast start alone carries no interruptibility information on Forever.
+function Facade.TargetCastInterruptible()
+    local _, _, _, interruptible = VS.TargetCastFacts()
+    return interruptible == 1 and VS.TargetCast(now()) ~= nil
+end
 
 kept("UnitCastingInfo", "hybrid", function(unit, ...)
     if unit == "player" then

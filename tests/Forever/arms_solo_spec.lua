@@ -9,7 +9,7 @@ local function warrior(level, rage, options)
     local character = ws.content(ww, {
         level = level,
         learn = ws.learn("WARRIOR"),
-        talents = ws.header("warrior_arms").talents,
+        talents = options.talents or ws.header("warrior_arms").talents,
         kit = { "shield_bash", "shield_wall", "retaliation" },
     }).character()
     if options.unarmed then
@@ -24,13 +24,34 @@ local function warrior(level, rage, options)
         character.talents[12975] = 1
         character.known[#character.known + 1] = 12975
     end
+    if options.talents and not character.talents[1310222] then
+        for i = #character.known, 1, -1 do
+            if character.known[i] == 1310222 then
+                table.remove(character.known, i)
+            end
+        end
+    end
 
-    local H = headless.new({ character = character, pack = ww.PACK })
+    local H = headless.new({
+        character = character,
+        pack = ww.PACK,
+        beforeLoad = function(h)
+            if options.targetSpeed then
+                h.env.GetUnitSpeed = function(unit)
+                    return unit == "target" and options.targetSpeed or 0, 7, 7, 4.72
+                end
+            end
+        end,
+    })
     assert.are.same({}, H.loadErrors)
     local ctl = H.ctl
+    ctl.current[6603] = true
+    ctl.unitCombat.target, ctl.exists.targettarget, ctl.unitIs.targettarget = true, true, "player"
+    ctl.classification = options.classification
     ctl.level.target, ctl.distance.target = options.boss and -1 or level, options.distance or 3
     ctl.guid.target = options.target or ctl.guid.target
     ctl.creature.target = options.creature
+    ctl.isPlayer.target = options.player
     ctl.groupMembers = options.group or 0
     ctl.isInRaid = options.raid == true
     ctl.healthPlain = true -- explicit fixture health; SECRET cases remain unreadable
@@ -85,13 +106,45 @@ describe("the shipped Arms leveling and PvE priority", function()
         end
     end)
 
+    it("finds a learned attack on an engaged dungeon pull at every level", function()
+        for level = 1, 60 do
+            local H = warrior(level, 45, { instance = "party", group = 5, shout = true })
+            H.Hekili:FireToggle("defensives", "off")
+            local key = read(H)[1]
+            assert.is_not_nil(key, "level " .. level)
+            assert.is_true(H.Hekili.State:IsKnown(key), key .. " at level " .. level)
+            assert.is_true(H.ctl.known[H.Hekili.Engine.Output.Primary.recs[1].actionID], key .. " at level " .. level)
+        end
+    end)
+
     it("favors Rend on short outdoor pulls while leveling solo or in a party", function()
         assert.are.equal("rend", read(warrior(10, 25), 1.6)[1])
         assert.are.equal("rend", read(warrior(10, 25, { group = 2 }), 1.6)[1])
     end)
 
-    it("keeps the sustained-fight damage priority in instances and raids", function()
-        for _, options in ipairs({ { group = 2, instance = "party" }, { group = 2, raid = true } }) do
+    it("holds field melee and area attacks outside their range even when Rage and Victorious are available", function()
+        local offensive = {
+            heroic_strike = true,
+            rend = true,
+            victory_rush = true,
+            sunder_armor = true,
+            thunder_clap = true,
+        }
+        for _, level in ipairs({ 1, 10, 20, 60 }) do
+            local H = warrior(level, 80, { instance = "party", group = 5, distance = 12, victorious = true })
+            for _, key in ipairs(read(H)) do
+                assert.is_nil(offensive[key], key .. " at level " .. level)
+            end
+        end
+    end)
+
+    it("treats ordinary dungeon enemies as short pulls and keeps armor stacking for elites and raids", function()
+        local regular = warrior(15, 25, { group = 2, instance = "party" })
+        assert.are.equal("rend", read(regular, 1.6)[1])
+        for _, options in ipairs({
+            { group = 2, instance = "party", classification = "elite" },
+            { group = 2, raid = true },
+        }) do
             local H = warrior(15, 25, options)
             assert.are.equal("sunder_armor", read(H, 1.6)[1])
             assert.is_false(H.Hekili.State.arms_open_world)
@@ -195,6 +248,25 @@ describe("the shipped Arms leveling and PvE priority", function()
         assert.is_not_true(read(warrior(15, 40, { target = HARVEST_WATCHER, health = SECRET }))[1] == "bloodrage")
     end)
 
+    it("uses learned Reckless Swings for low Rage after Bloodrage on a durable pull with health to spare", function()
+        local function pick(options)
+            options.instance, options.group, options.shout = "party", 5, true
+            options.talents = options.talents or { { 1329555, 1, 2 } }
+            local H = warrior(56, 5, options)
+            if not options.bloodrageReady then
+                H.ctl.cooldown[2687] = { isActive = true, isOnGCD = false, startTime = H.ctl.now, duration = 60 }
+                H.Fire("SPELL_UPDATE_COOLDOWN")
+            end
+            return read(H)[1]
+        end
+        assert.are.equal("reckless_swings", pick({ classification = "elite" }))
+        assert.are.equal("bloodrage", pick({ classification = "elite", bloodrageReady = true }))
+        assert.is_not_equal("reckless_swings", pick({ classification = "elite", health = SECRET }))
+        assert.is_not_equal("reckless_swings", pick({ classification = "elite", health = 740 }))
+        assert.is_not_equal("reckless_swings", pick({ classification = "elite", talents = {} }))
+        assert.is_not_equal("reckless_swings", pick({ classification = "normal" }))
+    end)
+
     it("takes Victory Rush at its level-20 unlock only with the kill proc", function()
         assert.are.equal("victory_rush", read(warrior(20, 35, { health = 600, victorious = true }), 1.6)[1])
         assert.are.equal("victory_rush", read(warrior(20, 35, { health = SECRET, victorious = true }), 1.6)[1])
@@ -256,10 +328,98 @@ describe("the shipped Arms leveling and PvE priority", function()
             local nextAction = read(H, 1.6)[1]
             assert.is_true(H.Hekili.State.debuff.hamstring.up)
             assert.is_not_true(nextAction == "hamstring")
-            if not options.instance then
-                assert.are.equal("slam", nextAction) -- The current WoWSims priority uses Slam through Execute range.
-            end
         end
+    end)
+
+    it("uses untalented Slam just after the main-hand swing and lifts that restriction with Improved Slam", function()
+        local function withSlam(talents)
+            local H = warrior(35, 35, { talents = talents, target = HARVEST_WATCHER, shout = true })
+            H.ns.Output.steady = false
+            H.Hekili:FireToggle("defensives", "off")
+            read(H, 1.6)
+            H.Fire("PLAYER_SWING", 3.6, 0)
+            H.Fire("UNIT_COMBAT", "target", "WOUND", "", 40, 1)
+            return H
+        end
+        local H = withSlam({})
+        assert.are.equal("slam", read(H, 0.1)[1])
+        local nextPick = read(H, 1)
+        assert.is_false(nextPick[1] == "slam" and H.Hekili.Engine.Output.Primary.recs[1].time < 0.1)
+        H = withSlam({ { 12862, 1, 1 } })
+        assert.are.equal("slam", read(H, 1)[1])
+        assert.are.equal(0, H.Hekili.Engine.Output.Primary.recs[1].time)
+    end)
+
+    it("prioritizes learned Spearing Strike against Giants and Dragonkin", function()
+        for _, creature in ipairs({ "giant", "dragonkin", "beast", SECRET }) do
+            local H = warrior(30, 25, { creature = creature, shout = true, talents = { { 1310222, 1, 1 } } })
+            H.Hekili:FireToggle("defensives", "off")
+            H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-rend", 6548)
+            assert.are.equal(creature == "giant" or creature == "dragonkin", read(H, 1.6)[1] == "spearing_strike")
+        end
+        for _, options in ipairs({
+            { "unlearned", talents = {} },
+            { "Defensive Stance", form = 2 },
+            { "unarmed", unarmed = true },
+            { "out of melee range", distance = 12 },
+        }) do
+            options.creature, options.shout = "dragonkin", true
+            options.talents = options.talents or { { 1310222, 1, 1 } }
+            local H = warrior(30, 25, options)
+            H.Hekili:FireToggle("defensives", "off")
+            H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-rend", 6548)
+            assert.are_not.equal("spearing_strike", read(H, 1.6)[1], options[1])
+        end
+    end)
+
+    it("swaps for Whirlwind only on a confirmed pack when the learned attack is affordable after the swap", function()
+        local function pack(level, count, mastery, rage, form, shield)
+            local H = warrior(level, rage or 35, {
+                group = 5,
+                instance = "party",
+                shout = true,
+                form = form,
+                shield = shield,
+                talents = { { 12295, mastery, 1 } },
+            })
+            for i = 2, count do
+                local unit = "nameplate" .. i
+                H.ctl.exists[unit], H.ctl.exists[unit .. "target"] = true, true
+                H.ctl.guid[unit] = "Creature-0-0-0-0-347-00000" .. i
+                H.ctl.unitCombat[unit], H.ctl.unitIs[unit .. "target"] = true, "player"
+                H.ctl.distance[unit] = 3
+                H.Fire("NAME_PLATE_UNIT_ADDED", unit)
+            end
+            H.Hekili:FireToggle("mode", "aoe")
+            return H
+        end
+        assert.are.equal("berserker_stance", read(pack(36, 4, 3))[1])
+        assert.are_not.equal("berserker_stance", read(pack(35, 4, 3))[1])
+        assert.are_not.equal("berserker_stance", read(pack(36, 2, 3))[1])
+        assert.are_not.equal("berserker_stance", read(pack(36, 4, 2))[1])
+        assert.are_not.equal("berserker_stance", read(pack(36, 4, 3, 80))[1])
+        local defensive = read(pack(36, 4, 3, 35, 2, true))
+        for _, key in ipairs(defensive) do
+            assert.is_false(key == "battle_stance" or key == "berserker_stance")
+        end
+        local disabled = pack(36, 4, 3)
+        disabled.Hekili.Engine.settings.specs[ww.SPEC].abilities.whirlwind.disabled = true
+        assert.are_not.equal("berserker_stance", read(disabled)[1])
+        local H = pack(36, 4, 3, 25, 3)
+        assert.are.equal("whirlwind", read(H)[1])
+        H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-whirlwind", 1680)
+        H.ctl.cooldown[1680] = { isActive = true, isOnGCD = false, startTime = H.ctl.now, duration = 10 }
+        H.Fire("SPELL_UPDATE_COOLDOWN")
+        assert.are.equal("battle_stance", read(H, 1.6)[1])
+        H = pack(36, 2, 3, 25, 3)
+        H.Hekili.DB.profile.specs[ww.SPEC].settings.wowsims_stance_dance = true
+        H.Hekili:SettingsChanged()
+        assert.are.equal("battle_stance", read(H)[1])
+        assert.is_true(H.Hekili.State.settings.wowsims_stance_dance)
+        H = pack(36, 4, 3, 80)
+        H.Hekili.DB.profile.specs[ww.SPEC].settings.wowsims_stance_dance = true
+        H.Hekili:SettingsChanged()
+        assert.are_not.equal("berserker_stance", read(H)[1])
     end)
 
     it("uses the known Execute rank in Berserker Stance and waits until Hamstring is affordable", function()
@@ -320,6 +480,46 @@ describe("the shipped Arms leveling and PvE priority", function()
             hostileChannel(H, case.interruptible)
             assert.is_not_true(read(H)[1] == "shield_bash")
         end
+    end)
+
+    it("slows a visibly moving hostile player and prioritizes Mortal Strike healing pressure", function()
+        for _, instance in ipairs({ "pvp", "none" }) do
+            local H = warrior(48, 45, { instance = instance, player = true, targetSpeed = 7, shout = true })
+            assert.are.equal("hamstring", read(H)[1])
+            H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-hamstring", 7372)
+            assert.are.equal("mortal_strike", read(H, 1.6)[1])
+        end
+        for _, options in ipairs({
+            { "stationary", targetSpeed = 0 },
+            { "hidden speed", targetSpeed = SECRET },
+            { "out of range", targetSpeed = 7, distance = 12 },
+            { "unarmed", targetSpeed = 7, unarmed = true },
+            { "Defensive Stance", targetSpeed = 7, form = 2 },
+            { "untrained", targetSpeed = 7, level = 7 },
+        }) do
+            options.instance, options.player, options.shout = "pvp", true, true
+            local H = warrior(options.level or 48, 45, options)
+            local pick = read(H)[1]
+            assert.are_not.equal("hamstring", pick, options[1])
+            if options.distance or options.unarmed or options.level then
+                assert.are_not.equal("mortal_strike", pick, options[1])
+            else
+                assert.are.equal("mortal_strike", pick, options[1])
+            end
+        end
+    end)
+
+    it("backs off an immune player's Hamstring for one Hamstring duration", function()
+        local guid = "Player-1-00123456"
+        local H = warrior(32, 45, { player = true, target = guid, targetSpeed = 7, shout = true })
+        assert.are.equal("hamstring", read(H)[1])
+        H.Fire("UNIT_SPELLCAST_SENT", "player", "Unit", "Cast-hamstring", 7372)
+        H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-hamstring", 7372)
+        H.Fire("UNIT_COMBAT", "target", "IMMUNE", "", 0, 1)
+        assert.are_not.equal("hamstring", read(H, 1.6)[1])
+        assert.are.equal("temporary immunity", H.ns.VirtualState.DebuffImmunity("hamstring", guid, H.ctl.now))
+        assert.are.equal("hamstring", read(H, 15)[1])
+        assert.is_nil(H.ns.VirtualState.DebuffImmunity("hamstring", guid, H.ctl.now))
     end)
 
     it("uses Pummel when already in Berserker Stance and respects the Interrupts toggle", function()

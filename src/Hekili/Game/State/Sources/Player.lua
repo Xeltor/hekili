@@ -34,7 +34,7 @@ local function statCall(api, name, arg)
     elseif name == "GetCritChance" then
         return api.GetCritChance() -- secret: readStat tests every return
     elseif name == "GetSpellCritChance" then
-        return api.GetSpellCritChance("player") -- secret: readStat tests every return
+        return api.GetSpellCritChance() -- secret: readStat tests every return
     elseif name == "GetRangedCritChance" then
         return api.GetRangedCritChance() -- secret: readStat tests every return
     elseif name == "GetCombatRating" then
@@ -47,6 +47,7 @@ end
 -- One stat call's returns into its cache slot, only when every return is plain. Allocates nothing.
 local function readStat(api, i, t)
     local e = I.STATS[i]
+    I.statObserved[i] = nil
     local r1, r2, r3, r4, r5, r6, r7 = statCall(api, e[1], e.arg) -- secret: tested with issecretvalue below
     if
         api.issecretvalue(r1)
@@ -64,6 +65,8 @@ local function readStat(api, i, t)
     v[1], v[2], v[3], v[4] = Plain(api, r1) or 0, Plain(api, r2) or 0, Plain(api, r3) or 0, Plain(api, r4) or 0
     v[5], v[6], v[7] = Plain(api, r5) or 0, Plain(api, r6) or 0, Plain(api, r7) or 0
     I.statT[i] = t
+    I.statObserved[i] = type(r1) == "number"
+        and (e[1] ~= "UnitRangedDamage" or type(r2) == "number" and type(r3) == "number")
     if e[1] == "UnitDamage" then
         I.damageForm = Plain(api, api.GetShapeshiftForm()) -- secret: Plain; the form the weapon damage is for (Rows.lua)
     end
@@ -167,6 +170,9 @@ S.On("PLAYER_REGEN_ENABLED", nil, function(api, t)
 end)
 
 S.On("PLAYER_EQUIPMENT_CHANGED", nil, function(api, t)
+    for i = 1, #I.STATS do
+        I.statObserved[i] = nil -- the old loadout can remain in the numerical fallback during combat
+    end
     readStats(api, t)
     readGear(api)
 end)
@@ -183,7 +189,12 @@ S.On("UNIT_ATTACK_POWER", "player", onPlayerStats)
 -- A stat, the spell power or a rating changes out of combat with no weapon or attack power event (a Spirit buff, food,
 -- a talent): read again, so a pre-pull `now` (this cache) and the simulation (the plain read) price one amount (L967;
 -- all three events are Forever's: wow-ui-source's forever branch). The last two carry no unit.
-S.On("UNIT_STATS", "player", onPlayerStats)
+S.On("UNIT_STATS", "player", function(api, t, unit)
+    if unit == "player" then
+        I.statObserved[I.statIndex.GetSpellCritChance[0]] = nil
+        readStats(api, t)
+    end
+end)
 -- The player's UNIT_AURA out of combat too, the stats and the spell haste (the stat split, L971): the reads then land at
 -- the walk's own time, never older, so a buff's UNIT_STATS or UNIT_SPELL_HASTE a frame before its UNIT_AURA is neither
 -- counted twice nor taken out twice. Registered for every unit (nil), as Sources/Auras.lua's walk: a "player"
@@ -197,9 +208,21 @@ end)
 -- The attack speed and the ranged weapon (UnitRangedDamage's speed is the ranged hand's: Sources/Swing.lua reads it
 -- from this cache on the same events, after this file's handlers, the TOC order).
 S.On("UNIT_ATTACK_SPEED", "player", onPlayerStats)
-S.On("UNIT_RANGEDDAMAGE", "player", onPlayerStats)
-S.On("SPELL_POWER_CHANGED", nil, readStats)
-S.On("COMBAT_RATING_UPDATE", nil, readStats)
+S.On("UNIT_RANGEDDAMAGE", "player", function(api, t, unit)
+    if unit == "player" then
+        I.statObserved[I.statIndex.UnitRangedDamage[0]] = nil
+        readStats(api, t)
+    end
+end)
+S.On("SPELL_POWER_CHANGED", nil, function(api, t)
+    I.statObserved[I.statIndex.GetSpellBonusDamage[6]] = nil
+    I.statObserved[I.statIndex.GetSpellBonusDamage[7]] = nil
+    readStats(api, t)
+end)
+S.On("COMBAT_RATING_UPDATE", nil, function(api, t)
+    I.statObserved[I.statIndex.GetSpellCritChance[0]] = nil
+    readStats(api, t)
+end)
 
 S.On("PLAYER_LEVEL_UP", nil, function(api, t, level)
     I.level = Plain(api, level) or I.level -- the new level (UnitLevel may still answer the old one)

@@ -60,6 +60,8 @@ local KIT = {
     curse_of_exhaustion = { { 18223 }, 0.08, 0, "spell" },
     fel_domination = { { 18708 }, 0, 300, "off" },
     subjugate_demon = { { 1098, 11725, 11726 }, 700, 0, "spell" }, -- 3 s cast, a Soul Shard; 300 s is its duration
+    soul_link = { { 19028 }, 0.20, 0, "spell" },
+    create_healthstone = { { 6201, 6202, 5699, 11729, 11730 }, 1120, 0, "spell" },
     health_funnel = { { 755, 3698, 3699, 3700, 11693, 11694, 11695 }, 0, 0, "spell" }, -- health, not mana (unmodelled)
     drain_mana = { { 5138, 6226, 11703, 11704 }, 310, 0, "spell" },
 }
@@ -140,7 +142,7 @@ describe("Forever Warlock", function()
             )
             assert.are.equal("function", type(a.known), key)
         end
-        assert.are.equal(45, n)
+        assert.are.equal(47, n)
         assert.are.equal("cooldowns", w.abilities.amplify_curse.toggle)
         for _, key in ipairs({
             "summon_imp",
@@ -312,6 +314,19 @@ describe("Forever Warlock", function()
             { 0.48, 0.6 },
             { near(ld.run(A.summon_imp.spend, e)), near(ld.run(A.summon_succubus.spend, e)) }
         )
+    end)
+
+    it("forecasts the learned rank of targeted Fear in custom lists", function()
+        local ids = { 5782, 6213, 6215 }
+        for rank, duration in ipairs({ 10, 15, 20 }) do
+            for i, id in ipairs(ids) do
+                w.game.known[id] = i <= rank
+            end
+            local e = env()
+            ld.run(w.abilities.fear.handler, e)
+            assert.are.equal(duration, e.durations.fear)
+        end
+        assert.is_nil(w.abilities.howl_of_terror.handler)
     end)
 
     it("keeps one Curse and one Bane on the target, Amplify Curse spent by Agony and Weakness", function()
@@ -709,8 +724,11 @@ describe("Forever Warlock", function()
             for key in pairs(w.pets) do
                 assert.are.same({ "summon_" .. key, 3600 }, { w.pets[key].spell, w.pets[key].duration }, key)
             end
-            local function run(field, ranks, out)
+            local function run(field, ranks, out, linked)
                 local e = env(ranks)
+                if linked then
+                    e.buff = buffs({ soul_link = 1 })
+                end
                 if out then -- the simulation's `pet`: demon `out` up
                     e.pet = setmetatable({}, {
                         __index = function(_, k)
@@ -740,6 +758,7 @@ describe("Forever Warlock", function()
                 -- the simulation dismisses only the demon out first (wowsims summon.go: the same demon included)
                 assert.are.same({ "-succubus", "imp" }, run(field, nil, "succubus").summoned, field)
                 assert.are.same({ "-imp", "imp" }, run(field, nil, "imp").summoned, field)
+                assert.are.equal("soul_link", run(field, nil, "imp", true).removed[2], field)
             end
             assert.are.same({ 18789, 18790, 18791, 18792 }, {
                 w.auras.burning_shadow.id,
@@ -1144,10 +1163,19 @@ describe("Forever Warlock priorities", function()
         -- The core's call_action_list and Hekili_Shared's item and racial actions.
         local shared = {
             use_items = true,
+            movement = true,
+            casting = true,
             call_action_list = true,
             blood_fury = true,
             berserking = true,
             eureka = true,
+            will_to_survive = true,
+            will_of_the_forsaken = true,
+            escape_artist = true,
+            shatter_curse = true,
+            dispellable_curse = true,
+            rapid_regeneration = true,
+            cannibalize = true,
             demonic_rune = true,
             major_mana_potion = true,
             healthstone = true,

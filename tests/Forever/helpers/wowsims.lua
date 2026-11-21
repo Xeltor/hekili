@@ -142,8 +142,9 @@ function M.content(base, o)
     local C = setmetatable({ PACK = o.pack or base.PACK }, { __index = base })
     C.WORLD = setmetatable({ level = level }, { __index = base.WORLD })
     local learn = o.learn or {}
+    local passiveLearn = base.PASSIVE_LEARN or {}
     local function learned(id)
-        return type(id) ~= "number" or (learn[id] or 1) <= level
+        return type(id) ~= "number" or (learn[id] or passiveLearn[id] or 1) <= level
     end
     function C.character()
         local c = {}

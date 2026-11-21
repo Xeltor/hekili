@@ -34,10 +34,6 @@ local function warrior(level, rage, options)
     character.form = options.form or (level >= 10 and 2 or 1)
     character.power.value = rage
     character.instanceType = options.instance
-    character.ranges = {}
-    for _, spell in ipairs({ 100, 6178, 11578, 1240287, 1240288, 1240289 }) do
-        character.ranges[spell] = { 8, 25 }
-    end
     local hasVanguard = character.talents[1310317]
     for i = #character.known, 1, -1 do
         local spell = character.known[i]

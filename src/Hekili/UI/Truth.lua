@@ -7,7 +7,7 @@ local _, ns = ...
 -- Its glow helper use follows Classic's (UI/Styles/Classic.lua): Hekili code by Hekili's authors and maintainers.
 -- Phase 1: lifecycle, overlays and events (Task 3), the real cooldown swipe (Task 4), the usability edge (Task 5) and
 -- the proc mark (Task 6).
--- The Classic Primary health cue shares this display-only API boundary and runs independently of the Modern toggle.
+-- Classic health cues on Primary and Defensives share this display-only API boundary and run independently of Modern.
 
 local Facade = ns.Facade
 local CreateFrame, C_Spell = Facade.CreateFrame, Facade.C_Spell
@@ -309,13 +309,14 @@ end
 
 function Truth.DrawHealthCue( d, out )
     local button, cues = d.Buttons[ 1 ], out.healthCues
-    if not button or not cues or cues.n == 0 or out.version == d.blankVersion or Hekili.Pause then
+    if not button or not cues or cues.n == 0 or out.version == d.blankVersion or d.alpha == 0 or Hekili.Pause then
         Truth.ClearHealthCue( d )
         return
     end
 
     local cue = d.healthCue
     if not cue then
+        -- A cue-only publish hides the ordinary button. Anchor to its position but inherit visibility from the display.
         cue = CreateFrame( "Frame", nil, d )
         cue.layers, cue.count = {}, 0
         cue:SetScript( "OnEvent", refreshHealthCue )

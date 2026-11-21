@@ -63,7 +63,8 @@ end
 
 -- A headless Hekili with Primary on `style` and the Modern toggle `truth` (default off); every button, texture,
 -- cooldown, veil and real-swipe frame records its calls.
-local function boot(style, truth)
+local function boot(style, truth, display)
+    display = display or "Primary"
     for k in pairs(overlayed) do
         overlayed[k] = nil
     end
@@ -95,14 +96,21 @@ local function boot(style, truth)
     assert(headless.cycle(H, H.ctl.now + 0.2))
     -- the styles' contract is the published set as it is: the steady hold (always on for players) off on this instance
     H.ns.Output.steady = false
-    local conf = H.Hekili.DB.profile.displays.Primary
+    local profile = H.Hekili.DB.profile
+    if display == "Defensives" then
+        profile.toggles.defensives.value, profile.toggles.defensives.separate = true, true
+    end
+    local conf = profile.displays[display]
     conf.style = style
     if conf.truth then -- Task 3 adds the field; Task 2's cases boot with it off
         conf.truth.enabled = truth == true
         conf.truth.confirm = truth == true -- the mark is off by default (owner ruling 2026-10-29); tests that boot it on want it
     end
     H.Hekili:BuildUI()
-    local d = rawget(H.env, "HekiliDisplayPrimary")
+    if display == "Defensives" then
+        H.Hekili:UpdateDisplayVisibility()
+    end
+    local d = rawget(H.env, "HekiliDisplay" .. display)
     for _, b in ipairs(d.Buttons) do
         instrument(b)
         instrument(b.Texture)
@@ -144,10 +152,11 @@ local SET_ONE = { { "slam", 0.3 } }
 local ACTIVE = { isActive = true, isOnGCD = false, startTime = fake.SECRET, duration = fake.SECRET }
 local ON_GCD = { isActive = true, isOnGCD = true, startTime = fake.SECRET, duration = fake.SECRET }
 
-local function publish(H, set, choices)
+local function publish(H, set, choices, display)
+    display = display or "Primary"
     local abilities = H.Hekili.Engine.Registry.Abilities()
     local now = H.ctl.now
-    local s, cues = H.ns.Output.Begin("Primary")
+    local s, cues = H.ns.Output.Begin(display)
     for i, choice in ipairs(choices or {}) do
         cues[i], cues.n = choice, i
     end
@@ -157,7 +166,7 @@ local function publish(H, set, choices)
         r.texture, r.keybind = "tex" .. i, "K" .. i
         r.time, r.exact_time, r.focus = e[2], now + e[2], e[3]
     end
-    H.ns.Output.Publish("Primary", #set)
+    H.ns.Output.Publish(display, #set)
 end
 
 local function blank(H)
@@ -761,6 +770,56 @@ describe("Modern's real cooldown swipe (R2, §3.4)", function()
         assert.is_false(cue:IsEventRegistered("UNIT_HEALTH"))
         assert.is_false(cue.__shown)
         assert.are.equal("tex1", d.Buttons[1].Texture.__tex)
+        assert.are.same({}, H.errors)
+    end)
+
+    it("shows a cue-only Classic Defensives publish and clears it on blank, disable or style change", function()
+        local H, d = boot("classic", false, "Defensives")
+        local api = H.ns.Facade.Display
+        H.env.Enum.LuaCurveType = { Step = 1 }
+        api.C_CurveUtil.CreateCurve = function()
+            return { SetType = function() end, AddPoint = function() end }
+        end
+        api.UnitHealthPercent = function()
+            return fake.SECRET
+        end
+        local choices = { { texture = 134831, percent = 40 } }
+        local function draw(healthCues)
+            publish(H, {}, healthCues, "Defensives")
+            frame(H, d, 0.3)
+        end
+
+        draw(choices)
+        local cue = assert(d.healthCue)
+        instrument(cue)
+        instrument(cue.layers[1])
+        assert.are.equal(d, cue:GetParent())
+        assert.are.equal(d.Buttons[1], cue.button)
+        assert.is_false(d.Buttons[1]:IsShown())
+        assert.are.equal(134831, cue.layers[1].texture)
+        H.Fire("UNIT_HEALTH", "player")
+        assert.is_true(rawequal(fake.SECRET, cue.layers[1].__alpha))
+        assert.are.equal(0, H.ns.Output.Defensives.count)
+        assert.are.equal(0, H.ns.Output.Primary.healthCues.n)
+
+        draw()
+        assert.is_false(cue:IsEventRegistered("UNIT_HEALTH"))
+        assert.is_false(cue:IsShown())
+        draw(choices)
+        assert.is_true(cue:IsShown())
+        H.Hekili:FireToggle("defensives", "off")
+        assert.is_false(cue:IsShown())
+        assert.is_false(cue:IsEventRegistered("UNIT_HEALTH"))
+        H.Hekili:FireToggle("defensives", "on")
+        frame(H, d, 0.3)
+        assert.is_false(cue:IsShown())
+        draw(choices)
+        assert.is_true(cue:IsShown())
+        H.Hekili.DB.profile.displays.Defensives.style = "timeline"
+        H.Hekili:BuildUI()
+        draw(choices)
+        assert.is_false(cue:IsShown())
+        assert.is_false(cue:IsEventRegistered("UNIT_HEALTH"))
         assert.are.same({}, H.errors)
     end)
     it(

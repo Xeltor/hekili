@@ -3,6 +3,7 @@
 -- and at three levels.
 local ws = require("Forever.helpers.wowsims")
 local ww = require("Forever.helpers.warrior_world")
+local fury = require("Forever.helpers.fury_gate")
 local loop = require("Game.harness.loop")
 local replay = require("Game.harness.replay")
 
@@ -70,6 +71,13 @@ local ARMS_CHAR = setmetatable({
 
 -- Fury: the same Overpower window (its Overpower Weaving group reads 1282733); Berserker Rage is a trained ability the
 -- loop kit lacks. The base is the dual-wield world (ww.Fury), the log's own weapon speeds.
+local FURY_RAID = setmetatable({
+    character = function()
+        local c = ww.Fury.character()
+        c.instanceType = "raid"
+        return c
+    end,
+}, { __index = ww.Fury })
 local FURY = { kit = { "berserker_rage", "reckless_swings" }, requires = ARMS.requires }
 -- A live loop (no replay) keeps the world's own Overpower rule, as fury_gate.lua's loops do: `requires` reads aura
 -- 1282733, which only a replay's log writes. With it, a dodge opened the belief's window out of Battle Stance, the
@@ -171,7 +179,7 @@ describe("the Warrior wowsims.com packs #slow #wowsims", function()
     it("Fury (wowsims.com) follows wowsims's casts", function()
         ws.gate(
             "Fury (wowsims.com)",
-            content("warrior_fury", ww.Fury, "Fury (wowsims.com)", 60, FURY),
+            content("warrior_fury", FURY_RAID, "Fury (wowsims.com)", 60, FURY),
             "warrior_fury",
             -- measured 0.917: 0.933 after central fixes 7, 13 and 16 (was 0.81 with GAP AD), less the pre-pull Berserker
             -- Rage the user's ruling (2026-10-21) gates on Improved Berserker Rage, which the build lacks (1 of 60);
@@ -228,11 +236,7 @@ describe("the Warrior wowsims.com packs #slow #wowsims", function()
     local FURY_LIVE = { [10] = 10.4, [40] = 8.4, [60] = 8.6 } -- 10.4 / 8.4 / 8.6
     for _, level in ipairs({ 10, 40, 60 }) do
         it("Fury (wowsims.com) stays live at level " .. level, function()
-            ws.live(
-                "Fury (wowsims.com)",
-                content("warrior_fury", ww.Fury, "Fury (wowsims.com)", level, FURY_LIVE_KIT),
-                FURY_LIVE[level]
-            )
+            ws.live("Fury (wowsims.com)", fury.content(level), FURY_LIVE[level])
         end)
     end
     -- Central fix 18 (in game, level 30 beta: no Mortal Strike or Bloodthirst before 40): the leveling Sunder line
@@ -241,7 +245,7 @@ describe("the Warrior wowsims.com packs #slow #wowsims", function()
     -- and the fifth is older than one tick (the cast's frame, before its success folds in).
     for _, case in ipairs({
         { "warrior_arms", ww.Raid, "Arms (wowsims.com)", ARMS_LIVE_KIT },
-        { "warrior_fury", ww.Fury, "Fury (wowsims.com)", FURY_LIVE_KIT },
+        { "warrior_fury", FURY_RAID, "Fury (wowsims.com)", FURY_LIVE_KIT },
     }) do
         it(case[3] .. " stops Sunder Armor at 5 stacks at level 30", function()
             local L = loop.new(content(case[1], case[2], case[3], 30, case[4]))
@@ -324,7 +328,7 @@ describe("the Warrior wowsims.com packs #slow #wowsims", function()
     -- and the feed: the Fury log with wowsims's build ranks (25286 -> 11567, 25289 -> 11551 in every line) gives the
     -- same decisions, keyed the same; the replay knobs list every rank (hideQueue: the Heroic Strike queue aura)
     it("replays the Fury log the same with the build's lower ranks (R30)", function()
-        local C = content("warrior_fury", ww.Fury, "Fury (wowsims.com)", 60, FURY)
+        local C = content("warrior_fury", FURY_RAID, "Fury (wowsims.com)", 60, FURY)
         local L = loop.new(C)
         local o = ws.replayOptions(C, "warrior_fury", FURY_REPLAY)
         local text = ws.log("warrior_fury")

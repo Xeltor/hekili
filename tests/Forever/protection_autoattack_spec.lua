@@ -97,14 +97,17 @@ describe("Protection's start-autoattack reminder", function()
         end
     end)
 
-    it("does not suggest attacking dead, friendly, player or unengaged targets", function()
-        for _, knob in ipairs({ "dead", "friendly", "isPlayer" }) do
+    it("requires an engaged hostile opponent for PvP Attack", function()
+        for _, knob in ipairs({ "dead", "friendly" }) do
             local H = boot(0)
             H.ctl[knob].target = true
             H.Fire("PLAYER_TARGET_CHANGED")
             noAttack(H)
         end
         local H = boot(0)
+        H.ctl.isPlayer.target = true
+        H.Fire("PLAYER_TARGET_CHANGED")
+        assert.are.equal("auto_attack", read(H, 0.2))
         H.ctl.unitCombat.target = false
         noAttack(H)
         noAttack(boot(0, { instance = "pvp" }))

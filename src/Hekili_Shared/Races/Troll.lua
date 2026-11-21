@@ -48,6 +48,10 @@ race:RegisterAbility("rapid_regeneration", {
     startsCombat = false,
     toggle = "defensives",
 
+    usable = function()
+        return not moving, "cannot channel Rapid Regeneration while moving"
+    end,
+
     start = function() -- a channel: Hekili's simulation runs `start`, not `handler` (State.lua runHandler)
         applyBuff("rapid_regeneration")
     end,

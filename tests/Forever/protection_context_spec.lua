@@ -27,6 +27,84 @@ local function immediate(H, action, seconds)
 end
 
 describe("Protection outdoor and dungeon coverage", function()
+    it("returns a shieldless dungeon tank to Defensive Stance when the aggro and Rage trade are confirmed", function()
+        local function tank(level, rage, options)
+            options.instance = options.instance or "party"
+            options.group = 5
+            options.form = options.form or 1
+            options.noShield = true
+            return warrior(level, rage, options)
+        end
+
+        -- Defensive Stance's threat, mitigation and access to Revenge do not require a shield.
+        assert.is_true(immediate(tank(10, 0, { threat = 3 }), "defensive_stance"))
+        assert.is_true(immediate(tank(30, 10, { threat = 2, form = 3 }), "defensive_stance"))
+        assert.is_false(immediate(tank(9, 0, { threat = 3 }), "defensive_stance"))
+        assert.is_false(immediate(tank(13, 10, { threat = 3 }), "defensive_stance")) -- no Tactical Mastery
+        assert.is_false(immediate(tank(30, 35, { threat = 3 }), "defensive_stance"))
+        assert.is_false(immediate(tank(30, 5, { threat = 1, targetVictim = "party1" }), "defensive_stance"))
+        assert.is_false(immediate(tank(30, 5, { threat = SECRET }), "defensive_stance"))
+        assert.is_false(immediate(tank(30, 5, { threat = 3, idleTarget = true }), "defensive_stance"))
+        assert.is_false(immediate(tank(30, 5, { threat = 3, noWeapon = true }), "defensive_stance"))
+        assert.is_false(immediate(tank(30, 5, { threat = 3, instance = "none" }), "defensive_stance"))
+    end)
+
+    it("uses Victory Rush before a routine Revenge when the full heal fits or the kill window is ending", function()
+        for _, instance in ipairs({ "none", "party" }) do
+            local options = {
+                instance = instance,
+                group = instance == "party" and 5 or 0,
+                threat = 3,
+                revenge = true,
+                victorious = true,
+                health = 900,
+            }
+            assert.is_true(immediate(warrior(20, 20, options), "victory_rush"))
+            options.health = 1000
+            assert.is_true(immediate(warrior(20, 20, options), "revenge"))
+            assert.is_true(immediate(warrior(20, 20, options), "victory_rush", 18.6))
+            options.health = SECRET
+            local H = warrior(20, 20, options)
+            assert.is_true(immediate(H, "revenge"))
+            local cues = H.Hekili.Engine.Output.Primary.healthCues
+            assert.are.equal("victory_rush", cues[cues.n].action)
+            assert.are.equal(90, cues[cues.n].percent)
+        end
+    end)
+
+    it("requires a learned, active Victory Rush in melee and preserves urgent interrupts and lost threat", function()
+        for _, case in ipairs({
+            { level = 19, victorious = true },
+            { level = 20 },
+            { level = 20, victorious = true, distance = 12 },
+            { level = 20, victorious = true, instance = "party", group = 5, threat = 0 },
+            { level = 20, victorious = true, instance = "party", group = 5, idleTarget = true },
+        }) do
+            case.health, case.revenge = 800, true
+            assert.is_false(immediate(warrior(case.level, 35, case), "victory_rush"))
+        end
+        local H = warrior(20, 35, { victorious = true, health = 800 })
+        cast(H, true)
+        assert.is_true(immediate(H, "shield_bash"))
+    end)
+
+    it(
+        "uses early Rend but avoids routine Rend and single-target Clap on ordinary dungeon trash once Revenge is learned",
+        function()
+            local options = { instance = "party", group = 5, threat = 3, demo = true, classification = "normal" }
+            assert.is_true(immediate(warrior(13, 35, options), "rend"))
+            for _, classification in ipairs({ "normal", "rare" }) do
+                options.classification = classification
+                assert.is_true(immediate(warrior(14, 35, options), "sunder_armor"))
+            end
+            options.classification = "elite"
+            local H = warrior(14, 35, options)
+            assert.is_true(immediate(H, "thunder_clap"))
+            applied(H, "thunder_clap")
+            assert.is_true(immediate(H, "rend", 1.6))
+        end
+    )
+
     it("reuses ready Thunder Clap on a controlled pack while its debuff remains up", function()
         for _, level in ipairs({ 6, 18, 28, 40, 59, 60 }) do
             local H = warrior(level, 35, { instance = "party", group = 5, threat = 3, demo = true })

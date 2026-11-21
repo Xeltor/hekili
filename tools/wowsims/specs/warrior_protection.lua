@@ -48,6 +48,8 @@ local contextual = "prot_contextual&prot_attack_target&combat>0"
 local targetThreat = "prot_threat_spend"
 local packThreat = "(prot_threat_spend|prot_pack_threat_spend)"
 local groupedThreat = contextual .. "&" .. targetThreat
+local safeVictoryRush = contextual .. melee .. "&!" .. packThreat
+local pvpMelee = "warrior_pvp_target" .. melee
 local interruptWindow = "prot_attack_target&combat>0" .. melee .. "&debuff.casting.up"
 local noMajorDefense = "(!action.last_stand.known|!buff.last_stand.up)&(!action.shield_wall.known|!buff.shield_wall.up)"
 local charge = "prot_contextual&prot_attack_target&combat=0&prot_charge_range"
@@ -113,15 +115,18 @@ return {
         "Classic Primary can show low-health defensives even when the client hides your health. Healing potions use the Defensives toggle.",
         "Outdoor pulls can use Charge or Attack. Dungeon attacks and Charge preparation require an enemy already fighting you or your party.",
         "Attack starts or resumes melee swings before routine buffs when autoattack is off. Vanguard lets you Charge without swapping stances.",
+        "Without a shield, return to Defensive Stance when a dungeon enemy is confirmed to be tanked by you and the switch preserves your Rage.",
         "Grouped pulls favor Thunder Clap on nearby packs and Shield Slam, Revenge or Sunder Armor for immediate threat.",
-        "Outside raids, Thunder Clap repeats on nearby packs. Normal and rare enemies need only one routine Sunder; bosses and elites build five.",
+        "Outside raids, Thunder Clap repeats on nearby packs. On a single normal or rare enemy, use early Rend until Revenge is learned and limit routine Sunder to one stack.",
+        "On controlled pulls, use Victory Rush before routine attacks when its full heal fits or only one global cooldown remains in its kill window.",
         "Recommend Target Swaps can suggest spreading Sunder in groups and Rend across durable melee enemies already fighting you or your party.",
         "Reckless Swings needs low Rage, readable health of at least 75%, an active autoattack and an elite or boss in melee range.",
         "Shield Block is reserved for incoming melee. Heroic Strike and Cleave spend Rage left over after upcoming threat, mitigation and interrupts.",
         "Shield Bash and Pummel cover your current target in PvE. Concussion Blow can stop a cast on a non-boss when you lack a ready interrupt.",
         "Protection saves Rage between casts only for NPC types observed casting interruptible spells. Grouped threat recovery can spend that reserve between casts.",
         "Use Taunt for loose targets and tank swaps. Use Disarm against enemies with a disarmable weapon.",
-        "Raids use the simulator's sustained priority. Enable Maintain Demoralizing Shout if you are assigned to keep it up.",
+        "Raids and hostile training dummies use the simulator's sustained priority. Enable Maintain Demoralizing Shout if you are assigned to keep it up.",
+        "Against a hostile player in combat, use ready interrupts, Execute in a legal stance, Victory Rush, a Revenge proc and Shield Slam. Heroic Strike spends spare Rage.",
     },
     -- a tank: the raid's tank (the target swings at it) and presets.ts:130-147's healing model (apply_defaults.ts:108-122);
     -- hps 770 at e4ef929e54 (abc0b19e9c: 2.4 x the Pre-BiS gear's 321 damage taken a second; was 815; owner L1154 (4))
@@ -186,9 +191,14 @@ return {
     extra = {
         {
             before = "reckless_swings",
-            line = "shield_bash,if=" .. interruptWindow .. "&debuff.casting.v2=0&prot_interrupt_window",
+            line = "shield_bash,if=warrior_pvp_interrupt|"
+                .. interruptWindow
+                .. "&debuff.casting.v2=0&prot_interrupt_window",
         },
-        { before = "reckless_swings", line = "pummel,if=" .. interruptWindow .. "&debuff.casting.v2=0" },
+        {
+            before = "reckless_swings",
+            line = "pummel,if=warrior_pvp_interrupt|" .. interruptWindow .. "&debuff.casting.v2=0",
+        },
         {
             before = "reckless_swings",
             line = "concussion_blow,use_off_gcd=1,if="
@@ -218,14 +228,27 @@ return {
         { before = "death_wish", line = "healing_potion,use_off_gcd=1,display_below=40,if=prot_contextual&combat>0" },
         {
             before = "death_wish",
-            line = "defensive_stance,use_off_gcd=1,if=prot_contextual&combat>0&equipped.shield&!buff.defensive_stance.up",
+            line = "defensive_stance,use_off_gcd=1,if=prot_contextual&combat>0&!buff.defensive_stance.up&(equipped.shield|prot_shieldless_tanking)",
         },
         { before = "death_wish", line = "auto_attack,use_off_gcd=1,if=combat>0&prot_start_attack" },
+        { before = "death_wish", line = "victory_rush,focus=1,display_below=90,if=" .. safeVictoryRush },
+        {
+            before = "death_wish",
+            line = "victory_rush,focus=1,if=" .. safeVictoryRush .. "&buff.victorious.remains<=gcd.max",
+        },
         {
             before = "death_wish",
             line = "bloodrage,use_off_gcd=1,if=" .. contextual .. "&prot_current_rage<=25&prot_bloodrage_safe",
         },
         { before = "sweeping_strikes", line = "reckless_swings,if=prot_reckless_safe" },
+        { before = "sweeping_strikes", line = "execute,if=" .. pvpMelee .. "&execute_phase" },
+        { before = "sweeping_strikes", line = "victory_rush,focus=1,if=" .. pvpMelee },
+        { before = "sweeping_strikes", line = "revenge,focus=1,if=" .. pvpMelee },
+        { before = "sweeping_strikes", line = "shield_slam,if=" .. pvpMelee },
+        {
+            before = "sweeping_strikes",
+            line = "heroic_strike,use_off_gcd=1,focus=2,if=" .. pvpMelee .. "&(!action.revenge.known|rage.lo>=50)",
+        },
         {
             before = "sweeping_strikes",
             line = "thunder_clap,if=" .. contextual .. clapRange .. "&prot_nearby_enemies>1&" .. rageBudget(
@@ -267,7 +290,7 @@ return {
             line = "thunder_clap,if="
                 .. contextual
                 .. clapRange
-                .. "&debuff.thunder_clap.down&(prot_nearby_enemies>1|(prot_melee_target&!(arms_open_world&arms_short_pull)))&"
+                .. "&debuff.thunder_clap.down&prot_melee_target&!prot_short_pull&"
                 .. rageBudget("thunder_clap", packThreat),
         },
         {
@@ -303,7 +326,7 @@ return {
                 .. "&!"
                 .. packThreat
                 .. "&!arms_skip_rend&!execute_phase&debuff.rend.down"
-                .. "&(!action.revenge.known|!(arms_open_world&arms_short_pull))&"
+                .. "&(!action.revenge.known|!prot_short_pull)&"
                 .. rageBudget("rend"),
         },
         {

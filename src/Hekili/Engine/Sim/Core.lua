@@ -1442,7 +1442,7 @@ function Hekili:GetPredictionFromAPL( dispName, packName, listName, slot, action
 
                                                 if aScriptPass and entry.display_below then
                                                     -- Keep the readable-health recommendation. With hidden HP only
-                                                    -- the ready candidate goes to the Primary renderer.
+                                                    -- the ready candidate goes to the display's renderer.
                                                     local cues = slot.healthCues
                                                     if cues and state.offset == 0 and state.delay == 0 then
                                                         local previous = cues[ cues.n ]

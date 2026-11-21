@@ -177,6 +177,26 @@ describe("Forever Warrior", function()
         end
     )
 
+    it("checks weapon requirements when the main-hand slot changes", function()
+        local e = lw.env(w)
+        w.game.known[5308], w.game.usable[5308] = true, true
+        for _, size in ipairs({ 2, 0, 1 }) do
+            e.weapon.size = size
+            for _, key in ipairs({
+                "mortal_strike",
+                "spearing_strike",
+                "slam",
+                "whirlwind",
+                "cleave",
+                "execute",
+                "revenge",
+            }) do
+                assert.are.equal(size > 0, lw.run(w.abilities[key].usable, e), key)
+            end
+        end
+        w.game.known[5308], w.game.usable[5308] = nil, nil
+    end)
+
     it("models the talent-modified costs per rank, Focused Rage on the abilities its class mask names", function()
         local e = lw.env(w)
         e.talent = rank(2)
@@ -1102,6 +1122,7 @@ describe("Forever Warrior", function()
             assert.are.same({ { "rage", kept } }, e.capped)
             assert.are.same({}, e.spent)
             assert.are.same({ "berserker_stance" }, e.applied)
+            assert.are.equal(kept, lw.run(w.exprs.stance_rage_limit, e))
             assert.are.equal(kept, lw.run(w.exprs.stance_rage_kept, e))
             for _, stance in ipairs({ "battle_stance", "defensive_stance", "berserker_stance" }) do
                 e.capped, e.rage.current = {}, 50
@@ -1112,6 +1133,7 @@ describe("Forever Warrior", function()
         end
         local e = lw.env(w)
         e.rage.current = 8
+        assert.are.equal(10, lw.run(w.exprs.stance_rage_limit, e))
         assert.are.equal(8, lw.run(w.exprs.stance_rage_kept, e)) -- under the cap, all of it
         e.rage.current = 50
         w.game.known[1310185] = nil
@@ -1193,15 +1215,15 @@ describe("Forever Warrior", function()
             ["Arms (wowsims.com) cleave"] = { 2 },
             ["Arms (wowsims.com) victory_rush"] = { 1, 1, 1 },
             ["Fury (wowsims.com) overpower"] = { 1, 1 }, -- re-pin: Overpower Weaving's swap line and the plain one
-            ["Fury (wowsims.com) heroic_strike"] = { 2 }, -- re-pin: wowsims's two Heroic Strike entries are one
-            ["Fury (wowsims.com) cleave"] = { 2 },
-            ["Fury (wowsims.com) rend"] = { 2, 2 },
+            ["Fury (wowsims.com) heroic_strike"] = { 2, 2 }, -- the first trained spender and the sustained dump
+            ["Fury (wowsims.com) cleave"] = { 2, 2 },
+            ["Fury (wowsims.com) rend"] = { 2, 2, 2 },
             ["Fury (wowsims.com) battle_stance"] = { 1, 1 },
-            ["Fury (wowsims.com) victory_rush"] = { 1 },
-            ["Protection (wowsims.com) revenge"] = { 1, 1 },
-            ["Protection (wowsims.com) heroic_strike"] = { 2, 2, 2 }, -- excess, ordinary and raid dumps
+            ["Fury (wowsims.com) victory_rush"] = { 1, 1 },
+            ["Protection (wowsims.com) revenge"] = { 1, 1, 1 },
+            ["Protection (wowsims.com) heroic_strike"] = { 2, 2, 2, 2 }, -- PvP, excess, ordinary and raid dumps
             ["Protection (wowsims.com) cleave"] = { 2, 2, 2 },
-            ["Protection (wowsims.com) victory_rush"] = { 1, 1 },
+            ["Protection (wowsims.com) victory_rush"] = { 1, 1, 1, 1, 1 }, -- full heal, expiring proc, PvP, ordinary and raid
         }, focus) -- the user's tiers (2026-10-21; Heroic Strike and Cleave always 2, Victory Rush 1: 2026-10-22): the main strikes (Mortal Strike, Slam, Execute, Bloodthirst, Whirlwind,
         -- Shield Slam) are rotational, untiered, and so is Protection's Sunder Armor
     end)
@@ -1236,7 +1258,7 @@ describe("Forever Warrior", function()
         assert.are.equal("battle_stance", swap.action)
         local guard = "&(!action.overpower.known|(stance_rage_kept>=action.overpower.cost"
             .. "&cooldown.overpower.remains<buff.overpower_ready.remains))"
-        assert.are.equal(guard, swap.criteria:gsub("||", "|"):sub(-#guard)) -- stored as the importer stores a |
+        assert.is_truthy(swap.criteria:gsub("||", "|"):find(guard, 1, true)) -- the target guard also applies
     end)
 
     it("keeps its priorities in src/Hekili_Warrior/APLs/, tools/make_pack.lua's default class", function()

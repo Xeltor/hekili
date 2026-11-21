@@ -72,7 +72,7 @@ local function registers(src, key)
 end
 
 describe("shared content", function()
-    local all, ns, saved, debuffs, bags, controls
+    local all, ns, saved, debuffs, bags, controls, playerLevel, unusableItems
 
     -- Runs Engine/Schema/Races.lua, Engine/Schema/Shared.lua and the named shared files (default: every one Hekili_Shared.toc lists) against
     -- a stand-in `all` that registers as Engine/Schema/Spec/ RegisterAbility/RegisterAura (Abilities.lua, Auras.lua): under the key, its id and
@@ -100,8 +100,15 @@ describe("shared content", function()
         end
         _G.Hekili = { State = { race_token = "BloodElf" }, Class = { specs = { [0] = all }, file = "WARRIOR" } }
         debuffs, bags, controls = {}, {}, {}
+        playerLevel, unusableItems = 60, {}
         ns = {
             Facade = {
+                UnitClassBase = function()
+                    return "WARRIOR"
+                end,
+                UnitLevel = function()
+                    return playerLevel
+                end,
                 PlayerHealthFraction = function()
                     return 1
                 end,
@@ -109,8 +116,8 @@ describe("shared content", function()
                     GetItemCount = function(id)
                         return bags[id] or 0
                     end,
-                    IsUsableItem = function()
-                        return true
+                    IsUsableItem = function(id)
+                        return not unusableItems[id]
                     end,
                 },
                 C_LossOfControl = {
@@ -332,7 +339,7 @@ describe("shared content", function()
         assert.are.equal(all.abilities.potion, all.abilities.potion_default)
         assert.are.same({ "fake_potion" }, all.auras.potion.alias)
         assert.are.same(
-            { 19013, 19012, 9421, 19011, 19010, 5510, 19009, 19008, 5509, 19007, 19006, 5511, 19005, 19004, 5512 },
+            { 19013, 9421, 19012, 19011, 5510, 19010, 19009, 5509, 19008, 19007, 5511, 19006, 19005, 5512, 19004 },
             all.abilities.healthstone.items
         )
         assert.are.same(
@@ -380,6 +387,7 @@ describe("shared content", function()
                 gain = function(...)
                     got[#got + 1] = { ... }
                 end,
+                setCooldown = function() end,
             }
             setfenv(a[key].now, env)()
             setfenv(a[key].handler, env)()
@@ -462,6 +470,93 @@ describe("shared content", function()
         assert.are.equal(5509, item())
     end)
 
+    it("forecasts the flat item heal at every Healthstone use level", function()
+        load({ "Consumables" })
+        local hs = all.abilities.healthstone
+        local gained
+        setfenv(hs.handler, {
+            gain = function(amount, resource)
+                gained = { amount, resource }
+            end,
+            setCooldown = function() end,
+        })
+        for _, rank in ipairs({
+            { 1, { 5512, 120 }, { 19004, 110 }, { 19005, 120 } },
+            { 12, { 5511, 300 }, { 19006, 275 }, { 19007, 300 } },
+            { 24, { 5509, 600 }, { 19008, 550 }, { 19009, 600 } },
+            { 36, { 5510, 960 }, { 19010, 880 }, { 19011, 960 } },
+            { 48, { 9421, 1440 }, { 19012, 1320 }, { 19013, 1440 } },
+        }) do
+            for i = 2, #rank do
+                local id, heal = unpack(rank[i])
+                bags = { [id] = 1 }
+                if rank[1] > 1 then
+                    playerLevel = rank[1] - 1
+                    assert.is_false(all.exprs.has_healthstone())
+                    assert.are.equal(5512, hs.item())
+                end
+                playerLevel, gained = rank[1], nil
+                assert.is_true(all.exprs.has_healthstone())
+                assert.are.equal(id, hs.item())
+                hs.handler()
+                assert.are.same({ heal, "health" }, gained)
+            end
+        end
+    end)
+
+    it("selects the strongest usable stone and retains eligible stones through temporary unavailability", function()
+        load({ "Consumables" })
+        playerLevel, bags = 36, { [9421] = 1, [5510] = 1, [19010] = 1 }
+        local hs = all.abilities.healthstone
+        setfenv(hs.usable, { health = { current = 20, max = 100 } })
+        assert.are.equal(5510, hs.item())
+        unusableItems[5510] = true
+        assert.are.equal(19010, hs.item())
+        assert.is_true(hs.usable())
+        unusableItems[19010] = true
+        assert.are.equal(5510, hs.item())
+        assert.is_true(all.exprs.has_healthstone())
+        assert.is_false(hs.usable())
+        bags = { [9421] = 1 }
+        assert.is_false(all.exprs.has_healthstone())
+        assert.is_false(hs.usable())
+    end)
+
+    it(
+        "forecasts the stone and potion categories separately and resets to the selected item's client cooldown",
+        function()
+            local field = require("Forever.helpers.warlock_field")
+            local h = field.warlock("Destruction", 60, {}, {
+                items = { [5512] = 1, [5509] = 1, [12662] = 1, [1710] = 1, [13444] = 1 },
+                health = 200,
+            })
+            h.Hekili:FireToggle("potions", "on")
+            local st = h.Hekili.State
+            for _, pair in ipairs({
+                { "healthstone", "demonic_rune", "healing_potion" },
+                { "demonic_rune", "healthstone", "major_mana_potion" },
+                { "healing_potion", "major_mana_potion", "healthstone" },
+                { "major_mana_potion", "healing_potion", "demonic_rune" },
+            }) do
+                st.reset("Primary")
+                assert.are.equal(0, st.cooldown[pair[2]].true_remains)
+                st:RunHandler(pair[1], true)
+                assert.is_near(120, st.cooldown[pair[2]].true_remains, 1e-6)
+                assert.are.equal(0, st.cooldown[pair[3]].true_remains)
+            end
+            -- The client reports the shared cooldown on both items after an actual use.
+            h.ctl.itemCooldown[5509] = { h.ctl.now, 120 }
+            h.ctl.itemCooldown[12662] = { h.ctl.now, 120 }
+            h.Fire("BAG_UPDATE_COOLDOWN")
+            st.reset("Primary")
+            assert.are.equal(5509, st.cooldown.healthstone.id)
+            assert.is_near(120, st.cooldown.healthstone.true_remains, 1e-6)
+            assert.is_near(120, st.cooldown.demonic_rune.true_remains, 1e-6)
+            assert.are.equal(0, st.cooldown.healing_potion.true_remains)
+            assert.are.same({}, h.errors)
+        end
+    )
+
     it("offers a Healthstone only with one in the bags, and only below full health", function()
         load({ "Consumables" })
         local usable = all.abilities.healthstone.usable
@@ -501,7 +596,7 @@ describe("shared content", function()
 
     it("registers each shared key in one file only, every file Hekili_Shared.toc lists", function()
         load()
-        assert.are.same({ "Auras", "Consumables", "Items" }, SHARED)
+        assert.are.same({ "Auras", "Control", "Consumables", "Items" }, SHARED)
         for _, kind in ipairs({ "abilities", "auras" }) do
             local seen = {}
             for _, k in ipairs(all.keys[kind]) do

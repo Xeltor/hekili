@@ -441,8 +441,49 @@ function Facade.PlayerHealthFraction()
     return healthFraction("player")
 end
 
+-- Different ranks and items share the localized Food and Drink aura names. The lasting
+-- Well Fed bonus has its own name and does not mean the player is still sitting down to eat.
+do
+    local byName = resolve("C_UnitAuras.GetAuraDataBySpellName")
+    local mealSpells, mealNames = { 433, 430 }, {}
+    function Facade.PlayerEatingOrDrinking()
+        if not byName or plainAll(Facade.UnitAffectingCombat("player")) ~= false then
+            return nil
+        end
+        for i, id in ipairs(mealSpells) do
+            if not mealNames[i] then
+                local info = realGetSpellInfo and realGetSpellInfo(id)
+                local name = not issecretvalue(info) and type(info) == "table" and info.name
+                if issecretvalue(name) or type(name) ~= "string" or name == "" then
+                    return nil
+                end
+                mealNames[i] = name
+            end
+            local ok, aura = pcall(byName, "player", mealNames[i], "HELPFUL")
+            if not ok or issecretvalue(aura) then
+                return nil
+            elseif aura then
+                return true
+            end
+        end
+        return false
+    end
+end
+
 function Facade.PetHealthFraction()
     return healthFraction("pet")
+end
+
+-- Callers identify the victim by their party/raid roster token. Hidden health is unknown.
+function Facade.GroupMemberHealthFraction(unit)
+    if
+        type(unit) == "string"
+        and (unit:match("^party%d+$") or unit:match("^raid%d+$"))
+        and plainAll(Facade.UnitExists(unit)) == true
+        and plainAll(Facade.UnitIsDead(unit)) == false
+    then
+        return healthFraction(unit)
+    end
 end
 
 function Facade.TargetHealthFraction()
@@ -964,6 +1005,8 @@ hybrid("UnitCreatureFamily", nothing, "SecretWhenUnitIdentityRestricted (API doc
 -- A secret identity is unknown, so the core gets nil: never a secret key, compare or truth test.
 local IDENTITY = "plain in combat [W PR14; gate spike]; secret under the Map restriction (FR-1 2026-11-05)"
 hybrid("UnitGUID", nothing, IDENTITY .. "; nothing")
+hybrid("UnitGroupRolesAssigned", nothing, "role of the roster unit; unknown while identity is restricted")
+hybrid("C_InstanceEncounter.IsEncounterInProgress", nothing, "Forever encounter state; unknown when unavailable")
 hybrid("UnitIsUnit", function(a, b)
     if a == b then -- a token is itself (the aura scans' caster "player" or "pet"); any other pair is unknown
         return true
@@ -1356,6 +1399,7 @@ local PASSTHROUGH = {
     },
     { "C_VideoOptions.GetCurrentGameWindowSize", "plain [W sweep 2026-10-16]; table fields unverified" },
     { "GetActionInfo", "plain [W PR10]" },
+    { "GetBindingAction", "active command for a key, including any override binding" },
     { "GetBindingKey", "plain [W PR10]" },
     { "GetBuildInfo", "plain [W sweep 2026-10-16]" },
     { "GetCVar", "plain [W sweep 2026-10-16]" },
@@ -1366,12 +1410,18 @@ local PASSTHROUGH = {
     { "GetFramerate", "plain [W sweep 2026-10-16]" },
     { "GetInstanceInfo", "plain [W sweep 2026-10-16]" },
     { "GetInventoryItemID", "plain [W PR13]" },
+    { "C_ActionBar.GetActionText", "bound macro label for a Forever action reporting its spell ID" },
+    { "C_Macro.GetMacroName", "macro label by index as used by Blizzard's Macro UI" },
+    { "GetMacroBody", "inspect an explicitly player-targeted cast on a bound macro" },
     { "GetMacroItem", "unprobed; plain by the secrecy rule [W action bar glow]" },
     { "GetMacroSpell", "unprobed; plain by the secrecy rule [W action bar glow]" },
+    { "GetModifiedClick", "player binding option used by Blizzard's action buttons for focus casting" },
     { "GetNetStats", "plain [W sweep 2026-10-16]" },
     { "GetNumClasses", "plain [W sweep 2026-10-16]" },
     { "GetNumGroupMembers", "plain [W sweep 2026-10-16]" },
+    { "GetNumMacros", "account and character macro counts as used by Blizzard's Macro UI" },
     { "GetNumSubgroupMembers", "plain [W sweep 2026-10-16]" },
+    { "GetPartyAssignment", "optional Classic raid assignment; checked for secrecy by GroupRole" },
     { "GetRealmName", "plain [W sweep 2026-10-16]" },
     { "GetShapeshiftForm", "plain [W §4 (stance)]" },
     { "GetShapeshiftFormInfo", "plain [W PR10]" },
@@ -1470,6 +1520,184 @@ function Facade.DebuffCount(spellID, now)
         return nil
     end
     return VS.Count.WithAura(spellID, now)
+end
+
+-- Stable across tabbing away and back, including under Map when the belief can identify the target by its plate.
+function Facade.TargetMemoryKey()
+    local key = I.targetKeys[I.targetSlot]
+    return key ~= "" and key or nil
+end
+
+-- A plate number becomes a different identity when its occupant leaves or the identity mode changes.
+function Facade.TargetMemoryGeneration(key)
+    if not key or key == "" then
+        return nil
+    end
+    for s = 1, I.TARGET_CAP do
+        if I.targetKeys[s] == key then
+            return I.targetKeyGenerations[s]
+        end
+    end
+end
+
+-- A native, helpful-only action button can heal us without changing the selected enemy. Its
+-- mouseover and focus options are resolved at keypress, so even a modifier held by the eventual
+-- action binding must not be able to redirect it to a different friendly unit.
+local function anotherRecipient(unit)
+    local exists = plainAll(Facade.UnitExists(unit))
+    if exists == false or Facade.UnitIsUnit(unit, "player") == true then
+        return false
+    end
+    return exists ~= true or plainAll(Facade.UnitCanAttack("player", unit)) ~= true
+end
+
+function Facade.CanSelfCastHelpfulSpell()
+    if
+        (plainAll(Facade.GetCVar("enableMouseoverCast")) ~= "0" and anotherRecipient("mouseover"))
+        or (anotherRecipient("focus") and plainAll(Facade.GetModifiedClick("FOCUSCAST")) ~= "NONE")
+    then
+        return false
+    end
+    if Facade.UnitIsUnit("target", "player") == true then
+        return true
+    end
+    return plainAll(Facade.GetCVar("autoSelfCast")) == "1"
+        and not anotherRecipient("target")
+        and not anotherRecipient("softfriend")
+        and not anotherRecipient("softinteract")
+end
+
+-- A tooltip, macro name or reported feedback spell does not identify the recipient. Accept
+-- exactly one literal cast on the player. The spellbook resolves the client's localized name.
+local macroNames
+function Facade.InvalidateMacroNames()
+    macroNames = nil
+end
+
+local function macroIndexOnSlot(slot)
+    local label = plainAll(Facade.C_ActionBar.GetActionText(slot))
+    if type(label) ~= "string" or label == "" then
+        return
+    end
+    if not macroNames then
+        local account, character = plainAll(Facade.GetNumMacros())
+        local limits = resolve("Constants.MacroConsts")
+        local characterBase = limits and limits.MAX_ACCOUNT_MACROS
+        if type(account) ~= "number" or type(character) ~= "number" or type(characterBase) ~= "number" then
+            return
+        end
+        macroNames = {}
+        for i = 1, account + character do
+            local index = i <= account and i or characterBase + i - account
+            local name = plainAll(Facade.C_Macro.GetMacroName(index))
+            if not name then
+                -- An unreadable name might be a duplicate of the label we want.
+                macroNames = nil
+                return
+            end
+            macroNames[name] = macroNames[name] == nil and index or false
+        end
+    end
+    return macroNames[label]
+end
+
+function Facade.PlayerCastMacroSpell(id, slot)
+    if issecretvalue(id) or type(id) ~= "number" then
+        return
+    end
+    -- Some slots report a spell or action ID that could coincidentally be another macro's
+    -- index. For the actual keypress, resolve the macro through the slot's unique label.
+    if slot then
+        id = macroIndexOnSlot(slot)
+    end
+    local body = id and plainAll(Facade.GetMacroBody(id))
+    if type(body) ~= "string" then
+        return
+    end
+    local spell
+    for line in body:gmatch("[^\r\n]+") do
+        line = line:match("^%s*(.-)%s*$")
+        if line ~= "" and line:sub(1, 1) ~= "#" then
+            if spell then
+                return
+            end
+            spell = line:match("^/cast%s+%[@player%]%s+([^;%[%]]+)$")
+                or line:match("^/cast%s+%[target=player%]%s+([^;%[%]]+)$")
+            if not spell then
+                return
+            end
+        end
+    end
+    local info = spell and plainAll(Facade.C_Spell.GetSpellInfo(spell))
+    return info and plainAll(info.spellID)
+end
+
+-- A raid leader can assign a main tank independently of the unit's group role.
+function Facade.GroupRole(unit)
+    local role = Facade.UnitGroupRolesAssigned(unit)
+    if role == "TANK" then
+        return role
+    end
+    local mainTank = Facade.GetPartyAssignment("MAINTANK", unit)
+    if issecretvalue(mainTank) then
+        return nil
+    end
+    if mainTank == true then
+        return "TANK"
+    end
+    if role == "HEALER" or role == "DAMAGER" or role == "NONE" then
+        return role
+    end
+end
+
+local function fightingGroup(unit, victim)
+    if
+        Facade.UnitIsUnit(victim, "player") == true
+        or Facade.UnitIsUnit(victim, "pet") == true
+        or plainAll(Facade.UnitInParty(victim)) == true
+    then
+        return true
+    end
+    local raidIndex = plainAll(Facade.UnitInRaid(victim))
+    -- The first threat return is this unit's threat table. The facade's second return is a global count.
+    return type(raidIndex) == "number" and raidIndex > 0
+        or type(Facade.UnitThreatSituation("player", unit)) == "number"
+        or type(Facade.UnitThreatSituation("pet", unit)) == "number"
+end
+
+-- True only for an identified, living hostile NPC fighting our group. False is a confirmed idle enemy.
+-- An unreadable status or another party's fight is unknown. Never infer engagement from the player's combat flag.
+function Facade.TargetInPlayerCombat()
+    local key = Facade.TargetMemoryKey()
+    if
+        not key
+        or plainAll(Facade.UnitExists("target")) ~= true
+        or plainAll(Facade.UnitCanAttack("player", "target")) ~= true
+        or plainAll(Facade.UnitIsDead("target")) ~= false
+        or plainAll(Facade.UnitIsPlayer("target")) ~= false
+    then
+        return nil
+    end
+    local combat = plainAll(Facade.UnitAffectingCombat("target"))
+    if combat == false then
+        return false
+    end
+    if combat == true and fightingGroup("target", "targettarget") then
+        return true
+    end
+    -- Under Map a target's GUID can be secret while its matching plate supplies a plain combat or victim read.
+    if type(key) == "number" and I.Plates.active[key] then
+        local plate = I.Plates.token[key]
+        if Facade.UnitIsUnit("target", plate) == true then
+            local plateCombat = plainAll(Facade.UnitAffectingCombat(plate))
+            if plateCombat == true and fightingGroup(plate, plate .. "target") then
+                return true
+            end
+            if combat == nil and plateCombat == false then
+                return false
+            end
+        end
+    end
 end
 
 -- The shared policy uses already observed casts, target identities and aura reads.

@@ -149,10 +149,9 @@ describe("Forever Warrior", function()
         function()
             local e = lw.env(w)
             local n = 0
-            for key, a in pairs(w.abilities) do
+            for key, want in pairs(KIT) do
+                local a = assert(w.abilities[key], "missing ability " .. key)
                 n = n + 1
-                local want = KIT[key]
-                assert.is_not_nil(want, "unexpected ability " .. key)
                 assert.are.same(want[1], idsOf(a), key)
                 assert.are.same(
                     { want[2], want[3], want[4] },
@@ -162,6 +161,14 @@ describe("Forever Warrior", function()
                 assert.are.equal("function", type(a.known), key)
             end
             assert.are.equal(43, n)
+            for key in pairs(w.abilities) do
+                assert.is_truthy(KIT[key] or key == "recover_threat", "unexpected ability " .. key)
+            end
+            local swap = w.abilities.recover_threat
+            assert.is_true(swap.unlisted and swap.targetSwap)
+            assert.is_nil(swap.id)
+            assert.is_nil(swap.handler)
+            assert.is_function(swap.targetSwapSafe)
             assert.are.equal(1.5, lw.run(w.abilities.slam.cast, e))
             assert.is_true(w.abilities.heroic_strike.onNextSwing and w.abilities.cleave.onNextSwing)
             -- Sweeping Strikes under the native Cooldowns toggle (APL usability audit A): off, the engine skips its line

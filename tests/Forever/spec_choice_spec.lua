@@ -6,7 +6,7 @@ local headless = require("Game.harness.headless")
 local ww = require("Forever.helpers.warrior_world")
 
 local ARMS, FURY, PROT = 100011, 100012, 100013
-local CHAR = "Player-Realm" -- the fake client's UnitName("player") .. "-" .. GetRealmName()
+local CHAR = "Player-1" -- the fake client's player GUID
 local FURY_TALENTS = { [23881] = 1, [12319] = 3 } -- Bloodthirst, Flurry
 
 -- The harness's C_Traits answer for a talent build (tests/Game/harness/headless.lua's login shape).
@@ -24,7 +24,7 @@ local function boot(o)
     local c = ww.character()
     c.talents = o.talents or c.talents
     c.level = o.level or c.level
-    local H = headless.new({ character = c, saved = o.saved, pack = o.pack })
+    local H = headless.new({ character = c, saved = o.saved, pack = o.pack, beforeLoad = o.beforeLoad })
     assert.are.same({}, H.loadErrors)
     return H
 end
@@ -135,7 +135,7 @@ describe("the active spec (headless Warrior)", function()
     end)
 
     it("moves a legacy scalar choice onto the current dominant tree once", function()
-        local saved = { profiles = { Default = { specChoice = { [CHAR] = "fury" } } } }
+        local saved = { profiles = { Default = { specChoice = { ["Player-Realm"] = "fury" } } } }
         local H = boot({ saved = saved }) -- Arms talents
         settle(H)
         assert.are.equal(FURY, H.Hekili.State.spec.id)
@@ -145,6 +145,52 @@ describe("the active spec (headless Warrior)", function()
         settle(H)
         assert.are.equal(FURY, H.Hekili.State.spec.id)
         assert.are.same({ [1] = "fury", last = 2 }, H.Hekili.DB.profile.specChoice[CHAR])
+    end)
+
+    it("restores a manual choice when the player's identity and realm arrive after login", function()
+        local secret = require("Game.State.helpers.fake_api").SECRET
+        local realm = ""
+        local saved = {
+            profiles = {
+                Default = {
+                    specChoice = {
+                        ["Player-"] = { last = 3 },
+                        ["Player-Realm"] = { [1] = "fury", last = 1 },
+                    },
+                },
+            },
+        }
+        local H = boot({
+            saved = saved,
+            beforeLoad = function(h)
+                h.ctl.guid.player = secret
+                h.env.GetRealmName = function()
+                    return realm
+                end
+            end,
+        })
+        settle(H)
+        assert.are.equal(ARMS, H.Hekili.State.spec.id)
+        assert.is_nil(H.Hekili.DB.profile.specChoice[CHAR])
+        realm, H.ctl.guid.player = "Realm", CHAR
+        H.RunTimers(H.ctl.now + 6)
+        settle(H)
+        assert.are.equal(FURY, H.Hekili.State.spec.id)
+        local choices = H.Hekili.DB.profile.specChoice
+        assert.are.same({ [1] = "fury", last = 1 }, choices[CHAR])
+        assert.are.same({ last = 3 }, choices["Player-"])
+
+        local other = boot({
+            saved = H.env.HekiliDB,
+            beforeLoad = function(h)
+                h.ctl.guid.player = "Player-2"
+            end,
+        })
+        settle(other)
+        assert.are.equal(ARMS, other.Hekili.State.spec.id)
+        assert.are.equal("fury", other.Hekili.DB.profile.specChoice[CHAR][1])
+        assert.are.same({}, H.errors)
+        assert.are.same({}, other.errors)
     end)
 
     it("ends an OnUpdate pass whose early pick was on stale ranks on the settled spec (the extra pass runs)", function()
@@ -711,6 +757,89 @@ describe("a Druid (headless)", function()
 end)
 
 describe("Rogue and Paladin specs (headless)", function()
+    it("recovers a Protection pack explicitly activated under a partial legacy name", function()
+        local c = require("Forever.helpers.paladin_world").Protection.character()
+        c.level, c.talents = 13, { [20060] = 4 }
+        local function selected(manual, full, guid, lateName)
+            local choices = { ["Player-"] = { [3] = "protection", last = 3 } }
+            choices["Player-Realm"], choices[CHAR] = full, guid
+            local saved =
+                { profiles = { Default = { specChoice = choices, specs = { [100022] = { packManual = manual } } } } }
+            local H = headless.new({
+                character = c,
+                saved = saved,
+                beforeLoad = function(h)
+                    h.env.GetRealmName = function()
+                        return full and "Realm" or ""
+                    end
+                end,
+                beforePlayerLogin = function(h)
+                    if lateName then
+                        h.ctl.names.player = require("Game.State.helpers.fake_api").SECRET
+                    end
+                end,
+            })
+            settle(H)
+            if lateName then
+                assert.are.equal("retribution", H.Hekili.State.spec.key)
+                H.ctl.names.player = "Player"
+                H.RunTimers(H.ctl.now + 6)
+                settle(H)
+            end
+            assert.are.same({}, H.errors)
+            return H.Hekili.State.spec.key
+        end
+        assert.are.equal("protection", selected(true))
+        assert.are.equal("protection", selected(true, nil, nil, true))
+        assert.are.equal("retribution", selected(false))
+        assert.are.equal("retribution", selected(true, { [3] = "retribution", last = 3 }))
+        assert.are.equal("retribution", selected(true, nil, { [3] = "retribution", last = 3 }))
+    end)
+
+    it("keeps Protection chosen for a Retribution leveling build through a restricted login and reload", function()
+        local secret = require("Game.State.helpers.fake_api").SECRET
+        local c = require("Forever.helpers.paladin_world").Protection.character()
+        c.level, c.talents = 13, { [20060] = 4 }
+        local H = headless.new({
+            character = c,
+            beforeLoad = function(h)
+                h.ctl.guid.player = secret
+                h.env.GetRealmName = function()
+                    return ""
+                end
+            end,
+        })
+        settle(H)
+        assert.are.equal("retribution", H.Hekili.State.spec.key)
+        H.Hekili:CmdLine("spec prot")
+        settle(H)
+        assert.are.equal("protection", H.Hekili.State.spec.key)
+        H.ctl.guid.player = CHAR
+        H.RunTimers(H.ctl.now + 6)
+        settle(H)
+        assert.are.same({ [3] = "protection", last = 3 }, H.Hekili.DB.profile.specChoice[CHAR])
+        assert.is_nil(H.Hekili.DB.profile.specChoice["Player-"])
+        local reload = headless.new({
+            character = c,
+            saved = H.env.HekiliDB,
+            beforeLoad = function(h)
+                h.ctl.guid.player = secret
+                h.env.GetRealmName = function()
+                    return ""
+                end
+                h.env.HekiliSpecPlayerGUID = H.env.HekiliSpecPlayerGUID
+            end,
+            beforePlayerLogin = function(h)
+                h.ctl.names.player = secret
+            end,
+        })
+        assert.are.same({}, reload.loadErrors)
+        settle(reload)
+        assert.are.equal("protection", reload.Hekili.State.spec.key)
+        assert.are.same({}, H.errors)
+        assert.are.same({}, reload.errors)
+    end)
+
     it("selects each Rogue pack's spec", function()
         local rw = require("Forever.helpers.rogue_world")
         for name, id in pairs({ Assassination = 100041, Combat = 100042, Subtlety = 100043 }) do

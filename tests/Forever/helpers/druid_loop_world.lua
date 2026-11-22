@@ -54,8 +54,10 @@ local AMOUNT = {
 -- Feral's ranges in yards that differ from the fake client's melee default (0-5), every rank alike: the DB2's
 -- SpellMisc MinRange/MaxRange as wowsims/forever's DB2-derived assets/db_inputs/spell_store_inputs.json carries them at
 -- e2842f0a78; 0-0 is Self Only (no range check). Melee strikes keep the default 0-5. The Feral world only (its
--- Movement opt-in: the 25 yd opener's Faerie Fire at 30 yd).
+-- Movement opt-in: the 25 yd opener's Faerie Fire at 30 yd). Bear Charge has its own minimum range in both worlds.
+local CHARGE_RANGE = { 8, 25 }
 local FERAL_RANGE = {
+    feral_charge = CHARGE_RANGE,
     faerie_fire = { 0, 30 },
     innervate = { 0, 30 },
     mark_of_the_wild = { 0, 30 },
@@ -463,9 +465,9 @@ local function formOk(a, e)
 end
 
 -- Every rank's range of FERAL_RANGE's kit abilities, known or not (the client's spell data): { [spellID] = { min, max } }.
-local function ranges(w)
+local function ranges(w, knownRanges)
     local out = {}
-    for key, r in pairs(FERAL_RANGE) do
+    for key, r in pairs(knownRanges) do
         local a = w.abilities[key]
         if a then
             out[a.id] = r
@@ -506,6 +508,8 @@ local function content(name)
             forms[i] = C.IDS[key] and w.abilities[key].id or nil
         end
         return {
+            -- The pinned Cat and Bear worlds are sustained group encounters. Field fixtures set their own zone.
+            instanceType = name ~= "Balance" and "raid" or nil,
             class = "DRUID",
             classID = M.CLASS_ID,
             specID = M.CLIENT_SPEC,
@@ -516,7 +520,9 @@ local function content(name)
             speed = { P.weapon[3] },
             forms = forms,
             form = FORM[P.form],
-            ranges = name == "Feral" and ranges(w) or nil,
+            ranges = name == "Feral" and ranges(w, FERAL_RANGE)
+                or name == "Guardian" and ranges(w, { feral_charge = CHARGE_RANGE })
+                or nil,
         }
     end
 

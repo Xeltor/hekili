@@ -219,7 +219,7 @@ L["Fade as Unusable"] = "淡化为不可用"
 L["Fade the primary icon when you should wait before using the ability, similar to when an ability is lacking required resources."] = "当你应等待一段时间再使用技能时淡化主图标，类似于技能缺少所需资源时的效果。"
 L["%s Desaturate"] = "%s 去色"
 L["Desaturate the primary icon when you should wait before using the ability."] = "当你应等待一段时间再使用技能时，将主图标去色。"
-L["If enabled, small indicators for target-swapping, aura-cancellation, etc. may appear on your primary icon."] = "启用后，主图标上可能会出现切换目标、取消光环等小型指示器。"
+L["Show a full-size icon when you should switch targets and a small marker when you should cancel an aura."] = "需要切换目标时显示全尺寸图标，需要取消光环时显示小标记。"
 L["If enabled, these indicators will appear on queued icons as well as the primary icon, when appropriate."] = "启用后，这些指示器在适当时也会出现在队列图标上，而不只是主图标。"
 L["Appearance"] = "外观"
 L["%s Appearance"] = "%s外观"
@@ -229,7 +229,7 @@ L["Select the zoom percentage for indicator icon textures. (Roughly 30% will tri
 L["Keep Aspect Ratio"] = "保持宽高比"
 L["When enabled, indicator icons will maintain their original aspect ratio when resized."] = "启用后，指示器图标在调整大小时会保持原始宽高比。"
 L["Indicators"] = "指示器"
-L["Indicators are small icons that can indicate target-swapping or (rarely) cancelling auras."] = "指示器是一些小图标，用于提示切换目标或（很少）取消光环。"
+L["A gold arrow means cycle forward through enemies and a violet arrow means cycle backward. Both fill the icon. Size and position control the small aura-cancellation marker."] = "金色箭头表示向前切换敌人，紫色箭头表示向后切换敌人。两种箭头都占满整个图标。大小和位置设置用于调整提示取消光环的小标记。"
 
 -- Hekili/Options/Options.lua
 L["Call Action List"] = "调用动作列表"

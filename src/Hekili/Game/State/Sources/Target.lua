@@ -23,13 +23,15 @@ local Plain, Stage, Direct = S.Plain, S.Stage, S.Direct
 -- under Map (the GUID secret) the index 1..40 of the plate that is the target (a number: never equal to a GUID, so the
 -- two key spaces cannot collide; a friendly target read plain under Map is keyed by its GUID); "" free; false: an
 -- orphan, the current target's slot whose plate left (no key finds it again; forgotten at the next swap).
-local guid, used = {}, {}
+local guid, used, generation = {}, {}, {}
+local nextGeneration = 0
 for s = 1, I.TARGET_CAP do
-    guid[s], used[s] = "", 0
+    guid[s], used[s], generation[s] = "", 0, 0
 end
 local tokenMode = false -- the key space (true: plate indices): set by a secret target, cleared by a hostile plain one
 local forgetN, noPlateN = 0, 0 -- slots forgotten by plate edges and flips; Map swaps no plate answered (snapshot)
 I.targetKeys = guid -- read-only, for tests
+I.targetKeyGenerations = generation
 
 -- Forgets slot s: the current target's becomes an orphan with no log entry (a TargetGone on the current slot reads as
 -- its death, Families/Auras.lua and TargetHealth.lua: review F4), any other is logged gone and freed.
@@ -76,6 +78,8 @@ local function slotFor(g, t)
         Direct(Obs.TargetGone, t, s)
     end
     guid[s], used[s] = g, t
+    nextGeneration = nextGeneration + 1
+    generation[s] = nextGeneration
     return s, true -- newly taken: a GUID not held before (or forgotten)
 end
 

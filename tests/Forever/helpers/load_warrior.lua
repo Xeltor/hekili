@@ -91,6 +91,7 @@ function M.load()
         _G[k] = v
     end
     hekili.Client = fakes -- the class file reads the game through Hekili.Client (Hekili.lua)
+    assert(loadfile("src/Hekili/Engine/Schema/TankRecovery.lua"))("Hekili", { Facade = fakes })
     -- the belief's reads, as the file's helpers call them through `state` (State.lua's names)
     function w.state.knownRank(ids) -- the belief's spellbook: the plain known reads (`game.known`)
         for i = #ids, 1, -1 do

@@ -18,6 +18,7 @@ end
 L["Holy"] = "神圣"
 L["Protection"] = "防护"
 L["Retribution"] = "惩戒"
+-- L["Recover Threat"] = ""
 L["Retribution (wowsims.com)"] = "惩戒（wowsims）"
 L["Protection (wowsims.com)"] = "防护（wowsims）"
 L["Holy Shock (wowsims.com)"] = "神圣震击（wowsims）"

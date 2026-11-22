@@ -258,6 +258,12 @@ spec:RegisterStateExpr("warlock_defensive_target", function()
         )
 end)
 
+spec:RegisterHook("CanAcceptCycleTarget", function(key)
+    if key == "bane_of_havoc" then
+        return target.is_dummy or state.warlock_defensive_target
+    end
+end)
+
 spec:RegisterStateExpr("warlock_damage_display", function()
     return state.display == "Primary" or state.display == "AOE"
 end)
@@ -1930,6 +1936,7 @@ spec:RegisterAbilities({
 
     auto_attack = {
         id = ATTACK[1],
+        texture = 135274, -- INV_Sword_04: the same Attack artwork with every equipped weapon.
         cast = 0,
         cooldown = 0,
         gcd = "off",

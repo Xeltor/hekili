@@ -180,6 +180,153 @@ describe("target swaps (cycle_targets, option D)", function()
         assert.are_not.same({ "rend", "cycle" }, { rec[2].actionName, rec[2].indicator })
     end)
 
+    describe("navigation-only class actions", function()
+        local action = "test_target_navigation"
+        local wanted, safe, casts
+
+        local function bootNavigation()
+            boot()
+            local kit, abilities = H.Hekili.Class.kit, H.Hekili.Class.abilities
+            wanted, safe, casts = true, true, 0
+            kit:RegisterAbility(action, {
+                targetSwap = true,
+                name = "Switch target",
+                gcd = "off",
+                usable = function()
+                    return wanted
+                end,
+                targetSwapSafe = function()
+                    return safe
+                end,
+                handler = function()
+                    casts = casts + 1
+                end,
+            })
+            local marker = kit.abilities[action]
+            abilities[action], abilities[marker.id] = marker, marker
+            H.Hekili.DB.profile.packs[ww.PACK].lists.default = {
+                { enabled = true, action = action, use_off_gcd = 1 },
+                { enabled = true, action = "battle_shout" },
+            }
+            H.Hekili:LoadScripts()
+            H.ctl.combat, H.ctl.unitCombat.target = true, true
+            H.ctl.exists.targettarget, H.ctl.unitIs.targettarget = true, "player"
+            H.Fire("PLAYER_REGEN_DISABLED")
+        end
+
+        it(
+            "shows an immediate solitary instruction without casting, then resumes the live landing's own list",
+            function()
+                bootNavigation()
+                count, others = enemies, enemies
+                rendUp(10)
+                assert.are.same({ action, "cycle" }, { update() })
+                assert.are.equal(1, H.Hekili.Engine.Output.Primary.count)
+                assert.are.equal(0, rec[1].time)
+                assert.is_true(rec[1].targetSwap)
+                assert.is_nil(rec[1].texture)
+                assert.are.equal(0, casts)
+                H.ctl.guid.target = "Creature-held"
+                H.Fire("PLAYER_TARGET_CHANGED")
+                assert.are.same({ action, "cycle" }, { update() }, "this distinct but held enemy still needs a switch")
+                H.ctl.guid.target, wanted = "Creature-loose", false
+                H.Fire("PLAYER_TARGET_CHANGED")
+                assert.are.same({ "battle_shout" }, { update() }, "class evidence determines when to stop")
+                assert.are.equal(0, casts)
+            end
+        )
+
+        it("reverses on a class-protected engaged enemy before ordinary actions can be considered", function()
+            bootNavigation()
+            local engine, origin = H.Hekili.Engine, H.ctl.guid.target
+            local output = engine.Output
+            assert.are.same({ action, "cycle" }, { update() })
+            engine.TargetSwapShown("Primary", rec[1])
+            safe, wanted, H.ctl.guid.target = false, false, "Creature-co-tank"
+            H.Fire("PLAYER_TARGET_CHANGED")
+            update()
+            assert.are.equal("cycle_previous", output.status.targetNavigation)
+            assert.are.equal(0, output.Primary.count, "even the fallback is suppressed on a protected target")
+            H.ctl.guid.target, safe, wanted = origin, true, true
+            H.Fire("PLAYER_TARGET_CHANGED")
+            update()
+            assert.are.equal(
+                "cycle_previous",
+                output.status.targetNavigation,
+                "the safe origin supports reverse search"
+            )
+            H.ctl.guid.target, wanted = "Creature-loose", false
+            H.Fire("PLAYER_TARGET_CHANGED")
+            assert.are.same({ "battle_shout" }, { update() }, "ordinary priorities resume on a confirmed safe landing")
+            assert.is_nil(output.status.targetNavigation)
+        end)
+
+        it("releases a trash navigation request when a boss encounter starts during the same combat", function()
+            bootNavigation()
+            local engine = H.Hekili.Engine
+            assert.are.same({ action, "cycle" }, { update() })
+            engine.TargetSwapShown("Primary", rec[1])
+            wanted, safe = false, false
+            H.Fire("ENCOUNTER_START", 123, "Boss", 1, 10)
+            assert.are.same({ "battle_shout" }, { update() })
+            assert.is_false(engine.Output.status.swapPending)
+        end)
+
+        it("stops at a repeated held enemy and permits a later independent recovery in the same fight", function()
+            bootNavigation()
+            local engine, origin = H.Hekili.Engine, H.ctl.guid.target
+            assert.are.same({ action, "cycle" }, { update() })
+            engine.TargetSwapShown("Primary", rec[1])
+            H.ctl.guid.target = "Creature-held"
+            H.Fire("PLAYER_TARGET_CHANGED")
+            assert.are.same({ action, "cycle" }, { update() })
+            engine.TargetSwapShown("Primary", rec[1])
+            H.ctl.guid.target = origin
+            H.Fire("PLAYER_TARGET_CHANGED")
+            assert.are.same({ "battle_shout" }, { update() })
+            assert.are.same({ "battle_shout" }, { update() }, "do not loop endlessly around held enemies")
+            wanted = false
+            assert.are.same({ "battle_shout" }, { update() })
+            wanted = true
+            assert.are.same(
+                { action, "cycle" },
+                { update() },
+                "new positive request without changing the selected enemy"
+            )
+        end)
+
+        it(
+            "requires confirmed class evidence, combat, target identity, and the original switch and indicator settings",
+            function()
+                bootNavigation()
+                wanted = nil
+                assert.are.same({ "battle_shout" }, { update() })
+                wanted = true
+                safe = nil
+                assert.are.same({ "battle_shout" }, { update() })
+                safe = true
+                local config = H.Hekili.Engine.settings.displays.Primary
+                config.classic.indicators.enabled = false
+                assert.are.same({ "battle_shout" }, { update() })
+                config.classic.indicators.enabled = true
+                config.style = "third_party"
+                assert.are.same({ "battle_shout" }, { update() })
+                config.style = nil
+                H.Hekili.Engine.settings.specs[ww.SPEC].cycle = false
+                assert.are.same({ "battle_shout" }, { update() })
+                H.Hekili.Engine.settings.specs[ww.SPEC].cycle = true
+                H.ctl.unitCombat.target = false
+                assert.are.same({ "battle_shout" }, { update() })
+                H.ctl.unitCombat.target, H.ctl.combat = true, false
+                H.Fire("PLAYER_REGEN_ENABLED")
+                assert.are.same({ "battle_shout" }, { update() })
+                H.ctl.guid.target = nil
+                H.Fire("PLAYER_TARGET_CHANGED")
+                assert.are.same({ "battle_shout" }, { update() })
+            end
+        )
+    end)
+
     -- Task 3 (owner decision 1): other_target=1, a cast for another target only (a forced cycle). Sunder Armor stands in
     -- for a debuff the current target lacks; `others` is its count.
     describe("other_target=1", function()
@@ -214,6 +361,28 @@ describe("target swaps (cycle_targets, option D)", function()
             assert.are.same({ "sunder_armor", "cycle" }, { update() })
             -- the forecast: the current target still lacks it, and one enemy carries it
             assert.are.equal("rend", rec[2].actionName)
+        end)
+
+        it("starts the next forced spread from the enemy that received the previous cast", function()
+            bootOther()
+            local original = H.ctl.guid.target
+            assert.are.same({ "sunder_armor", "cycle" }, { update() })
+            H.ctl.guid.target = "Creature-2"
+            H.Fire("PLAYER_TARGET_CHANGED")
+            assert.are.same({ "sunder_armor" }, { update() })
+            H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-sunder", 7386)
+            assert.are.same({ "sunder_armor", "cycle" }, { update() })
+            assert.are.equal("Creature-2", rec[1].cycleOrigin)
+            H.ctl.guid.target = original
+            H.Fire("PLAYER_TARGET_CHANGED")
+            assert.are.same({ "sunder_armor" }, { update() })
+        end)
+
+        it("skips a forced swap when the selected target cannot be identified", function()
+            bootOther()
+            H.ctl.guid.target = nil
+            H.Fire("PLAYER_TARGET_CHANGED")
+            assert.are.same({ "battle_shout" }, { update() })
         end)
 
         it("is not shown once an enemy carries it, with one enemy, or with the count unknown", function()

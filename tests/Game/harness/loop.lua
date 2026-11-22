@@ -131,7 +131,7 @@ M.RAW = { "UnitHealth", "UnitHealthMax", "C_UnitAuras.GetDebuffDataByIndex" }
 --- Boots the two instances for `content` (one boot per busted block, §1.3): { content, us, oracle }. `content`:
 --- character(), PACK, resolve(key, H, e) (`e`: the world's us at the press, its auras now), usable(H), gain(pt, hand, amount, flag, character) (what a landed wound of ours
 --- pays in power type `pt`, the character's), WORLD (scenario knobs), uptime(H); optional OBSERVE (observer knobs over
---- the loop's: another power's reads, the forms), SCENARIO (headless.new's `scenario`; default "sim": the settings'
+--- the loop's: another power's reads, the forms), beforeLogin (headless.new's per-client setup), SCENARIO (headless.new's `scenario`; default "sim": the settings'
 --- harness defaults, wowsims's scenario; "game" boots both instances with the in-game ones).
 function M.new(content)
     local L = { content = content }
@@ -143,8 +143,16 @@ function M.new(content)
     end
     local scenario = content.SCENARIO or "sim"
     scenario = scenario ~= "game" and scenario or nil
-    L.us = headless.new({ character = character, pack = content.PACK, scenario = scenario })
-    L.oracle = headless.new({ character = character, pack = content.PACK, raw = M.RAW, scenario = scenario })
+    local function instance(raw)
+        return headless.new({
+            character = character,
+            pack = content.PACK,
+            scenario = scenario,
+            beforeLogin = content.beforeLogin,
+            raw = raw,
+        })
+    end
+    L.us, L.oracle = instance(), instance(M.RAW)
     -- the raw rows (M.RAW) take the player's health too, which State.lua does arithmetic on: the oracle reads the
     -- truth, plain in combat (ours is secret there, owner L1461)
     L.oracle.ctl.healthPlain = true

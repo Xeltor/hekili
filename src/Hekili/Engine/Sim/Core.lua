@@ -37,6 +37,146 @@ local tinsert, tremove, twipe = table.insert, table.remove, table.wipe
 local EARLY_EXIT = 0.2 + 1e-6
 ns.EARLY_EXIT = EARLY_EXIT -- shared with tests/Forever/loop_priest_spec.lua
 
+-- A visible forward cue can be retraced once from an unsafe landing. From the original enemy, a
+-- fresh recommendation may search in reverse through distinct enemies already fighting the group.
+local navigation = { visited = {}, forwardVisited = {}, step = 0 }
+local function swapDisplayEnabled( display )
+    local style = display.style or "classic"
+    return display.enabled ~= false and ( style == "classic" or style == "timeline" )
+        and Hekili.Engine.StyleGroup( display, "indicators" ).enabled
+end
+
+local function setNavigation( phase, revision )
+    local status = Displays.status
+    local cue = ( phase == "return" or phase == "reverse" ) and "cycle_previous" or nil
+    if cue and phase ~= navigation.phase then navigation.step = navigation.step + 1 end
+    if phase == "settled" and phase ~= navigation.phase then
+        local ability = class.abilities[ navigation.action ]
+        navigation.blockedCast = ability and ability.realCast
+        navigation.blockedCount = status.numTargets
+    end
+    navigation.phase, navigation.revision = phase, revision
+    local pending = phase ~= nil and phase ~= "settled"
+    if not pending then navigation.swapAbility = nil end
+    local cueRevision = cue and revision or nil
+    local step = cue and navigation.step or nil
+    if status.targetNavigation ~= cue or status.navigationRevision ~= cueRevision or status.navigationStep ~= step or status.swapPending ~= pending then
+        status.targetNavigation, status.navigationRevision, status.swapPending = cue, cueRevision, pending
+        status.navigationStep = step
+        Output.Publish( "status", 1 )
+    end
+end
+
+local function checkNavigation( spec, combat, revision, target, engaged, count )
+    local phase = navigation.phase
+    if not phase then return end
+    if not spec.cycle or not combat or state.combat ~= navigation.combatStart or state.encounterID ~= navigation.encounterID
+        or Hekili:GetToggleState( "mode" ) == "single" or spec ~= navigation.spec or spec.package ~= navigation.pack
+        or not swapDisplayEnabled( Hekili.Engine.settings.displays.Primary ) then
+        setNavigation()
+        return
+    end
+    if engaged and navigation.swapAbility then
+        -- Class-specific protected targets can be in our fight (e.g. a co-tank's mob or crowd control).
+        -- Check before any display can publish an attack, including a normally higher-priority one.
+        engaged = state.IsTargetSwapSafe( navigation.swapAbility )
+    end
+    if revision ~= navigation.revision then
+        local generation = target and Facade.TargetMemoryGeneration( target )
+        if target == navigation.lastTarget and generation == navigation.lastGeneration then
+            -- The client can repeat PLAYER_TARGET_CHANGED for the same enemy. Stamp the current revision
+            -- without counting a tab, exhausting a return or issuing a second keypress.
+            setNavigation( phase, revision )
+        else
+            navigation.lastTarget, navigation.lastGeneration = target, generation
+        end
+    end
+    if phase == "armed" then
+        if revision ~= navigation.revision then
+            if engaged then
+                if navigation.forwardVisited[ target ] then setNavigation( "settled", revision )
+                else
+                    navigation.forwardVisited[ target ] = true
+                    navigation.forwardRemaining = navigation.forwardRemaining - 1
+                    setNavigation( "forward", revision )
+                end
+            else
+                if target then navigation.visited[ target ] = true end
+                setNavigation( "return", revision )
+            end
+        elseif not engaged then
+            setNavigation( "blocked", revision )
+        elseif not Output.Wanted( "Primary" ) then
+            setNavigation()
+        end
+    elseif phase == "settled" then
+        local ability = class.abilities[ navigation.action ]
+        if navigation.revision ~= revision or not ability or ability.realCast ~= navigation.blockedCast or count > navigation.blockedCount then
+            setNavigation()
+        else
+            navigation.blockedCount = count
+        end
+    elseif phase == "forward" then
+        if not engaged then setNavigation( "blocked", revision )
+        elseif revision ~= navigation.revision then setNavigation() end
+    elseif phase == "checking" or phase == "reverse" then
+        if not engaged then
+            setNavigation( "blocked", revision )
+        elseif revision ~= navigation.revision then
+            if phase ~= "reverse" or navigation.visited[ target ]
+                or Facade.TargetMemoryGeneration( navigation.origin ) ~= navigation.originGeneration then
+                setNavigation( "settled", revision )
+            else
+                navigation.visited[ target ] = true
+                navigation.remaining = navigation.remaining - 1
+                setNavigation( "checking", revision )
+            end
+        end
+    elseif engaged then
+        if phase == "return" and target == navigation.origin
+            and Facade.TargetMemoryGeneration( target ) == navigation.originGeneration then
+            setNavigation( "checking", revision )
+        else
+            setNavigation( "settled", revision )
+        end
+    elseif phase == "return" and revision ~= navigation.revision then
+        setNavigation( "blocked", revision )
+    end
+end
+
+-- The built-in Primary renderer calls this only when its first recommendation's swap is actually visible.
+function Hekili.Engine.TargetSwapShown( name, rec )
+    if name ~= "Primary" or not rec or rec.indicator ~= "cycle" then return end
+    local out, status = Displays.Primary, Displays.status
+    if navigation.phase == "armed" and navigation.revision == out.targetRevision and rec == out.recs[ 1 ]
+        and rec.actionName == navigation.action then return end
+    local continuing = navigation.phase == "forward" and rec.actionName == navigation.action
+    if navigation.phase and not continuing
+        and not ( ( navigation.phase == "settled" or navigation.phase == "armed" ) and rec.actionName ~= navigation.action ) then return end
+    local spec = status.specID and rawget( Hekili.Engine.settings.specs, status.specID )
+    if out.count > 0 and rec == out.recs[ 1 ] and out.targetRevision == status.targetRevision
+        and spec and spec.cycle and status.combat and status.numTargets > 1
+        and Facade.TargetInPlayerCombat() then
+        navigation.origin = Facade.TargetMemoryKey()
+        navigation.originGeneration = Facade.TargetMemoryGeneration( navigation.origin )
+        navigation.lastTarget, navigation.lastGeneration = navigation.origin, navigation.originGeneration
+        navigation.combatStart = status.combatStart
+        navigation.encounterID = state.encounterID
+        navigation.spec, navigation.pack = spec, spec.package
+        navigation.swapAbility = rec.targetSwap and class.abilities[ rec.actionName ] or nil
+        navigation.remaining = math.min( status.numTargets - 1, 40 )
+        wipe( navigation.visited )
+        navigation.visited[ navigation.origin ] = true
+        if not continuing then
+            navigation.action = rec.actionName
+            navigation.forwardRemaining = navigation.remaining
+            wipe( navigation.forwardVisited )
+            navigation.forwardVisited[ navigation.origin ] = true
+        end
+        setNavigation( "armed", status.targetRevision )
+    end
+end
+
 
 local function initialize( self, deferIfUnavailable )
     -- The class pack must load before the profile so AceDB sees the spec defaults.
@@ -1102,6 +1242,12 @@ function Hekili:GetPredictionFromAPL( dispName, packName, listName, slot, action
                         invalidActionWarnings[ scriptID ] = true
                     end
 
+                elseif rawget( ability, "targetSwap" ) and ( dispName ~= "Primary" or slot ~= Displays.Primary.scratch[ 1 ]
+                    or state.offset > 0 or not spec.cycle or not Displays.status.combat or Displays.status.numTargets < 2
+                    or not Displays.Primary.forecastTarget or state.max_targets == 1 or state.toggle.mode == "single"
+                    or not swapDisplayEnabled( Hekili.Engine.settings.displays.Primary ) ) then
+                    if debug then self:Debug( "Skipping target navigation outside the active Primary press slot." ) end
+
                 elseif state.whitelist and not state.whitelist[ action ] and ( ability.id < -99 or ability.id > 0 ) then
                     if debug then self:Debug( "[---] %s ( %s - %d) not castable while casting a spell; skipping...", action, listName, actID ) end
 
@@ -1336,14 +1482,31 @@ function Hekili:GetPredictionFromAPL( dispName, packName, listName, slot, action
                                 else
                                     -- Target Cycling.
                                     -- We have to determine *here* whether the ability would be used on the current target or a different target.
-                                    -- other_target=1: another target only (a forced cycle, option D), never the current one.
+                                    -- A forced swap starts on another target. Remember where the first published pick
+                                    -- started so selecting an eligible enemy can turn the very same line into a cast.
                                     local other = state.args.other_target == 1
-                                    if ( state.args.cycle_targets == 1 or other ) and state.settings.cycle and state.active_enemies > 1 then
-                                        state.SetupCycle( ability, nil, other )
+                                    local cycleOrigin, cycleRevision, selected
+                                    if ( state.args.cycle_targets == 1 or other ) and state.settings.cycle and state.active_enemies > 1
+                                        and ( navigation.phase ~= "settled" or navigation.action ~= ability.key )
+                                        and Displays[ dispName ].forecastTarget then
+                                        local target
+                                        local display = Displays[ dispName ]
+                                        if other and slot.index == 1 then
+                                            target = display.forecastTarget
+                                            local previous = display.recs[ 1 ]
+                                            local sameRequest = display.count > 0 and previous.script == scriptID
+                                                and previous.actionName == ability.key and previous.cycleCast == ability.realCast
+                                                and previous.cycleOrigin and Facade.TargetMemoryGeneration( previous.cycleOrigin ) == previous.cycleGeneration
+                                            cycleOrigin = sameRequest and previous.cycleOrigin or target
+                                            cycleRevision = sameRequest and previous.cycleRevision or display.scratchTargetRevision
+                                        end
+                                        local changedTarget = cycleRevision and cycleRevision ~= display.scratchTargetRevision and target ~= cycleOrigin
+                                        selected = state.SetupCycle( ability, nil, other, changedTarget )
 
                                         if state.cycle_enemies == 1 then
                                             if debug then Hekili:Debug( "There is only 1 valid enemy for target cycling; canceling cycle." ) end
                                             state.ClearCycle()
+                                            selected = false
                                         end
                                     else
                                         state.ClearCycle()
@@ -1352,7 +1515,12 @@ function Hekili:GetPredictionFromAPL( dispName, packName, listName, slot, action
                                     Timer:Track("Post Cycle")
 
                                     local usable, why = state:IsUsable()
-                                    if other and not state.IsCycling( nil, true ) then usable, why = false, "another target only" end
+                                    if other and not selected and not state.IsCycling( nil, true ) then usable, why = false, "another target only" end
+                                    if rawget( ability, "targetSwap" ) and navigation.phase == "settled" and navigation.action == ability.key then
+                                        -- Once an exhausted request ceases to apply, a later occurrence is a new search.
+                                        if not usable then setNavigation() end
+                                        usable, why = false, "target search exhausted"
+                                    end
 
                                     Timer:Track("Post Usable")
 
@@ -1415,7 +1583,7 @@ function Hekili:GetPredictionFromAPL( dispName, packName, listName, slot, action
                                                     end
                                                 end
 
-                                                if not aScriptPass then
+                                                if not aScriptPass and not rawget( ability, "targetSwap" ) then
                                                     Timer:Track( "Pre-Recheck" )
                                                     state.recheck( action, script, Stack, Block )
                                                     Timer:Track( "Post-Recheck Times" )
@@ -1642,6 +1810,10 @@ function Hekili:GetPredictionFromAPL( dispName, packName, listName, slot, action
                                                         slot.listName = listName
                                                         slot.action = actID
                                                         slot.actionName = ability.key
+                                                        slot.cycleOrigin = cycleOrigin
+                                                        slot.cycleCast = cycleOrigin and ability.realCast
+                                                        slot.cycleGeneration = cycleOrigin and Facade.TargetMemoryGeneration( cycleOrigin )
+                                                        slot.cycleRevision = cycleRevision
                                                         slot.actionID = ability.id
 
                                                         slot.caption = ability.caption or entry.caption
@@ -1676,7 +1848,7 @@ function Hekili:GetPredictionFromAPL( dispName, packName, listName, slot, action
                                                             self:Debug( "Texture shown:  %s", slot.texture )
                                                         end
 
-                                                        if state.IsCycling( nil, true ) then
+                                                        if rawget( ability, "targetSwap" ) or state.IsCycling( nil, true ) then
                                                             slot.indicator = "cycle"
                                                         elseif module and module.cycle then
                                                             slot.indicator = module.cycle()
@@ -2003,6 +2175,9 @@ function Hekili.Update()
     -- VirtualState: fold what was observed since the last cycle and apply our casts through the spec, after the guards
     -- above and before any reset (docs/superpowers/specs/2026-10-14-hekili-virtualstate-design.md §5.1).
     ns.VirtualState.Drain( GetTime() )
+    -- All displays in this update use the target folded here, even if the coroutine yields between displays.
+    local targetRevision = Displays.status.targetRevision
+    local forecastTarget = spec.cycle and Facade.TargetMemoryKey() or nil
 
     local debug = Hekili.ActiveDebug
 
@@ -2011,6 +2186,9 @@ function Hekili.Update()
     -- The engine's status record: published only when one of its fields changed.
     local status = Displays.status
     local combat = state.combat > 0
+    local engaged = combat and forecastTarget and Facade.TargetInPlayerCombat()
+    checkNavigation( spec, combat, targetRevision, forecastTarget, engaged, numTargets )
+    if combat and not engaged then forecastTarget = nil end
     if status.combatStart ~= state.combat or status.numTargets ~= numTargets or status.specID ~= specID or status.packName ~= packName or status.specKey ~= state.spec.key then
         status.combat, status.combatStart, status.numTargets, status.specID, status.specKey, status.packName = combat, state.combat, numTargets, specID, state.spec.key, packName
         status.specName = state.spec.name
@@ -2054,9 +2232,18 @@ function Hekili.Update()
         local wanted = Output.Wanted( dispName )
         local out = Displays[ dispName ]
 
-        if wanted and rule( settings ) then
+        if navigation.phase == "return" or navigation.phase == "blocked" then
+            -- Even a normally defensive list may contain an enemy-targeted spell. No spell, health cue,
+            -- action-bar glow or queued attack may escape while the destination is unconfirmed.
+            if out.count > 0 or ( out.healthCues and out.healthCues.n > 0 ) then
+                Output.Begin( dispName, targetRevision )
+                Output.Publish( dispName, 0 )
+            end
+            dispName = nextDisplay
+            state.display = dispName
+        elseif wanted and rule( settings ) then
             -- Only the scratch set is written until Publish: every yield below leaves out.recs the last complete set.
-            local Queue, healthCues = Output.Begin( dispName )
+            local Queue, healthCues = Output.Begin( dispName, targetRevision )
             Queue[ 1 ].healthCues = healthCues
             local numFilled = 0
 
@@ -2065,6 +2252,7 @@ function Hekili.Update()
 
             state.system.packName = packName -- before the reset: it reads the pack's info (use_while_casting)
             state.reset( dispName )
+            out.forecastTarget = forecastTarget
 
             -- Clear the stack in case we interrupted ourselves.
             wipe( InUse )
@@ -2393,6 +2581,17 @@ function Hekili.Update()
                     slot.time = state.offset + wait
                     slot.exact_time = state.now + state.offset + wait
 
+                    local ability = class.abilities[ action ]
+                    if rawget( ability, "targetSwap" ) then
+                        -- Selection is the entire instruction. The next target's own live priorities
+                        -- supply the next spell; no simulated cast, cooldown, resource or queued pick.
+                        slot.targetSwap = true
+                        slot.texture, slot.iconOverride, slot.resource = nil, nil, nil
+                        slot.name, slot.offGCD, slot.cost, slot.busy = ability.name, true, 0, 0
+                        slot.delay, slot.since, slot.depth = slot.time, 0, chosen_depth
+                        break
+                    end
+
                     -- (windows design v6 §6, rulings 4, 27) a strict sequence's start line is the final pick: due now (delay
                     -- 0; start_on_first=1: within the spell queue window, NOW_TOL) it opens. Slot 1 at now sends OPEN (and the
                     -- STEP of an allow_skip start past member 1); the copy opens in every slot, so later slots show the next
@@ -2421,8 +2620,6 @@ function Hekili.Update()
                     slot.depth = chosen_depth
 
                     state.scriptID = slot.script
-
-                    local ability = class.abilities[ action ]
 
                     -- What the UI shows, resolved once per record: the icon (the spec's per-ability override first),
                     -- the item id (truthy for items), off-GCD and the name.
@@ -2596,7 +2793,29 @@ function Hekili.Update()
                 if altPasses( dispName, packName, Queue, numFilled, abilityOpts ) then state.fullNext = true end
             end
 
-            Output.Publish( dispName, numFilled )
+            -- After returning to the starting enemy, let the fresh first pick decide whether the other
+            -- direction is worth trying. A changed priority or a usable spell ends the search immediately.
+            local forward = navigation.phase == "forward"
+            local searching = dispName == "Primary" and ( forward or navigation.phase == "checking" or navigation.phase == "reverse" )
+            if navigation.phase and targetRevision ~= Displays.status.targetRevision then
+                -- A tab can arrive during this forecast. Defer its picks until the new target has been checked.
+                Output.Begin( dispName, targetRevision )
+                numFilled = 0
+            elseif searching then
+                local first = Queue[ 1 ]
+                if numFilled == 0 or first.indicator ~= "cycle" or first.actionName ~= navigation.action then
+                    setNavigation()
+                elseif ( forward and navigation.forwardRemaining or navigation.remaining ) <= 0 then
+                    setNavigation( "settled", targetRevision )
+                    Output.Begin( dispName, targetRevision )
+                    numFilled = 0
+                elseif not forward then
+                    setNavigation( "reverse", targetRevision )
+                end
+            end
+            Output.Publish( dispName, numFilled, searching )
+            if navigation.phase == "armed" and dispName == "Primary" and navigation.revision == targetRevision
+                and ( out.count == 0 or out.recs[ 1 ].indicator ~= "cycle" ) then setNavigation() end
 
             if debug then
                 Hekili:Debug( "Time spent generating recommendations:  %.2fms",  debugprofilestop() - actualStartTime )

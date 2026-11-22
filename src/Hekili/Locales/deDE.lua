@@ -219,7 +219,7 @@ L["Fade as Unusable"] = "Als unbenutzbar abblenden"
 L["Fade the primary icon when you should wait before using the ability, similar to when an ability is lacking required resources."] = "Blendet das primäre Symbol ab, wenn du mit der Fähigkeit warten sollst, ähnlich wie bei fehlenden Ressourcen."
 L["%s Desaturate"] = "%s Entsättigen"
 L["Desaturate the primary icon when you should wait before using the ability."] = "Entsättigt das primäre Symbol, wenn du mit der Fähigkeit warten sollst."
-L["If enabled, small indicators for target-swapping, aura-cancellation, etc. may appear on your primary icon."] = "Wenn aktiviert, können kleine Indikatoren für Zielwechsel, Aurenabbruch usw. auf deinem primären Symbol erscheinen."
+L["Show a full-size icon when you should switch targets and a small marker when you should cancel an aura."] = "Zeigt ein Symbol in voller Größe, wenn du das Ziel wechseln sollst, und eine kleine Markierung, wenn du eine Aura entfernen sollst."
 L["If enabled, these indicators will appear on queued icons as well as the primary icon, when appropriate."] = "Wenn aktiviert, erscheinen diese Indikatoren, wo passend, auch auf eingereihten Symbolen, nicht nur auf dem primären."
 L["Appearance"] = "Darstellung"
 L["%s Appearance"] = "Darstellung (%s)"
@@ -229,7 +229,7 @@ L["Select the zoom percentage for indicator icon textures. (Roughly 30% will tri
 L["Keep Aspect Ratio"] = "Seitenverhältnis halten"
 L["When enabled, indicator icons will maintain their original aspect ratio when resized."] = "Wenn aktiviert, behalten Indikatorsymbole beim Skalieren ihr ursprüngliches Seitenverhältnis."
 L["Indicators"] = "Indikatoren"
-L["Indicators are small icons that can indicate target-swapping or (rarely) cancelling auras."] = "Indikatoren sind kleine Symbole, die einen Zielwechsel oder (selten) das Abbrechen von Auren anzeigen können."
+L["A gold arrow means cycle forward through enemies and a violet arrow means cycle backward. Both fill the icon. Size and position control the small aura-cancellation marker."] = "Ein goldener Pfeil bedeutet, dass du zum nächsten Gegner wechseln sollst, ein violetter zum vorherigen. Beide füllen das Symbol aus. Größe und Position gelten für die kleine Markierung zum Entfernen einer Aura."
 
 -- Hekili/Options/Options.lua
 L["Call Action List"] = "Aktionsliste aufrufen"

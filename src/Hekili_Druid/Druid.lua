@@ -31,6 +31,28 @@ local floor, max, min = math.floor, math.max, math.min
 -- The class kit and its specs (ids the core's: Balance 100111, Feral 100112, Guardian 100113, Restoration 100114).
 -- Feral and Guardian ride the Feral Combat tree: its points pick Feral, with Thick Hide 3/3 Guardian (the selector below
 -- RegisterTalents); /hekili spec guardian or feral keeps one for the tree.
+local recoveryDisplay = {
+    below = 75,
+    spells = { healing_touch = true, rejuvenation = true, regrowth = true, cancel_buff = true },
+    selfCast = {
+        healing_touch = true,
+        rejuvenation = true,
+        regrowth = true,
+        mark_of_the_wild = true,
+        thorns = true,
+        cure_poison = true,
+        abolish_poison = true,
+        remove_curse = true,
+    },
+    combat = {
+        barkskin = true,
+        frenzied_regeneration = true,
+        healing_potion = true,
+        healthstone = true,
+        healing_touch = true,
+        rejuvenation = true,
+    },
+}
 local spec = Hekili:NewClass("DRUID", {
     specs = {
         {
@@ -49,6 +71,8 @@ local spec = Hekili:NewClass("DRUID", {
             icon = 132115,
             role = "attack",
             package = "Feral (wowsims.com)",
+            supportsLeveling = true,
+            recoveryDisplay = recoveryDisplay,
             movement = true, -- the pack reads toggle.movement: the run into melee reaches the damage lines (R8)
         },
         {
@@ -58,6 +82,8 @@ local spec = Hekili:NewClass("DRUID", {
             icon = 132276,
             role = "tank",
             package = "Guardian (wowsims.com)",
+            supportsLeveling = true,
+            recoveryDisplay = recoveryDisplay,
             movement = true, -- the pack reads toggle.movement: the run into melee reaches the damage lines (R8)
         },
         { key = "restoration", name = L["Restoration"], tree = 3, icon = 136041, role = "healer", unsupported = true },
@@ -436,6 +462,9 @@ spec:RegisterGear("haruspex", unpack(GEAR.haruspex))
 spec:RegisterSetBonus("haruspex_3pc", GEAR.haruspex_3pc)
 
 spec:RegisterAuras({
+    feral_autoattacking = { duration = 3600, max_stack = 1 },
+    regrowth = { id = 8936, copy = rest(REGROWTH), duration = 21, max_stack = 1 },
+    rejuvenation = { id = 774, copy = rest(REJUVENATION), duration = 12, max_stack = 1 },
     serenity_field = { id = 1291103, duration = 15, max_stack = 1 },
     -- The forms are one family (L727, owner: as the seals): the Cooldown Manager's Druid Forms entry says a form is up
     -- or none is, our last form cast says which; the plain shapeshift read (Game/State/Sources/Forms.lua) wins.
@@ -855,6 +884,325 @@ spec:RegisterStateExpr("druid_bleed_active", function()
     return debuff.rake.up or debuff.rip.up or debuff.lacerate.up or debuff.pounce_bleed.up
 end)
 
+-- Form choice and pulls use the actual assignment, enemy and melee witnesses. A damage
+-- display's forced target count cannot establish that a second mob is fighting the party.
+local function plain(value)
+    if Facade.issecretvalue(value) then
+        return nil
+    end
+    return value
+end
+
+local function instanceType()
+    local _, instance = Facade.IsInInstance()
+    return plain(instance)
+end
+
+local function feralField()
+    local instance = instanceType()
+    return (instance == "none" or instance == "party" or instance == "scenario")
+        and plain(Facade.IsInRaid()) == false
+        and not state.target.is_dummy
+        and not (state.level >= 60 and (state.boss or state.target.is_boss))
+end
+spec:RegisterStateExpr("feral_field", feralField)
+
+spec:RegisterStateExpr("feral_sustained", function()
+    if feralField() then
+        return false
+    end
+    local instance = instanceType()
+    return state.target.is_dummy
+        or (instance ~= "party" and instance ~= "scenario")
+        or Facade.TargetInPlayerCombat() == true
+end)
+
+spec:RegisterStateExpr("feral_pull", function()
+    if
+        not feralField()
+        or buff.travel_form.up
+        or buff.aquatic_form.up
+        or debuff.hibernate.up
+        or debuff.entangling_roots.up
+    then
+        return false
+    end
+    local engaged = Facade.TargetInPlayerCombat()
+    return engaged == true or engaged == false and instanceType() == "none" and (combat == 0 or state.false_start > 0)
+end)
+
+local partyUnits = { "party1", "party2", "party3", "party4" }
+local function groupTank()
+    local count = plain(Facade.GetNumGroupMembers())
+    if not count or count < 2 then
+        return false
+    end
+    local instance = instanceType()
+    if instance ~= "none" and instance ~= "party" and instance ~= "raid" and instance ~= "scenario" then
+        return false
+    end
+    local role = Facade.GroupRole("player")
+    if role == "TANK" then
+        return true
+    end
+    if role ~= "NONE" or instance ~= "party" then
+        return false
+    end
+    for _, unit in ipairs(partyUnits) do
+        local exists = plain(Facade.UnitExists(unit))
+        local assigned = exists and Facade.GroupRole(unit)
+        if exists == nil or exists and (not assigned or assigned == "TANK") then
+            return false
+        end
+    end
+    return true
+end
+
+local recovery = Hekili:NewTankRecovery(spec, {
+    specKey = "feral",
+    alternateSpecKey = "guardian",
+    meleeSpell = function()
+        return GROWL[rankOf(GROWL)] or MAUL[rankOf(MAUL)]
+    end,
+    classifyCast = function(id)
+        if id == GROWL[1] then
+            return "rescue"
+        end
+    end,
+})
+
+-- Cache only observations, independently of simulated form and combat time. A possible idle
+-- bystander inside the area also rules out Swipe and Roar, even when two real attackers exist.
+local packAt, packTarget, multiple, clearArea
+local function readPack()
+    local now, key = Facade.GetTime(), Facade.TargetMemoryKey()
+    if packAt == now and packTarget == key then
+        return
+    end
+    packAt, packTarget, multiple, clearArea = now, key, false, false
+    if not key or Facade.TargetInPlayerCombat() ~= true then
+        return
+    end
+    local _, targetRange = Facade.LibRangeCheck:GetRange("target")
+    if type(plain(targetRange)) ~= "number" or targetRange > 5 then
+        return
+    end
+    clearArea = true
+    for unit, victim in pairs(recovery.plates) do
+        local hostile, dead = plain(Facade.UnitCanAttack("player", unit)), plain(Facade.UnitIsDead(unit))
+        if hostile ~= false and dead ~= true then
+            local near, far = Facade.LibRangeCheck:GetRange(unit)
+            local same = plain(Facade.UnitIsUnit(unit, "target"))
+            if same ~= true and (type(plain(near)) ~= "number" or near < 10) then
+                local engaged = hostile == true
+                    and dead == false
+                    and plain(Facade.UnitIsPlayer(unit)) == false
+                    and plain(Facade.UnitAffectingCombat(unit)) == true
+                    and (
+                        type(plain(Facade.UnitThreatSituation("player", unit))) == "number"
+                        or plain(Facade.UnitIsUnit(victim, "player")) == true
+                        or plain(Facade.UnitInParty(victim)) == true
+                    )
+                if not engaged then
+                    clearArea = false
+                elseif same == false and type(plain(far)) == "number" and far <= 5 then
+                    multiple = true
+                end
+            end
+        end
+    end
+end
+
+spec:RegisterStateExpr("feral_pack", function()
+    if state.max_targets == 1 or state.toggle.mode == "single" then
+        return false
+    end
+    readPack()
+    return multiple
+end)
+spec:RegisterStateExpr("feral_area_safe", function()
+    readPack()
+    return clearArea and state.active_dot.hibernate == 0 and state.active_dot.entangling_roots == 0
+end)
+
+spec:RegisterStateExpr("feral_pack_roar", function()
+    return state.toggle.defensives and state.feral_pull and state.feral_pack and state.feral_area_safe
+end)
+spec:RegisterStateExpr("feral_wants_bear", function()
+    if not action.bear_form.known or state.buff.travel_form.up or state.buff.aquatic_form.up then
+        return false
+    end
+    if groupTank() then
+        return true
+    end
+    if not state.feral_pull then
+        return false
+    end
+    if not action.cat_form.known then
+        return true
+    end
+    local role = Facade.GroupRole("player")
+    return (role == "NONE" or role == "TANK") and state.feral_pack and not recovery.otherTank()
+end)
+spec:RegisterStateExpr("feral_wants_cat", function()
+    -- Keep a manual or emergency Bear shift through the rest of the fight. The next
+    -- outdoor pull may switch back once there is a Cat builder to spend the energy on.
+    return state.feral_pull
+        and instanceType() == "none"
+        and state.buff.travel_form.down
+        and state.buff.aquatic_form.down
+        and action.claw.known
+        and not state.feral_wants_bear
+        and (buff.bear_form.down or combat == 0)
+end)
+spec:RegisterStateExpr("feral_loose_target", function()
+    return state.offset == 0
+        and state.combat > 0
+        and state.feral_pull
+        and groupTank()
+        and recovery.looseVictim() ~= nil
+        and not Facade.DebuffImmunity("growl", Facade.UnitGUID("target"), Facade.GetTime())
+end)
+spec:RegisterStateExpr("feral_recover_threat", function()
+    if state.offset ~= 0 or not state.feral_pull or not groupTank() or not state.buff.bear_form.up then
+        return false
+    end
+    local sample = recovery.evidence()
+    return sample and sample.other or false
+end)
+
+spec:RegisterStateExpr("feral_spell_range", function()
+    local ability = action[state.this_action]
+    return ability and plain(C_Spell.IsSpellInRange(ability.id, "target")) == true
+end)
+
+spec:RegisterStateExpr("feral_dying", function()
+    local health = Facade.TargetHealthFraction()
+    return health ~= nil and health <= 0.25
+end)
+
+spec:RegisterStateExpr("feral_primary", function()
+    return state.filter == "none"
+end)
+spec:RegisterStateExpr("feral_interrupt", function()
+    return state.offset == 0
+        and state.OnToggleDisplay("interrupts")
+        and debuff.casting.up
+        and Facade.TargetInPlayerCombat() == true
+        and Facade.TargetCastInterruptible()
+end)
+
+spec:RegisterStateExpr("feral_defense", function()
+    local instance = instanceType()
+    return state.offset == 0
+        and (instance == "none" or instance == "party" or instance == "raid" or instance == "scenario")
+        and plain(Facade.UnitIsDeadOrGhost("player")) == false
+        and plain(Facade.UnitAffectingCombat("player")) == true
+        and state.OnToggleDisplay("defensives")
+end)
+
+local function healNeedsCaster()
+    return plain(Facade.GetCVar("autoUnshift")) ~= "1" and "feral_form" or nil
+end
+
+-- Casting a humanoid heal with automatic unshifting enabled leaves the form. A heal on a
+-- groupmate has the same form transition; only the actual player's aura proves a self HoT.
+local function healEffect(consumesSwiftness)
+    return function()
+        for i = 1, #FORMS do
+            removeBuff(FORMS[i])
+        end
+        removeBuff("maul")
+        if consumesSwiftness then
+            removeBuff("natures_swiftness")
+        end
+    end
+end
+
+spec:RegisterStateExpr("feral_prowling", function()
+    return action.prowl.known and buff.prowl.up
+end)
+spec:RegisterStateExpr("feral_behind", function()
+    return state.settings.behind
+        or buff.prowl.up
+        or plain(Facade.UnitExists("targettarget")) == true
+            and plain(Facade.UnitIsUnit("targettarget", "player")) == false
+end)
+
+local function preparing()
+    return state.offset == 0
+        and feralField()
+        and state.combat == 0
+        and state.buff.casting.down
+        and plain(Facade.UnitIsDeadOrGhost("player")) == false
+        and plain(Facade.UnitAffectingCombat("player")) == false
+        and plain(Facade.IsMounted()) == false
+        and plain(Facade.UnitOnTaxi("player")) == false
+        and Facade.PlayerEatingOrDrinking() == false
+        and state.buff.prowl.down
+end
+local function selfSpell(key)
+    local a = state.action[key]
+    return a.known
+        and not a.disabled
+        and (a.cast_time == 0 or not state.moving)
+        and a.cost <= min(state.mana.lo, state.mana.actual_lo or state.mana.lo)
+        and Hekili:CanSelfCastHelpfulSpell(a.id)
+end
+-- Another Druid's Gift covers Mark even before this character learns the group buff.
+spec:RegisterStateExpr("feral_mark_missing", function()
+    return buff.mark_of_the_wild.down and buff.gift_of_the_wild.down
+end)
+spec:RegisterStateExpr("feral_prepare_spell", function()
+    return preparing() and state.buff.form.down and selfSpell(state.this_action)
+end)
+spec:RegisterStateExpr("feral_prepare_heal", function()
+    return preparing()
+        and state.OnToggleDisplay("defensives")
+        and selfSpell(state.this_action)
+        and (state.buff.form.down or state.buff.feral_form.up and not healNeedsCaster())
+end)
+spec:RegisterStateExpr("feral_prepare_elite", function()
+    if not state.feral_prepare_spell or not state.feral_pull or instanceType() ~= "none" then
+        return false
+    end
+    local kind = plain(Facade.UnitClassification("target"))
+    return (kind == "elite" or kind == "rareelite")
+        and state.action.bear_form.known
+        and state.mana.lo >= state.action.regrowth.cost + state.action.bear_form.cost
+end)
+spec:RegisterStateExpr("feral_self_dispel", function()
+    return state.OnToggleDisplay("defensives")
+        and state.buff.form.down
+        and selfSpell(state.this_action)
+        and (preparing() or state.feral_defense and state.solo and state.feral_pull)
+end)
+spec:RegisterStateExpr("feral_unshift_heal", function()
+    return healNeedsCaster()
+        and preparing()
+        and state.OnToggleDisplay("defensives")
+        and (
+            selfSpell("healing_touch")
+            or selfSpell("regrowth")
+            or selfSpell("rejuvenation") and state.buff.rejuvenation.down
+        )
+end)
+spec:RegisterStateExpr("feral_emergency_bear", function()
+    return state.feral_defense
+        and state.feral_pull
+        and state.solo
+        and state.target.is_targeting_player
+        and state.buff.cat_form.up
+end)
+spec:RegisterStateExpr("feral_caster_heal", function()
+    return state.feral_defense
+        and state.feral_pull
+        and state.solo
+        and state.buff.form.down
+        and not state.action.bear_form.known
+        and selfSpell(state.this_action)
+end)
+
 -- A shift (Classic's swap_form, Forever's rules): the other forms and a queued Maul go; into Bear all rage is lost,
 -- then Furor's 10 at 20% a rank (wowsims forms.go): the sim from its floor, so at 5/5 only (the belief's `now` sets
 -- 1-4/5's unseen roll as [0, 10]); into Cat the rage stays (wowsims's Cat Form leaves it: the decay takes it out of
@@ -887,6 +1235,37 @@ spec:RegisterHook("reset_precast", function()
 end)
 
 spec:RegisterAbilities({
+    auto_attack = {
+        id = 6603,
+        texture = 135274,
+        cooldown = 0,
+        gcd = "off",
+        startsCombat = true,
+        known = knows({ 6603 }),
+        nobuff = "feral_autoattacking",
+        usable = function()
+            return state.feral_pull
+                and buff.prowl.down
+                and target.within5
+                and not target.outside5
+                and plain(IsCurrentSpell(6603)) == false
+        end,
+        handler = function()
+            applyBuff("feral_autoattacking")
+        end,
+    },
+    recover_threat = {
+        name = L["Recover Threat"],
+        texture = Hekili.TargetSwapTexture,
+        unlisted = true,
+        targetSwap = true,
+        targetSwapSafe = recovery.safeLanding,
+        gcd = "off",
+        startsCombat = false,
+        usable = function()
+            return state.feral_recover_threat
+        end,
+    },
     aquatic_form = {
         id = 1066,
         cast = 0,
@@ -951,6 +1330,7 @@ spec:RegisterAbilities({
         startsCombat = true,
         refundOnAvoid = true, -- wowsims bash.go; DB2 Discount Power On Miss
         known = knows(BASH),
+        toggle = "interrupts",
         form = "bear_form",
 
         now = function()
@@ -976,6 +1356,7 @@ spec:RegisterAbilities({
 
         startsCombat = false,
         known = knows(BEAR_FORM),
+        defensives = true,
         nobuff = "bear_form",
 
         now = function()
@@ -1262,6 +1643,7 @@ spec:RegisterAbilities({
 
         startsCombat = true,
         known = knows(FERAL_CHARGE),
+        interrupts = true,
         form = "bear_form",
 
         now = function()
@@ -1371,6 +1753,7 @@ spec:RegisterAbilities({
         gcd = "off",
 
         startsCombat = true,
+        debuffApplication = "growl",
         known = knows(GROWL),
         form = "bear_form",
 
@@ -1383,7 +1766,6 @@ spec:RegisterAbilities({
         end,
     },
 
-    -- No pack line: registered so a cast spends Clearcasting.
     healing_touch = {
         id = 5185,
         copy = rest(HEALING_TOUCH),
@@ -1405,14 +1787,10 @@ spec:RegisterAbilities({
 
         startsCombat = false,
         known = knows(HEALING_TOUCH),
-        nobuff = "feral_form",
-
-        now = function()
-            removeBuff("natures_swiftness")
-        end,
-
-        handler = function()
-            removeBuff("natures_swiftness")
+        defensives = true,
+        nobuff = healNeedsCaster,
+        effect = function()
+            return healEffect(true)
         end,
     },
 
@@ -1824,7 +2202,6 @@ spec:RegisterAbilities({
         end,
     },
 
-    -- No pack line: registered so a cast spends Clearcasting.
     regrowth = {
         id = 8936,
         copy = rest(REGROWTH),
@@ -1841,14 +2218,10 @@ spec:RegisterAbilities({
 
         startsCombat = false,
         known = knows(REGROWTH),
-        nobuff = "feral_form",
-
-        now = function()
-            removeBuff("natures_swiftness")
-        end,
-
-        handler = function()
-            removeBuff("natures_swiftness")
+        defensives = true,
+        nobuff = healNeedsCaster,
+        effect = function()
+            return healEffect(true)
         end,
     },
 
@@ -1866,7 +2239,11 @@ spec:RegisterAbilities({
 
         startsCombat = false,
         known = knows(REJUVENATION),
-        nobuff = "feral_form",
+        defensives = true,
+        nobuff = healNeedsCaster,
+        effect = function()
+            return healEffect(false)
+        end,
     },
 
     rip = {
@@ -2211,6 +2588,7 @@ spec:RegisterAbilities({
         spendType = "mana",
 
         startsCombat = false,
+        defensives = true,
         known = knows(ABOLISH_POISON),
         nobuff = "feral_form",
     },
@@ -2225,6 +2603,7 @@ spec:RegisterAbilities({
         spendType = "mana",
 
         startsCombat = false,
+        defensives = true,
         known = knows(CURE_POISON),
         nobuff = "feral_form",
     },
@@ -2239,6 +2618,7 @@ spec:RegisterAbilities({
         spendType = "mana",
 
         startsCombat = false,
+        defensives = true,
         known = knows(REMOVE_CURSE),
         nobuff = "feral_form",
     },
@@ -2333,7 +2713,7 @@ spec:RegisterSetting("behind", false, behind, "feral", "balance")
 local roar = {
     type = "toggle",
     name = L["Maintain Demoralizing Roar"],
-    desc = L["Keep Demoralizing Roar on the target, as a raid tank does, and recast it only when it is missing (that includes the levels before " .. "Lacerate). Off: the priority never shows it, and Berserk no longer waits for it."],
+    desc = L["Refresh Demoralizing Roar when it expires on your target. With Defensives enabled, the leveling priority can also use it on engaged packs."],
     width = "full",
     sim = true,
 }
@@ -2375,8 +2755,8 @@ spec:RegisterSetting(
 -- (tests/Forever/druid_spec.lua checks they match). Your talents pick one (the selector); /hekili priority <name> keeps another. Restoration is deferred.
 spec:RegisterPack(
     "Feral (wowsims.com)",
-    20261118001,
-    [[Hekili:TZ1)Vnkow8)wYVKdu7rsABMPxvtL2tJ276Q7wD6YE)kexWjXxjqeysvwfL)23NngI5lMaeMz2oLrA6KGTFF3VN9JpDmNy(BMZDquS5VEZ4B(0KjtUF84jMZP73InNVfz)kAf8bp0g4N)moa5ECH2B(Vfs2eAy7VrNnP9U(ihgHEjI4sF2Z8LsPz4wST58V8F)Fp)LhwYiL581ehhC88XH2LZHhoUGUgFCH4zJw6hG3HdoUWbVef5spU4N(p)RJlGhFCrY6JiJyClCKtqeXzeNB2i6i0w3Wrih0wkzh2a(MX)p03t)AGfbiVqxqODGp7Zyjj84cKJJV3Fb(WR49Hghx8fef9qjII2)(5FdiYAkDB4dJgTIqxh9ct6hLBQ6anbjg9Y4LJhJVBP993cK95nB9dOaB(hrOahcYlNjawqOWk8cgb8ZLesdbgI9O4aMi)2AIlB0OLlnytXc43gJOTgG)jWFjmO5CKnL47foZg56Af)flgHUM5DNXw11KLZkqIJ)IyHxnB0ouab9IloEj7S2IiowmVUdgMpHgAbcPf2dhSAV1wFF3R3gfGNn56Di3i8mTbAAAdIjNb4pIzXRE(V5DGZ30NfTvFif5c6NXwqbru)G9woKqBYwxIh2a7XedNHAAPZISb5ATmkyF6GGP7fFqmiEuWogfeat8Pz3PFqBqJx1uD9QzwQEfq2kujhmxPypiaVbr8cFA2T6NH9mlKyyYgW3Td7yfUgSbPZyqLR)mlUogvXCcxtwsjERaBXB4G0r56eXX31YFPfSZY3Mq3ZDyAuYg8vljRwtTekS(JZ(0y96ACUHBC(4Q)3PZ)dOHAXBhCH9H2OqMuaCyy8gldxFyQtzMQsNLM00(80dAAkIOpuw4mKg8vWrCgZiiJsmb0qUyRIEZMCiZSpOvLhSsXQ0TGjdwPFt)7yKbyBkZh8ilvuv(G3NAB56kK4txUuYseoGGHIgbywzhnnXoePNhVtzOyNI8aIDmpotEVfONV5k2DfVZi(jmhWWbvwxlaTdoNtSCug5Ysniq3F1kxSXgWWUbuoWsfSctn8JOHeh80dIV)gCoaI30ZY(KYECbyq(kHDo7IDw(rHwVqOcTU(LLZKF7XztuuW8MU3mHDJ8WHWzwab46Oqme4T0ALTdC(cMoiua5zjIG6AbPudy9TG1zVx)bB(rQWE)bBeNq4D65A620hzT)nn)BQa(4SP3ouSQCU0amYzF3l4xwHdfUlPJnQo09GSwpnFrO77EvLhwC9sF7Oqr5LgOPLf(Yc(dXu23cbUccHZHbcHIa3BM)jUh0fThhC6005IufbYhkLhDVDa2glSc30uRGI9N3nuRYeDvU9T6d9QFqvkHbAzIyEAM29xnrQWNIKQPkB8JJ10mpkzNwzt8ucRRMmw)P0tOephB)q6vszpzFxxUi65KjBx0Bzfj(tYlrsttLaXNIc5HFFuPC6qI4CMY7)Ae2HEf364UuXfisr59tFfe34SfnuoR2nlvhQqyZWK(WzuJwW9onXdlMmx(36BApZwOI220DanZ0c7wBIyvEwIb58odv7CoO2184ndl9yt6kyBf2ayfLrPd9DVT)so9xY5SxY59z3BZ(WcPe6tWxhXQpbFFc(FCtW1NGVpbFdsWt8a2Td1Mgf576adzKsH4l1k4hxli)oOUmR5gKhI1wOj3nE8q(x2AtTGhWAt0kBhP3vKCRZUDC5ztZF52jt7ydd)PZshIzBo3SJ78gecyVMXOIV6JCYtHvx9lor4w6G3Bsrg7fGktGtA8GlYgumAYB6lN7knIj70oWOjZjMF0wghx0yN7vtk4tZFZKxQG4G34d(DYVZsZf4JcKBjs6HkymKc)1QW05DAttiLfgvwwBUWwuAf5PsAnSWQj90UkQkXHNPbrxkr3GICZfOktErmhK7DS8BCoNUDqtPwNMutEOK0mtmy1luBXeC)VkMbtwJJ2FQmZSOZDxUHUABIsRqw6ybfZzL4q0ML1706uKi500pXb1yB7e5QgLBgYSL)k)lj9vo4fuz(Ez65GcxxKCLTAZ57WbHabYbIsoY)4yTeMo8V)khbNI6(M)9eu(fpoNCMZTdaxdCPhZ5f5KjfyaJessfJOslkxuZjwixuswgasEB1K8ck5KpO9K4itTCIZDvloxw5OlUEufQepSpNYmvHhxQmuzkx3x(QGCdc3NuiCfQ(ilIFRlLvOwgy8y51yBfaD4Zk0bPeDLem3IcDLzaVxbZtIQY4ABmdYON)TCSsIW1SC3fvV77qbVkShfspKy4z8MzTMmwP5sPbQb0NkszNwU4RzY9QYVqzBw5iRVmj4e7kYTuYMVkCCzlR4Flc4fUseSs0TK(ZX)Kyn1OvDW2ZiiXht74GnhcIRODwFt7N13QgAPSJw9T0sP55MyZZhylqd7QvnBRvf91QRBS1WkWDEoGNFgKN)Xc65FSWEE6TskPKJQto3(JoF6ebNarEDaLE6LvkrkJbPEwbSu(K7YPn(urQemvx8iPmAgrRfWyVUYHQ7yKfEIznun4GaDia3RRg956D)0U4(YLkc15o0QUysLw9gy2RtwH(ZF9J2Pp6p)vZWg)Fkp(vxKcQK(rKKHjRtP1517sGZxxvQqtdQvwZ6RtxeM6VCq1xBZGQgzWdVAT2x2ob9sG76fH31wd41AzCsAq0eUzsvprGegT2i1wy4Fr4Wxjq87uK4xFO43sS43kW4xx04)9eo(nk2K3S4jQU8edL9Tp4SdWQFl0fvxX6YshvDOYxva9)N4mCm7TYBocr6T)gdNzVzhcc0QqbADHbAZWbAhce02Ge0QGcA)D36V7w)D3(XO356xmOqRvnGSNYvv)76Rg0xnOVAW71CH9vd6Rg0MQbQqBvk4)B99XE397rqTSECe6ujkH6gm6iHePZJr0AGiwzC0bZYSragTkYXavBEimbQdkIU2pWC()e)kXLCCH2pl(VGt(WM)b]]
+    20261122009,
+    [[Hekili:T3Z2UnoYY9TOxuOGNilzB5X7cRbibl2K5GKfbX75vktl1YIhtjkqszF8ab)TFQU5T((fjsz7z5(WSwKnRBD1v1v1vr6p2)p9VBrqgY)pUy0fxpE8fxmA0V4Fx2RBr(3Tny(tbpc)XMG1W)(7OKGO3U37L4xsdxNoCE86b4b9AuCWcmGEyxyu2334)GuyMUfn3)UF7))V)9F7xxIbL)DRcxSaLpEu6C5y4xF7(SvO3UV4ANVmob9mk5T7xGwgSlk7T7)p()(FE7E4YVDF5ZVl8Cm2spFrYUWfNtW28GSZd2gLEEWIGTzHpJgc)A4)inEZGVaOijytAeq0lG)ogJYW03UpyXI4n)BWF8e610HVD)VfKf8RsifV)3V)NaqwLLTn9xp)8hdZwT7bm1Fo3qhaWeO4GhgTC0i0vlNFZLay)(6TXjzaA(V2fKSimydNiaEG0cPWdOaaFrHPzPacrBYqjys(LvHr47UB5YH4HmdW36H72oeMFsIxc30)UG5zHXBsNopikAw(pMHb0xWZUtXp1xcxovaeV93kEWZME(ZbjHbpeHYFKNNTniCXm8S(cem(WS0zarodTbL84RZ2ghh9LT7sqth)LNdI2HM61ZZZRxo4gcZh5O4PnXVSzpbVvxB32b9ZcIa(B4wGbdYItED2IW05HBJc3GgI2GjJf998Qgv46GOzl3L8A1nbr3dXazeUjdKJ7ssGb(TPxnyVxpNFQjdgOhzv8vs42cwAbIWu4lKGwheUj9BtVCGb0JLqf3oCnm39mAXS0vGmOAe90(8gEyBeQfJjDv4YSWnpcYIxqjv3LWtHlIJMfVCgSYkEEy2RKjmVSW1OZwg(4QSzfm8GBNE9Ob2kCUGiC(Rl)F1aY)bCOx(YHiyD48GumvayOF(cRHrXWqNGfvshLh1W(6K9EEk0O3ltDgmd(emryqmc0ifsaoKq2QG30X7zg9EpDZGAjlPlblVP25TbVJAgGSr2CWTytr6Md(CYTY5vWW3aAxjlHR(JqGUsqpI1ocW34lavSnk41zpGIIFz6ftWEK8YIF8Xi0qWFpAtk44oTpXH(S8lG6Na7rHOAnEuovjf2dxal7a5IwhCRqbrzRsZI3G(YUueWAlN948fGhmwk7Yr2qz2GTCblH51HWRAee(qqYtPpfYlNV2kGNlBlbH1ItmdMfVB(k34iSbnytfyiycljO)XUNb1sjAqt0RbrHKCUJguwXHZd2mhfndpMVG)NzvBMImAoY5R6jNDBiR1SIPLJ4Ynq1E4v3uQb0agB2gKGScnWk3K4xYAvmOuRXbSCGQnGlFWO8mW4ykIGlYOXubkkcBFn)wy3554mffTCw(9nb7GhIHT1VcBagcUro0ZVhg8KBX(ieoWD8cumYsKwTFioetfkGesAG700AWAf2)eoSKxGWuieg7SiH(kGmz4RdttbnCtGoBvCYMuLaK8S5JXsnIcf(krx5vONokXbkkmdvDnyZbjVAcbQSjD5ekEaTg2NgAZC8ndsShKveD9qzOAcfw8RxcG9fyf8RSMvb(QaePGEo8G7ycCf28xfaSiNZwmcWBBji7BJkaBio26KDBZk16WtRZGDF9OfUztxPhK9EionfVhnGuG9ObId8VDgryfKiZSsuCmmKCK1ViWdYJAPM5CWwvcSgkbfKzgBSJ3e0xgGscrZwgMGOxlTdwcviDI3LLgUanru8uSBpYLlaDTPLTegKYIYwkoUqiqHCRefb7YINfKLfm)jjYbksxKWmb61XXBKjekzN6NJWs9LNgfjYOcwTe(5RC8a3pGnU9LtDdmrEVaBIE1rsBE9kWAXTjWCiEpyZWropD0a3xbqIQHNUkT6aZ3a6QiNKGNXrkOqqzctljH4eVdwRc2ELJYfVIXN84TV4aqj3AdVcgHwTnNBKOpxKvHBXIvpPRk6rTSGK)IccCxAg8KqK4c8hnTBuLjxCNt4gwu6o27xU7m8(OwdcyERf7l(9lHzRc3mXi1Y4RPhRZgIzLIvZHOigsR3sbNAnnPjrZZH0OYKpQBNowL657(makA3gu6Sim9kX6Ab)spQk7kFWMBSFYXM0W0LJB(N)Dm3whDoE7YXDrYI)CMI73xtKStxU6jOIFUD6Kl7x8uCAaWw2x86a1Mu9uSNV9Rd2eqevYH7840SZeEu8vh08IPJZHPcDjQJ3q96Q90Y4j8oFV5dGceE7YlJNVlTWTQdcgzlfXlK98srz4FNc4fiJf7PcSn)VikcrbVIsQpMiU1Dfll3lflUk4KRbNtDTGchyHRqOEHRcvfMUUQVNwFaATSP)OHgSxL1YEEm6RFBQ3nNnMApbk83uXS5xoNtzUuLvfjdS2w(zJhn4BvB0lFm02nW(rYTyqT)ct008OGxyjjYv4PiQHPIGidrb9qIgIYDhoVTSIYBCvhUC3RKykBbv2GNqhSoBfRcarKxV(dgRwNJah4r9QxuBnqqDTFzvYm0IcKPZ(jj4ByPfNxjhMQmykqCUQALSBtvGvhxil5w76Xnx3x9u9E1t03ErFP7mEGc0QrgapHmiTVRwT6IJTlowJXX(5SwTyVOGjbN9x05rWgYQZJqNhHFETi25rOZJql6riCdqEphCi5ZlocFO3dRGqE0)f4JW1H)aepyPFrAmVD8vJg1N8JTZZMbxaNnVhNVG6yvPZN6LJKB9LplaJNipYQt1XvrCRYFk(0b35(Hu7ynrGbGXsTGC1P2xIWMQCvhQqywA4mxljyduIuOh6sja7kc0wYVMKB5Zq0v8RsgqDj(ArX3kavJL0RfavrPzkGRdPeETPsATervfEqJHhZLORnv2QK5enLK7bcrdLGRnq12Pz(sUL8y2vXTcWsSeBfG2HuHTIAmSLuRgKu5o8yROwbAqwj0YolOQcAfavDjZkdaeIKQIzvRawkkCSczfTnQynEEjXM)SSveRgqek07KwubSsSrKXcUQTYiRIxfE8cJGkkXv7RWvjUrYlP1JTIwfaSIsy1PkyvIMI(swvBfRkkuzldpQT0WTBmjNSr(UnixUytohxfQkAks32VOivrcrCLovjOs9KkoX)MUcufiNQso9WPLdPIt1VeND5S4wyvU7(98l9fz4fGhkymH)a78ojoVFSRpBiCie4iVMjmUs0a6aKFxYv0fdlCVI)eSogmlnyjQVO71IPkbmix3l9LWTicZWnnXJirDcpkYIAbbjuwCrBuSSOk2n6BvgnfoCS1b)Zb7lF(OG5aulF4(kbROOxVDt(L5ESAb8XOPKBLf68arIrFHqwWuouhKUhgPijTbhcL6QYKtYZfOSN8jO9fHLDl)DlllivbkNBZaam)etjaNEXOgGP5l)6cY09QVw9SVOUsdq3I2rOpN)dYEcoVEEknoqXS65wgkhIfVhlRnEeVLd3LgIIdQL)uRFemkCYNMkv3zMDoX0W6GD8B(IMAQYBYfJ0zL2tPmvR97XdXPbv98rb2)3lgbMwZnn8nztIvPP0ZnHiv(DLNvOCEKXwKHCiDaviHJZmkNlCtl2ow3i3EKBkTm6gwWGJKRWq)hGebwtnN1QPeuapTxYbzqvRMMqPmvdMWqg4FYsDidwpnjr0cu2WPt06Po7tyN25UgnfJ2Qxyp8DxXOXs7idupjjGKvB79ovKmuttLusgGEmPNuUACytKOsw70kSOyBklvaSWJp5LC2Mo80yYaOctZnCcn5C91gP2KbfnFso503AS0DYk8)WM4twJHoTBtAssNfMpqjdLHW(qKwu1Mrynz0GjiLbLFUsvkdP)tsstz4jLPh8OYGxncRWLMxEP1eKeVz0l1zSWzDKLgF7O5qOL6R9LTC742(innrJUHxNI8S5q9j9DuNuMUfFB1nCRDrK0UV36gYUvn3JC94FtYzbjOns2gMcmhzRvVn4ShHT873oB1ZCaFhTIwR9oVJblVlV97y1M)O9EWJH6AR3iEmiPjF34jFztLG1XqRThvQSaEOVV8ua8kgP(HSi0B7XeDK4h77qp2ToL7jQLFB6XT1GtX7vpgu2(VH940VBT31EStEFAER7XAC3TAnNMeThjFKFt8XqOFiFN8XqH1DEpffwAzR5E78XBx6K(E6Jb5BvyUOh1Ab3EBYzpUxGTokI6Jgx(3bwysb0X99CH8riH8zFbgo8))dYhtMIEmY))0)og)MWdpP8BqI)DsJn2)U5jWuwsyG)DMIZZHOT9ZaCRN0UCKd42)okHmMRR4kQO1Xi9s9i9QMdP1HQJX7v6X71JQF4YiLDGsKeIngPtmZS8umjylBWmv4UyuDTEunHspJoCfhXKI4DWeWx1taFDInOIoq1AcMkuy83tPIyHZxJrwsIX)nNE8x62aJ(FXm6p4PA6ioX4A8i7rwzOaheEmy86RhHsLfrrtibEJu14RoWzA8raLDXptGpV9Os4ZgIPwmCirotWnVnPk9T6GLTeX6Jz2LGMjegVDRscJpozAQJDAvv4YeWZBRQe85r)AcOeMHkqzci5T(Ot9VqBZPqKjiXGjMlPwouBAsGBydpMayEJhAHc3UrSiWyIZEEBg1g3YKJcTHetajX8aVl4AOyF0Uu7bk3JdjaAAYfJovMcWraBfETmqycYU0jEtFOU1Kk5A881voHk2OBP10zVolouTIMkStjR7A2qFTo2xcfFTEPcffkIFkZ41bhZlsuzYOmuufyZXyjffxAJ4ToKxcnYBXPKgjrK2meyvWUUeTlH4CYQfRfkXqQ4c)J(mWfpeCsGeQmOjC4Z0KHvhh(j68WjCb)wSk5I6texX0mpYfv0S8KXT8OXD)SXj83f6xg38DretBezLJLlnyRVGbn2CrU1Dr8f7EnPsJiEs1GVIJR1JCR3JCU0fokzcPyk4Lgo6vR5AwPJTfueyum3OABXTHbTJP3LA7MxsO7LGjuCxEGZyfwoPYXnLfijlFTORqALzvvUWlxCXmz26ueRKK3dofLyzxoDuT50jPpNAKgDITtNm38ph1mJYSAIfc45TR436t98Md9avd0euMfeoXwgINKIEZXBzWPwSD)SITLwD2a(D5MVl38gywEk26e22LB(UCZBbY6YnFxU57YnFxU57YnFxU5Li76YnVOrUUCZ3LBEcY7YnFRNB(JmDV1YlzjVndRmSeI8xAK4k9OsB)GVT3YR(oQ4p8LeiD5dx(jnG8xfpJfFDd8VBlSbqIG65GODiSus97D7t6NaGt13aaLFea6(kaOu8CrU45VWsah)qay5xcanFkaA6Vfa9vbVPJ3VNz4yQsZ8OEkt6QXeR(gg(oQGmq(xi0BjML0np85KDLZSGnWC)Q6df1P0kBS3EDiVYYQKDFZPFLnxZMiiPiX2eqBrozBtkHnR0gYARPSsBI8SSRS9nN(wRsvTnTnTk8Bi3k2K)ABqVdntRVDz11c8BQ1OP3UPfz62M0)EsOk68F7sUIDxbARH(V2xwQIDmR4hhYnyq2MuLBfb4OcSYCmRk)5hBZH7Rl)XQtQE71R4(6Y4SImTF4ToUlPAxj1QmZuAs)(r0k5(YYTDjofZj)b3z5(6s1T0vKf66oLPEvywib4UM9ER78C)QCJlHpLdAoyyro9vIyvjJqwE(pW(s33IeKFK9Ho12xZDHl9ebuzCJ)ebAL(w3VkV62lfCVD1RzkPNDGHSK7EBRtVIu3bkOYgLQYISqB(D6efuo)DJb5hfzlsu6LFAo6bvgbLD0dhrpMlkyT8ShujUuMZDHZJ4iO6d6ajusXkZVoooEvuCPP3JUt59RsbUSLkmnmVEAPbACEcTOQChuTS9WlNz5ly7rTILK0Vcs3UkgCGAntL7ZLmNXYtMmLCaeM7fJPsor1MNL6aVhRhCDNJ2b9zU0AQw1oS1OK7YrAWKw4BNow1sH3ZjUVAWxsbZ6spE0EZzvtq66eevbfODs1HzvBsFA3bv9Z2X00DqvLhu1N3ZP6DZiRQToZolEW(zO(0sp5Y(fpgNgc5Jy9angT9uSJ397l(kxx1FjCqg3IjNj8SLDgxtjdfATdRmRBVmuHwi1HBQErj1XCcZat4D8FZ7OQ3v2hkHlslzlTjnzuDPkL)fch28CDAkY)lIMtuWROK6JoMBzCXQ8smZHhNfNku7ZPWgtjTSHEgtK7klb8WThSuxHPYR67P1TJElP6pl5b5byl1(CppUVx9E3C2yQDJOWlxfdNF5cUL5AvgRKnYApiNnE0GVv9L2lFq0wJWUVkAaoQT2yISWF175OkYL4jk6XPIMiJrbjrIlKYr7oHV))34SQE5wVjrE30k2KwJ8kvbJNe80HB91RsqaqrusC9hrbHQG3polR6vsP2vJGwF)Yk3BOfLR3F1nwJNavMZcyrlF4HomdAWoJ4uyLrc3MbX20CIWuyoThNwqF16ayzRkvGBVOV0D8pqfI1iiGhrgOWUCCHHTyRBDrQ)txCQDrQ)PVKszVOG1b3DQ0qEny3IVY6ZOZ)rN)Jo)hFwTE25)OZ)XjX)HQQrjCdq7pZ)gqYfdxvnhxfOYZErbnrKnH)aeI4zPI07E74RgnQp5hBNNndUaotMCVG0OYZ5LJKBVMpjgJNOiIU29OcXcyvNeOGdArcQWvMenbf46xCTMCWpR56Ns37ThTVYEQrTgOBSrbPETaLz8DVZhU(3Wq5nFc7FddDsYPT)nm0mjNW(3WqNK069VHH(h5DQ)nC6Lcul2PevJgtuFuAQKQckkZUEk5W1FSQdkCObsA(23WPEhXr13JP9nuEebTz7BOkD8VBTVHY0l)HS9nuLmJ2S9nuTb4MU9nuTpWwV9neACK2T9nuvIeYbnhmoM23qvrguzSwaVvHR4u7By69YXPO9nuzC701(gMEvx32TVHJTpsZ1(gklx3pxTVHPsULISfjQdmCr1VvM(O3(gk77KpUTVHk7WIvgaffxA6TzAFdvwKx(o0(gMSA3JAfLJ9cG(vdBLy9Y030aVMd9liEeOXojTnWAuypl(39FJEkmk8T79(94eey0Ba52()Rp]]
 )
 spec:RegisterPack(
     "Balance (wowsims.com)",
@@ -2385,8 +2765,8 @@ spec:RegisterPack(
 )
 spec:RegisterPack(
     "Guardian (wowsims.com)",
-    20261118002,
-    [[Hekili:TZvBpUnUr4Fl(lUYy3k)YUo32GvlqpeK2u0guC(UVAzAjAB2vwYGIYgoWW)27qkAzjzsjzjNKBt0DijYuKZ8mdhod5mcC6WP)(0jUigE6Nhny07goC4tdgmA6e2(n4Pt2GCEfTeEWhTg(7)reI6sq(hNzSlyxizDOPtW6E8(T3la5YP18iIh7t(tNRKSHBWotN8HF7p(0hE)sj1MozfX1fhpeCOJw(8(JZyRWhNjBR)IakElMECMlEbkYJDC2F))(VpodA(4SuKiI0NZ2W(U0iIB)fykYBogr7J24f2h5I2WiBXMWVm)FHb(9Uhydf5h6bW3fEoGZws4Xzix3a))c8WR49HMhN9bed9EfWX4)8PFhiYkgBt4773FjHTkAoxc6NRR9aAcOgnFWIbdWpUW5PhaY(Ri6RHVsaOJ8b()rk2)leos(n8sSpGEgjG)skOk8dGXZ7Amc3qjbucBFSMApGneHj1iEb7amHrESv3ljTqBUeMAHxqav)Xz7dION6fmoAWAPyhgZgqiMJyai)JqSy8W7Nd8zfqpO1pTEtaLb99JCLCUPpGsHsE6WfBpsileGc2NHPC5B3kIh8Y5rlwyc9WgG9AZOnMG9fnyb8UPtqoCHp0Yb55zh)dBoDUNBGcTYUNSWkpbo(VKd7oR(8jEr78oA0r01K2G(2RBNIgUW4X2zfIUeFFui2oyXc7LoUwdf0JXBNzgeXcb954sig2lYhhc4F5kMcIf3rZ09Y8v)GD(Dnyblx6HnxhSfVguFDZX3dYFVdS8i(J7vgo8PiLIZji4HC4MDyj7HoysXRre)WNTg01OJYUDGtutVGNZ)wNGqgaPBSqSaHPeS9ccfNb7PAxcFxSGoPFXzP5MJlx86aWMH8fI)sBAaIE)IaNOqRrcugIzm4fHMC(ZG)yFr)b9l8)sqFXBtd9AG9sap4pznyVpNWWPnjt18xhlYt2kz0v3yESgczKZMpd3KMVVynkLj(fs(b96eNGapx4HmVsoD9YqZX9kySN4(Fv2doyJx48ILIbfVKQgZ)nsfPvPucz3IOe0CpCSt7T2BqexB((gCXGFycl0gcsyZd1TCV9gqlE)Mikgy(wKxeg4RHrcVtyr8SrE22d0aEGIaWig2osaDVTlj0HSXJ4JnX(Cy42fmTo1lHKSiIUp5L8qEbamG1NqCSikeoM9I1JWSxNREuCnEHmlrUOKnsrsUYN3WjJhRh6vc75Ai5RjRHONBXU2HRaDqsp6u44lzWvrPk7t4kYcUloqxSdttERqMiUbEGTLnevnWb22IycZGrwJVBbpCNTuG79S174EMRMYzKq58ZR8)ypX)bsOr8Ybpy)noOqokao0nEHLW12JCNqDu2lJuD7xgFWWqJf9bvMZW2NFfMikrncymftajSxSpm10ZA4Hm9(GrrZGfclLlbp9YcN369D0Ya0nQMdEM7kQO5G3MsRAzfC81ljuc3rVv(99v7T9DoAwWop5YR4LgXTaykdNHazu0w(gNZgl88OZo4Ro4CEUDkSgNFxeFTXupw3hefEE3EvpiBgVvpBnut4Vrnxju8zMK49gCKPQOEQU(PkRtA3eYpsbHB3eImA(B09G0mVfz13xPZ0e88S14h6khvUzqkg5UV54Sro91mzKAdC6nmpKwihNpaYtnxYetYYtRo8kfmv2ICl5KK1mhd809qhjgiWbwfpjMF8q7X0ZBJnNzN0Q8GsE0CXgwdMnlgvwO1S26XUgf6KQWLEfV5YEh0TCUJrg7HxSmE6UHPcAPXHyIWg3CSKMPPtlBu1XZoBUB4GEVKStY4(WZWYDP88jZ4YHY8WFEcWdTllKeTKhrP6Moaj6Ig8io3xk)XGt0CQYNUfwzOxX11mlbDanUeEV7gGU4L(xhSkEsmveIlmk6EkBwMvirwVr8IWTWY67S6AYswpCPQmXC(60KWsVRbwQxY3j3Krx9Zfh0pt88OUk3)spnSTaDamcvu6qBkpBpTr7Pnk90gVnt5z2gVWLqR)8w)5LU0R1F(ps(ZA9N36pVa)5eFG8Br1iJnYViHeceF(tP7obOjFbKoUYBnYhXZpZWhhmOR4hBCy2qd881K7takv2CEyGANN5ph6WXnupydMUXFoAwIASCz1aYw9gndM)j6GcxLD0N77zMO9to7mTk8JpZmnlBYNHwgcP7B3sXWNozlMgcui33KP47WJ)PBc9g(Npl(KqL23t)1tFZDtNKQYzqFPeg8t00j32kULVKBtzaA1aO4YVLblkjzwkwUvxEZoogEqdgoPHtJIAuCovS8rDZdzsABgXxNRGVULStf4hZbFkRsUzvkKkHzDku3fClrXKMAP1CaCExn0LxHYSkbtR3o0(wTfnT7rRDtAAvpJIvp)eRbUUQ8vX9PvWg1U17uRgEBaNj)IgNjzNaQRJ5Bz5)uH(NQHRWQJ(gvuWMxvqvc8Ft70fGL6kNQmK7Pi7(nk9(1o)(xgJuK9hEqyqHmCGUnur2ux9rDlFyJQFO2ciEtRGy1lHynRHyTkIyvRI43ZYiQ1mCKWmu3bn4LgS22H3G6lwcS1DCKg5pPydGVQfG8pjUO4QwTNYcSvR9MZ)2Lb7IsHDvZH91Le7BywSRtASlkp2ThtQ9ysThtQoPZ(pFNtQ5z0UKDKQlxxTo(BD8364)nQBVwh)To(lZX)yno(tQqzDpq1BUADQ4arS46lLuVVKQZPVWkzlF2z9POLCffzKksDAa8IIMT)m(1ZI4IwrvvcpdH8ZfPlww2sOgx7r74lxgyefvSVKQJMTEFcMvsLttQFNE1MrUzdvujDMsrNUeqYPsFSe2inFVf19QqiwqPWkPYCn8s)OX36hxNykQ(DvR1NM6xx)cyFlKLcQNWfx2hzG936RoKlegLZmPZuMUkniJnDrzgKZdPE9TCTrbvc4KrAwZIBbtZM5W85Dpn3Q41nsJUVr(oCHJCDkjTrJ4WrzoJv(TFKt4Akp1fs60HefpjJIvHZlclaIaxqCwjUqt4qV90uTNMQ90u)OFAQU6ON1Wd5UCtk52n5NRR3KFUUFtIpQ1Lh6tzuV6FyRuhR872XUUYT2lumOi2QayRW)t8RepYXzgFuEzAkE90))]]
+    20261122009,
+    [[Hekili:T3XAVnUXXFl6lQs4UilzBD3Ldwhqdcs7v0gue3(vktlUYMX0Ic8HDDGG)T3zxUKC3L7tkkjFxylsITe58ENDNh7yVzE)hVRd8ZqE)65tp)dZMD(5tN(JExN9YwK31B9x9G)DWpSX)r4F)3Y9tcc9386nJEo(50WhtNSk(XX4N7LOy)amSUnpmk7RB8Uvkyt3Iw5D9p)B)3V(ZF(ok08U((WGauXRGsxPepF(1BYUh96n0p7S1XjONqjVEtaATFEu2R38x)3)ZxVb(4xVHbe5HNHrB6zbj5HbNTgL4hDlYp5m)TrPN5h4Vnl8j0e43M87PXBg)Eanj(BsJaYpa(5ymAdtF9g)GG4n)f4hEa9s6KxV5N9Z8)SeYz0)6R)hai3NLTn9ZND2DHz3NFlMdot4rhdWeOA)BNUE6u0LRx9PlWGfTgTjfijatXRbYf(V)KFYdPpecSJ)gGMsaLYpSoFtaMa)Le0M)ie)t)g6o0gG9YcJ3ua6O4Nbcb5hLDpa5V(424KmaC)cwgiiDHxiLkGxrE1W0SuGnqBYqjyO)89HrWxEB(61tGNyjWepojF7eq9NeVg(oVR9xHrD6Iv(rrll(LLy48ES9d8PzVpC9cra86)G(AVBXzRP8YYegw59bHPBJ8Fz5TiGFwC(CmugLfF3DrOjbvsRHen7YIpanelJMef)LfZMoKGsPWEsq8ZBgpCGoIQq(LMfVb9(8u0sqPS8UvblMjqyxm1gcZcKfU5ULBJjSUo8DzxGVBPwwcW(dwb7cbBjiSvwIzVS48v37g)SYpfSexIHGbKKG(98NqBKz8mxVXddok4nwqzd)TYFZku0s8J8E8)AjXYh7UH80cuZh1tn5BsVpCDMnSSC8w(Whm0QtDAalBtqB9tq2GfybBs8ZzhseO0GXbK0olMe0JXpHwUkpjfrqf5HXebkkY)2i6xbVffLPOO1ll(EdG2)2yW779GVKqyJn5aV47WqN8v8VcH(DgTa9ISeNJgu8AI49HnaI3PIIg7mj9i4Ic8JUe2EB5ZHrbe6IxdsipkGjp(JHPPGTTbiNDFCYMuLWJ8QfpJDgdul9k5w5NWQkkrbkkmdv9zHav)IjV9kCeDXCgoa9ikb2HCf(l9tSgIvKC1hXtZe6J(Bp7Vjl1gWx5bRc6vpidWlah8ngGg1j)9(a)jS1kg(WXGU1p7ltPqneFYNK8TzLMByn6s4OH3zEt1071dXb3gNMoCqgMsYMecYc8V7kEWMgrMzKO4y4rkW1WaebIKx1otYvG)PeyPtccoaNrKX)8Mui(OKq0Y1Hji2Lq5WkhQOjoplnmanVPSHEQoYhtbDT)KTe2JXnYwg(LkcyqUncc)8S4L(zzqmrsKcmuEt6YK3P44nYebLmt9ckcdv95vGR4JBkHOmAj8lwYmc2Vb8RTRuVn2a19mCs573tsB0aksPFnbMtWN2AzwiCqLPJD22N3XdVtMbc(HiwgunsikkyxnNSRHdjd4na2VgEJW)aFUNKy)ec(hLIYYGpjDYJ(WQC4Fw24blXkyar(9sEMiqR)o6pco49xM6VgnS5zpO61gyWgZ40Nd3IiCQOoveVnTNgXqLml1aHoC0tyVi6cUvXXrykH7RGZ5asL0Valzaz0)B8UY3pYFfa1YxEOsWAsXyW5UO)ebtgQqgFwShHqEvZ8P5Py1lI1iASjAdfLVbLcXcF39YCHszz2NQAHJCZ2XdhjsXcm4o6V)Cy29HBMBKc3GdywcTnsUAcRgPQ0RwmT2AG)X2rJc)kXVDvCAgqsQyVHfoNaalQ2kb4IZN25YaXDJkzD2nkk4Ej7GulmgRZurMFUoMnA6HAD8Q80fNVhEQgna()kD7WW76zEogz20Qdar50ztfDc1cHJbPdJFf21EnC3CIvILRu41DNus6r)CXdBYrCvzC78P62DqTex7(gZMmFSM3Te7)a9jWeBHxMVSqYlv4)berokthxZzYZNybpY5wRWvH6SpESvukvnUzYBNKWiZ3TN6UmWqdq9j)KqCQiksm9tGNUWGL4sxearUSoeokiotbys9UxwUfmlF)28eeG0N8JYrGieSBKFu3DIODmOmJaDkiUrb(zXjVGtzXQWTrGeEcAdMmca7WQNIOuwNN8s1xI3mmgNae4mQtwLNasZSVS4sy5WaNFR5eJEnVwfFLeULYsu)(4pOC14IlgBa9yje9RdFeI(6jq9NcXegu9ed0((gEzBeQ0NHKnZICQ)mkP6Bj8uyqCeoXqGHu8QWSxikSr4ysE3A8XWwsz4XxT4dthBRW5CIW5pV8)LJj)pGdP5Sjcc3ahThqf4GXkwyr2R4sSx9bsFQrmp2hNVB0ifw07KzodUOEauegeJanYGeGdjKTk4Ty2oUNE3iDAqTKL0LGLFPw924tOLbiBKPdUc7ksNo4BtUvoVco(gxTvc2r)c7lAPPYP5qnl5iH35ArknqiYaUtfL0r4RTiKMeAf56HTgKQiF1fD0I6bkcuJfz0cyQOIrIOQnfv0MI7zhEkpltNHgZfn0MQT1uFOPiHTdGgkkOna1snSyralIZ2QAakcQMf9RbWAtn)AyRWxKpn4OZQXNijiROE8Aav10tes1fXt27tirMA4P0YRuo4yn7A4nuBr6kEv(A0PgcLKKt1KRPFHmEOTsxn4eFBQxpf5L1(AU1CtJIISTV1yteUkkQMt1uRPjI(IOPTgAneO8PPKQlpn1mRH3hDHRZqPnPJgRUzkkgZl6yHNAkbSRMyIutvrWApP0MAGjsgKZ(kqgLRLbDfa9kSN4)e(0KkedswKcN7nopTkXOnWqWlyWlpgSZTadcjxNsMUNBDP2RdymyjHWsPhRYK14gQ7cHhHonS6WDK5C2(05oUrwUuxsLbRfCZV)ustRghslgx(fUAXmvMwhD5R(I1rzphQv3XsYBVO3MGM7ZiP47FcZeXENrU(msstT33MjK846aKx94OB9kY)QfZVyi9Teu4WPAdEzSAhMJuC0QDp6VXNizKdxCv9ExJxTSxd2tPYETzNclfMunREvZowr6CXno)0jW8aFi0IkkoZr5GS1vKQWw3wc3IaSgSJjUTIFIOMHOHrj1zOxyreDn2oPyXv5KC7ZcQRdmNa3t8Lp3AzOc3oxoCKw)3A9kPpj8J3PYt3GrCwJFzXOp9Uzm7NRyVIkMT4Jl4uUpQYfHKhS2p87MnD8xQILO4zyDcG3dGwQ)DM28Rwbe5)mpjr(erkI5XurqKhrb9qQpgZwv4C7Xlk)KRMSLh0KePwhyH6)aQTMOvCgaJMS2hoXCwvy0oWs6nEy20UHX4WYUnyIfnAWFoDgIxOWVJIdAgdRRBQAQww6MMbCH4czj311abv7q1A2DQ1RxD(qPhrDSc0QrgaVHmiTRVfx6dOSpGsJbu(TzlUW)HnCj482d9Ba0VbGX1Q9Ba89KdW(na63aOd3aiCdqop53IeRrVZavaOiqDQ7rctg(hG0alSPPp8QzxoD6qYVSDv2s4dWPvt4gnXK0TlMk3zRya7ZMlpmPdvrGiBAkutA2aZmxuw3kxpwM3OO)4oBHEBTo9ncznX8Udzlr2anHhQMJKdthY2Kukl1Dnmjh4pwTojhspknrPfyS071baHhGgRuqV1LTyPTMe2dENTj6Q2UKdOhJgWK3o7e3kMCeth1uMCWCpApt52VHDqJAY7zE)AztfWkCVBEtb)rz8WT6GugBJto4q9f3Tn0PWgDhGw7KddDEtEkyO1vT7jVG)TAJFY7)ZPZuYsrA8Q82Pzq5OR3cTfkhbvvzlgcQ0Fr7BquXL)hYwfLdxBLVmLVBpDjMl1Oka7ZP5nmUnGUcSQheM1OUP3y2fcCcERdVY4CB0H4R0DtQ5ip3c3Yej6eADk8RodZhZrNPuw(WnenNS1UZMFqhNMt4p8I7HVT3t4slOGQdvD4jaZH3z1yQ0A8Dyh7M2AI5a62xBmXWb7QrXjhsofdLtE743yJNtoI7anOo5WrhoYoLVEPsQ6y8LwJj9HB68y8ubSRydNI)0Aev55ScpvVIS4rTgU0TEoSd5tHdcCeg3NCy8Gp4pfmSpuJauEf33kdduE)5UnGIyPqRXXB4bekhD(wCuHQX5gVJSbc(66SHgkhf8n94dLJt((CqIYXIQhkM71CRuk(9UgCzMcKGWFYui)D4a)xwf4PH)ZVs(l2cT0(E)K31CNaaE35L)z4W7APb1dakbefjH(ExBkgvhstGxgGB9K2ftDa3ExZi1XCDfxXKNbmsVqpsVS7qADwgW49s949dtRF5YO8DGsKKEamsNBMzfPys0I2GzMG1XO6d6r1Cg7m2iUCetkczdtaFupb8X52Gk2aTRjyMq5X)flIglp8JLo)X4)thF8x6qaJ(F0m6BTQMnOzmUMn1EKvgttRWJbNxFCpmQSiraesq0jvn(Qd(NfFfBvAvoaiWx0Fuj85duwlgAt4)eCl6tQYERoKFlrS(i)Dj0FcHj63QKWed3NL64vRQI6NaErFvLGVikEtaLWmmb8taPO3hDM)uRnNI1NGedUyUGz5qTRPgCdFG(eal68qlueo3RfX4t2Sx0NrTZTm5OqB49eqsCpiUfCnuSp0DMZavSJdjBaSKlgDQCfGJN3k8Azy9eKDHt8M(i3RjvYNjYxx6eQ4JwN1sN)Z5XHQv0mXrlzDx3glV1bZtO4pOxQWqHnXpJB86W9ffjQCzugDTcS5y8XnfxAdIVokEcnk6XPKgjrz3neyva8UebpH4u51IuuBfexPJkNkUnjUbv(VwZvFBTO1X6CtqR4rGmSWPJNtsMhusgUhOeEq5zOisDoY3062wqdM7BAXgNMq0QoyMS9RAeFUqQG23g7wkbQ60BQniv2N8D74w6GOoMR3DmLVmoML6CnrLyNf1cU6Vq1bo1PQCqxzZfFPD3MQJ11Ps59PQ)cvPu8CEH45pXsa3MstwENQ0CPQ66Bv1rY1PQdAYRXA7gfTEaoz1eC6WocNKkUuDM3UzFvf2w2nzNCF0oDqmOS(G3UiyKT2CS0PBYEnEtSE(M42aoX5jCsZdsqUo74J1KrYmVIJmhUTTc42ohO2RbbLYjbvNokOSFwq1YHbvRMgu2ooOoMZdQoDSjP0g(CInSQqxXd5PwBe3Ijf1XKNvfQ7E5AuVP3bEws99P3wSUsze(WYoHyXCqzD8MUi6gVi2oFrCBaJ0HtyK2mIr0nJr6dlUpS4(WIBZOg5TxCXTyAJ05X5WFCCLvkVFRI(Tk63Q4BuhL9Bv0VvrNVvHQoDOAGt12OaFBp6Q68cRHLLQQBM42UnXTQjAfbSF0Xw7aRb47JgLT1rwrbIR6kCV(wWUVfSnWSIuS19LBFly33c2wGS(wWUVfS7Bb7(wWUVfS7BbBjYU(wWUPtU(wWUVfS5BbB1MH8TiTtHfxZcBL4vOOVPvJ42HPaIRseFmRWzZ8ZJKgTQQTeyxIjo3YkUgY1hr2ZCOMoffSXPLLdHbl52v7zoiv(iJnrpYWHTrlBiQ1lpSecFe0gcM1ue0MOo7gYzEMd11QOQTzmKPa9gc01MiTTb72pGQ8Cn632oQX8mgrmxe5wes8XGMyJs3LiND32zR(XzMNZHu3m2L9c3g8cBt48wHF3mDvgcUQq83ZrTMNUqVvh2)bBYR5PlIBfPcO9dInxYfGkIvv876spq7hmBE6IVVzkdA7CAZtwe(AxksTYDkpcQqSbFLgtTGTZXnpDPcqoKl2x2L8nOcVQ6juzPGODt5nVQ8eO5KZ2NxcT73q3XwAQku5stmvfhIPaNNf5uyVh(B1SK0uAy4c758qGJDLOU0CO8U2P4cZYe20jiphQuEgkrPZdkoMT3uNoevU(KLoK9yKT1uSAz(qujSuLfIgPizpi6wLJevXw6M3xEpTdeCgRlLd7SAYZ5LP5EM3yQVXrAwni6oDtIoVmn3(86bsNktercQPHRLdMolNmDDYOPJWZgsD9irpDc2yInRHsgxAx1mwkzzZMMxyAplQGWLR5Dl69eTKVU75TP98gjx)k0poJKBgSBx5qbu8RlVUJkZhOvJzWUworggIIsix3DU9ZZcngOYCu3jmFMMBB7bXrkU5fhP0RiJ8WGaHJ3MnT6qNuUF2urFHTrGj1CH92tP8Q3Y44tM7Gg(fpDAFvhfPCTkVs)uqL83xnXtIWsDvjr)8PA3CtTAq72EZMq6Ou16qk()b6t8OFEuHRUQg9K9LQ63txfRmDlR8QeqztEVRfoFuxvHoxBPmn9y5crxQUYnQ1EoUsXsrLrHZ(YQMIVNHhkOLYei0YqJuExblVhgKFIMTzlUsgGlTCyNomv)KFuocRI6VWc9xyH(lSW37xyHHQG3IzCx0PpmftvA0J6PmPRgtSAOnCcnqglF(OCfXTKo9W3MSRCMf8bI78Nm8XE1ClcQ3Tt9gAM6ldM7PqwFhA0qm23Hg9DOrFhACuOPYhgts9DOH142rl3(o0OVdn67qdEC33Hg84TVdn67qdPOVVdn4uE9DOrFhAiUBwFhA03HgDuhASNfZxRdgzLMNKWjWZdC8lVR)7OhcJcF9Mr)sCccCKxKpkV))]]
 )
 
 -- The hand-built lists the wowsims.com packs replace (wowsims packs plan, P9): a saved choice of one falls back to the

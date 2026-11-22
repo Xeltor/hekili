@@ -1041,7 +1041,7 @@ end
 
 local lowLevelWarned = false
 local noClassWarned = false
--- Warn once for class kits that only target endgame.
+-- A spec inherits its class's leveling support unless the pack declares it separately.
 local minimumLevel = 60
 
 -- Need to make caching system.
@@ -1051,9 +1051,13 @@ RegisterUnitEvent( "UNIT_SPELLCAST_SUCCEEDED", "player", "target", function( eve
             Hekili:Notify( string.format( L["%s does not have any Hekili Forever modules loaded (yet).\nWatch for updates."], ( UnitClass( "player" ) ) ), 10 )
             noClassWarned = true
         end
-    elseif not lowLevelWarned and not ( class.kit and class.kit.supportsLeveling ) and UnitLevel( "player" ) < minimumLevel then
-        Hekili:Notify( string.format( L["Hekili Forever is designed for level %s content.\nIt may not work as expected below level %s."], minimumLevel, minimumLevel ), 10 )
-        lowLevelWarned = true
+    elseif not lowLevelWarned and UnitLevel( "player" ) < minimumLevel then
+        local activeSpec = class.specs[ state.spec.id ]
+        local content = activeSpec and activeSpec.kit and activeSpec or class.kit
+        if not ( content and content.supportsLeveling ) then
+            Hekili:Notify( string.format( L["Hekili Forever is designed for level %s content.\nIt may not work as expected below level %s."], minimumLevel, minimumLevel ), 10 )
+            lowLevelWarned = true
+        end
     end
 
     if unit == "player" then
@@ -2063,6 +2067,11 @@ local itemToAbility = {
 --- action bar glow (UI/BarGlow.lua) share it: one spell-to-ability mapping.
 local function ResolveAction( aType, id )
     local action, ability
+    if aType == "macro" then
+        -- Forever can return the spell's ID directly for a macro. It identifies the
+        -- ability for ordinary keybinds/glows but cannot establish the macro recipient.
+        id = Facade.PlayerCastMacroSpell( id ) or id
+    end
 
     if aType == "item" then
         local item, link = CGetItemInfo( id )
@@ -2090,12 +2099,67 @@ local function ResolveAction( aType, id )
 end
 ns.ResolveAction = ResolveAction
 
+local fixedBarOffsets = { 60, 48, 24, 36, 144, 156, 168 }
+local otherMacroBindings = {}
+
+local function spellBindingAction( raw )
+    local command = Facade.GetBindingAction( raw, true )
+    if Facade.issecretvalue( command ) or type( command ) ~= "string" then return end
+    local bar, button = command:match( "^MULTIACTIONBAR([1-7])BUTTON(%d+)$" )
+    local slot
+    if bar and tonumber( button ) >= 1 and tonumber( button ) <= 12 then
+        slot = fixedBarOffsets[ tonumber( bar ) ] + tonumber( button )
+    else
+        button = command:match( "^ACTIONBUTTON(%d+)$" )
+        local frame = button and _G[ "ActionButton" .. button ]
+        slot = frame and frame.action
+    end
+    if Facade.issecretvalue( slot ) or type( slot ) ~= "number" then return end
+    local kind, id = GetActionInfo( slot )
+    if not Facade.issecretvalue( kind ) and not Facade.issecretvalue( id ) then return kind, id, slot end
+end
+
+--- A native spell obeys the action-button targeting options. A macro's recipient is its own.
+--- Recheck the effective key, current page and macro body, including before a deferred bar rescan.
+--- On a verified button, the second return identifies the specific spell rank that would be cast.
+function Hekili:CanSelfCastHelpfulSpell( spellID )
+    local native = Facade.CanSelfCastHelpfulSpell()
+    local ability = class.abilities[ spellID ]
+    if not ability then return false end
+    local action, info = ability.key, keys[ ability.key ]
+    local opts = self.Engine.settings.specs[ state.spec.id ]
+    local choice = opts and opts.abilities and rawget( opts.abilities, action )
+    local override = choice and choice.keybind and choice.keybind ~= ""
+    if not info and not override then return native and not otherMacroBindings[ action ] end
+    local binding = self:GetBindingForAction( action, self.Engine.settings.displays.Primary, 1 )
+    if type( binding ) ~= "string" or binding == "" then return native and not otherMacroBindings[ action ] end
+    binding = binding:upper()
+    local raw = info and info.raw and info.raw[ binding ]
+    if not raw and not override then return native and not otherMacroBindings[ action ] end
+    local kind, id, slot = spellBindingAction( raw or binding:gsub( "%+", "-" ) )
+    if kind == "spell" then return native and class.abilities[ id ] == ability, id end
+    if kind == "macro" then
+        if not info then return false end
+        for _, other in pairs( info.upper ) do
+            if other ~= binding then return false end
+        end
+        local resolved = Facade.PlayerCastMacroSpell( id, slot )
+        return resolved ~= nil and class.abilities[ resolved ] == ability, resolved
+    end
+    return false
+end
+
 
 local function StoreKeybindInfo( page, key, aType, id, console )
 
     if not key or not aType or not id then return end
 
     local action, ability = ResolveAction( aType, id )
+    if not ability and aType == "macro" then
+        local macroSpellID = Facade.GetMacroSpell( id )
+        local candidate = not Facade.issecretvalue( macroSpellID ) and class.abilities[ macroSpellID ]
+        if candidate then otherMacroBindings[ candidate.key ] = true end
+    end
 
     if action then
         keys[ action ] = keys[ action ] or {
@@ -2114,6 +2178,9 @@ local function StoreKeybindInfo( page, key, aType, id, console )
             keys[ action ].upper[ page ] = improvedGetBindingText( key )
             -- a gamepad picture's markup is case-sensitive
             keys[ action ].lower[ page ] = key:find( PAD_KEY ) and keys[ action ].upper[ page ] or lower( keys[ action ].upper[ page ] )
+            local raw = keys[ action ].raw or {}
+            keys[ action ].raw = raw
+            raw[ keys[ action ].upper[ page ] ] = key
         end
         updatedKeys[ action ] = true
 
@@ -2276,11 +2343,13 @@ end
 local function ReadKeybindings( event )
         if not Hekili:IsValidSpec() then return end
 
+        wipe( otherMacroBindings )
         for k, v in pairs( keys ) do
             wipe( v.console )
             wipe( v.pad )
             wipe( v.upper )
             wipe( v.lower )
+            if v.raw then wipe( v.raw ) end
         end
 
         -- Bartender4 support; if BT4 bindings are set, use them, otherwise fall back on default UI bindings below.
@@ -2499,6 +2568,10 @@ end
 reread = function() DelayedUpdateKeybindings( "GAMEPAD_ICON_SET" ) end
 
 RegisterEvent( "UPDATE_BINDINGS", DelayedUpdateKeybindings )
+RegisterEvent( "UPDATE_MACROS", function( event )
+    Facade.InvalidateMacroNames()
+    DelayedUpdateKeybindings( event )
+end )
 RegisterEvent( "SPELLS_CHANGED", DelayedUpdateKeybindings )
 RegisterEvent( "ACTIONBAR_SHOWGRID", DelayedUpdateKeybindings )
 RegisterEvent( "ACTIONBAR_HIDEGRID", DelayedUpdateKeybindings )

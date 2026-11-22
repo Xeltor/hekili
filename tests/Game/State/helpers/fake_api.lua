@@ -174,6 +174,9 @@ function M.new()
         healthMax = 1000,
         instanceType = "none",
         groupMembers = 0,
+        groupRoles = {},
+        mainTank = {},
+        encounterInProgress = false,
         isInRaid = false,
         unitHealth = {}, -- [unit] = UnitHealth (default: health)
         unitHealthMax = {}, -- [unit] = UnitHealthMax (default: healthMax)
@@ -502,6 +505,17 @@ function M.new()
             local list = ctl.auras[unit] and ctl.auras[unit][filter]
             return list and list[i]
         end,
+        GetAuraDataBySpellName = function(unit, name, filter)
+            if ctl.auraError[unit] then
+                error("Auras cannot be accessed when secret while tainted")
+            end
+            local list = ctl.auras[unit] and ctl.auras[unit][filter]
+            for _, aura in ipairs(list or {}) do
+                if (aura.name or api.C_Spell.GetSpellInfo(aura.spellId).name) == name then
+                    return aura
+                end
+            end
+        end,
     }
     -- absent on Forever (the facade's virtual rows); a secret-free client's, for the headless loop's oracle (o.raw)
     function api.C_UnitAuras.GetBuffDataByIndex(unit, i)
@@ -553,7 +567,11 @@ function M.new()
     function api.GetLocale()
         return ctl.locale or "enUS"
     end
-    ctl.cvars = { cooldownViewerEnabled = "1" } -- GetCVar's answers (the game options' Cooldown Manager on)
+    ctl.cvars = { cooldownViewerEnabled = "1", autoSelfCast = "1", enableMouseoverCast = "0" }
+    ctl.modifiedClicks = { FOCUSCAST = "NONE" }
+    function api.GetModifiedClick(name)
+        return ctl.modifiedClicks[name]
+    end
     function api.GetCVar(name)
         return ctl.cvars[name]
     end
@@ -604,6 +622,17 @@ function M.new()
     function api.UnitInRaid(u) -- ctl.inRaid[u] (SECRET: a secret answer; default nothing)
         return ctl.inRaid[u]
     end
+    function api.UnitGroupRolesAssigned(unit)
+        return ctl.groupRoles[unit] or "NONE"
+    end
+    function api.GetPartyAssignment(assignment, unit)
+        return assignment == "MAINTANK" and ctl.mainTank[unit] or false
+    end
+    api.C_InstanceEncounter = {
+        IsEncounterInProgress = function()
+            return ctl.encounterInProgress
+        end,
+    }
     api.GetHaste, api.GetFrameCPUUsage, api.GetNumSubgroupMembers = zero, zero, zero
     function api.GetNumGroupMembers() -- ctl.groupMembers (default 0: solo)
         return ctl.groupMembers or 0

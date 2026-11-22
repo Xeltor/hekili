@@ -108,7 +108,7 @@ local function newState(class, race)
         set_bonus = every(0), -- State.lua's set_bonus: no gear headless
         boss = false,
         history = { casts = {}, units = {} },
-        target = strict({ is_boss = false, creature_type = "unknown" }, "target"),
+        target = strict({ is_boss = false, is_dummy = false, creature_type = "unknown" }, "target"),
         health = resource,
         mana = resource,
         rage = resource,
@@ -328,6 +328,12 @@ function M.load(classToken, race)
         GetTime = function()
             return client.now or 0
         end,
+        GetNumGroupMembers = function()
+            return 0
+        end,
+        GetCVar = noop,
+        TargetMemoryKey = noop,
+        TargetInPlayerCombat = noop,
         IsInInstance = function()
             return false, "none"
         end,

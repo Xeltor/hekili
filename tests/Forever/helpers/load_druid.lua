@@ -100,6 +100,12 @@ function M.load(vs, file, class)
         UnitIsDead = function(unit)
             return game.dead[unit] == true
         end,
+        GetCVar = function()
+            return "0"
+        end,
+        issecretvalue = function()
+            return false
+        end,
         TargetHealthFraction = function()
             return game.targetHealthFraction
         end,
@@ -114,6 +120,7 @@ function M.load(vs, file, class)
         _G[k] = v
     end
     hekili.Client = fakes -- the class file reads the game through Hekili.Client (Hekili.lua)
+    assert(loadfile("src/Hekili/Engine/Schema/TankRecovery.lua"))("Hekili", { Facade = fakes })
     -- the belief's spellbook, as the file's knownRank calls it through `state` (State.lua's name)
     w.state.knownRank = vs and vs.KnownRank
         or function(ids) -- the plain known reads (`game.known`)
@@ -288,6 +295,9 @@ function M.env(w)
     end
     function e.gain(n, resource)
         table.insert(e.gained, { n, resource })
+    end
+    function e.capResource(resource, maximum)
+        e[resource].current = math.min(e[resource].current, maximum)
     end
     e.reset = {} -- the belief's resetResource (Families/Now.lua): { resource, amount, upto } in call order
     function e.resetResource(resource, amount, upto)

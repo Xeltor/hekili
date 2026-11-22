@@ -47,7 +47,9 @@ local clapRange = "&target.within8&!target.outside8"
 local contextual = "prot_contextual&prot_attack_target&combat>0"
 local targetThreat = "prot_threat_spend"
 local packThreat = "(prot_threat_spend|prot_pack_threat_spend)"
-local groupedThreat = contextual .. "&" .. targetThreat
+-- The selected recovery target has its own positive melee check, including a known matching dungeon plate.
+local groupedThreat = "((" .. contextual .. melee .. "&" .. targetThreat .. ")|prot_loose_victim)"
+local threatAttacks = "((" .. contextual .. melee .. ")|prot_loose_victim)"
 local safeVictoryRush = contextual .. melee .. "&!" .. packThreat
 local pvpMelee = "warrior_pvp_target" .. melee
 local interruptWindow = "prot_attack_target&combat>0" .. melee .. "&debuff.casting.up"
@@ -119,13 +121,14 @@ return {
         "Grouped pulls favor Thunder Clap on nearby packs and Shield Slam, Revenge or Sunder Armor for immediate threat.",
         "Outside raids, Thunder Clap repeats on nearby packs. On a single normal or rare enemy, use early Rend until Revenge is learned and limit routine Sunder to one stack.",
         "On controlled pulls, use Victory Rush before routine attacks when its full heal fits or only one global cooldown remains in its kill window.",
-        "Recommend Target Swaps can suggest spreading Sunder in groups and Rend across durable melee enemies already fighting you or your party.",
+        "On a controlled, short single-target pull, Execute can finish an enemy from Battle or Berserker Stance when no Rage is needed for mitigation or interrupts.",
+        "Allow Target Swaps can suggest spreading Sunder and Rend, or picking up a nearby enemy that is attacking a group member. Thunder Clap gets the first chance to recover it.",
         "Reckless Swings needs low Rage, readable health of at least 75%, an active autoattack and an elite or boss in melee range.",
         "Shield Block is reserved for incoming melee. Heroic Strike and Cleave spend Rage left over after upcoming threat, mitigation and interrupts.",
         "Shield Bash and Pummel cover your current target in PvE. Concussion Blow can stop a cast on a non-boss when you lack a ready interrupt.",
         "Protection saves Rage between casts only for NPC types observed casting interruptible spells. Grouped threat recovery can spend that reserve between casts.",
-        "Use Taunt for loose targets and tank swaps. Use Disarm against enemies with a disarmable weapon.",
-        "Raids and hostile training dummies use the simulator's sustained priority. Enable Maintain Demoralizing Shout if you are assigned to keep it up.",
+        "With Allow Target Swaps, Taunt is a last resort after repeated threat attacks fail on the same enemy. Bosses and planned tank swaps stay manual. Use Disarm against an enemy with a disarmable weapon.",
+        "Raids and hostile training dummies use the simulator's sustained priority. Between raid bosses, Protection can recover trash attacking a healer or damage dealer. Enable Maintain Demoralizing Shout if assigned.",
         "Against a hostile player in combat, use ready interrupts, Execute in a legal stance, Victory Rush, a Revenge proc and Shield Slam. Heroic Strike spends spare Rage.",
     },
     -- a tank: the raid's tank (the target swings at it) and presets.ts:130-147's healing model (apply_defaults.ts:108-122);
@@ -230,6 +233,16 @@ return {
             before = "death_wish",
             line = "defensive_stance,use_off_gcd=1,if=prot_contextual&combat>0&!buff.defensive_stance.up&(equipped.shield|prot_shieldless_tanking)",
         },
+        { before = "death_wish", line = "taunt,use_off_gcd=1,if=prot_last_resort_taunt" },
+        {
+            before = "death_wish",
+            line = "shield_block,use_off_gcd=1,if=toggle.defensives&buff.shield_block.down&prot_recovery_block",
+        },
+        {
+            before = "death_wish",
+            line = "thunder_clap,if=prot_recovery_pack&" .. rageBudget("thunder_clap", "prot_recovery_pack"),
+        },
+        { before = "death_wish", line = "recover_threat,use_off_gcd=1,if=prot_recovery_pack" },
         { before = "death_wish", line = "auto_attack,use_off_gcd=1,if=combat>0&prot_start_attack" },
         { before = "death_wish", line = "victory_rush,focus=1,display_below=90,if=" .. safeVictoryRush },
         {
@@ -256,16 +269,17 @@ return {
                 packThreat
             ),
         },
-        { before = "sweeping_strikes", line = "shield_slam,if=" .. contextual .. melee .. "&" .. slamBudget },
+        { before = "sweeping_strikes", line = "shield_slam,if=" .. threatAttacks .. "&" .. slamBudget },
         {
             before = "sweeping_strikes",
-            line = "revenge,focus=1,if=" .. contextual .. melee .. "&" .. rageBudget("revenge", targetThreat),
+            line = "revenge,focus=1,if=" .. threatAttacks .. "&" .. rageBudget("revenge", targetThreat),
         },
         {
             before = "sweeping_strikes",
-            line = "sunder_armor,if=" .. groupedThreat .. melee .. "&" .. rageBudget("sunder_armor", targetThreat),
+            line = "sunder_armor,if=" .. groupedThreat .. "&" .. rageBudget("sunder_armor", targetThreat),
         },
         { before = "sweeping_strikes", line = "victory_rush,focus=1,if=" .. contextual .. melee },
+        { before = "sweeping_strikes", line = "execute,if=prot_controlled_finisher&execute_phase" .. melee },
         {
             before = "sweeping_strikes",
             line = "battle_shout,if="

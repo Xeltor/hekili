@@ -61,8 +61,9 @@ copy; the core's `state.reset` copies every registered window through it (`Engin
 `WindowOp` is the only write back. The second is the debuff count (option D, owner decision 2, 2026-11-11):
 `ns.Facade.DebuffCount(spellID, now)` -> how many enemies the belief holds the aura up on (the target plus every
 remembered target slot, keyed by GUID in the open world and by nameplate under the Map restriction), or nil when unknown
-(the current target holds no memory slot, or the aura is untracked); `state.active_dot` reads it (§2, "Target swaps on
-Forever"). `def` carries plain records (batch 4, the owner's
+(the current target holds no memory slot, or the aura is untracked); `state.active_dot` reads it. Target navigation
+uses the same memory through `Facade.TargetMemoryKey` and `Facade.TargetMemoryGeneration`, and checks group
+engagement through `Facade.TargetInPlayerCombat` (see "Target swaps on Forever" below). `def` carries plain records (batch 4, the owner's
 design 2026-11-01): no metatable, never a live Hekili table. Each field is a value, a function the belief runs in its own
 `now` context (`Families/Casts.lua` `I.Eval`: a raise is counted in `I.nowErrors` and fails
 `tests/Forever/plain_records_spec.lua`), or absent; a function field may carry a static value the core computes under
@@ -141,9 +142,11 @@ the snapshot panel whichever display is picked. One engine registry, no AceEvent
 **Target swaps on Forever** (option D, owner 2026-11-11). The per-spec toggle (`settings.cycle`, "Allow Target
 Swaps", off by default) arms upstream's cycle machinery for a line with `cycle_targets=1` (optionally
 `max_cycle_targets=N`): while the current target carries the line's debuff and fewer enemies carry it than
-`cycle_enemies`, the line reads the debuff as down and its record shows the cycle icon. `other_target=1` is a forced
-cycle: the line is usable only while a cycle is armed, so it is never shown on the current target and never with the
-toggle off. `active_dot` is the belief's count (`Facade.DebuffCount`, §1: the target plus every remembered target
+`cycle_enemies`, the line reads the debuff as down and its record shows the cycle icon. A first recommendation
+with `other_target=1` remembers the enemy on which it requested a swap. After a target change, that same line may
+offer its spell on a different, identifiable, living hostile target in confirmed spell range that lacks the effect.
+The cast must still pass its class and priority checks. Casting it or replacing the recommendation ends that request.
+`active_dot` is the belief's count (`Facade.DebuffCount`, §1: the target plus every remembered target
 slot, by GUID in the open world and by nameplate under the Map restriction); unknown (the target holds no memory slot)
 is saturated, every enemy counted as carrying it, so no swap is suggested; the current target's own debuff floors it
 at 1. A swapped cast's handler runs with `state.cycle` set: its debuffs add to `active_dot` and leave the current
@@ -151,6 +154,32 @@ target's alone. Time to die is never known on Forever, so `cycle_min` and the TT
 off); no pack may declare `min_ttd` or `max_ttd` (`tests/Forever/packs_spec.lua`), and the slider is hidden. Under the
 Map restriction, visible enemy nameplate tokens can supply the count. If the selected enemy cannot be associated
 with a remembered slot, the unknown DoT count suppresses a swap.
+
+A forecast records the target revision at its start. When the player changes targets, the display retires any swap
+or target-specific cast from the earlier forecast. During a multi-enemy fight, a visible first-slot Primary swap
+from an enemy fighting the player or their group arms a return cue.
+If the new target's engagement is unconfirmed, the engine clears its spell queues and publishes
+`status.targetNavigation = "cycle_previous"` with the current target revision. The UI can show this cue when an
+idle target would hide the display. Each requested reverse step gets a distinct `status.navigationStep`.
+Duplicate target-change events for the same enemy keep the current step.
+
+A second unconfirmed landing leaves the queues empty until the player selects a confirmed enemy or combat ends.
+On returning to the last confirmed enemy, a fresh first recommendation for the same swap
+can continue in reverse. Both directions stop on a repeated enemy or after checking the other enemies counted at
+the start of that search. After an exhausted search the current target's normal priorities resume. A new spread
+can start after casting that spell, when the enemy count increases, or in the next fight.
+
+A class can register a navigation-only ability with `targetSwap = true` and a class-generated pseudo ID.
+Its `usable` function returns true only while the class can confirm another target is wanted.
+Its `targetSwapSafe` function must positively confirm the current enemy is safe using live evidence. The engine
+checks that function before any display forecasts an action on a guided landing. A protected enemy already
+fighting the group takes the same return path as an unengaged enemy.
+An ordinary priority line positions this instruction among real spells. With Allow Target Swaps and the
+built-in Primary display's indicators enabled, it shows a single switch icon during a confirmed multi-enemy
+fight. Selection consumes no spell, cooldown, or resource in the forecast. The engine checks the new target's
+engagement and runs its priority list again after each switch. This lets the class decide whether to keep
+looking, and the live priority list supplies the best spell on arrival. An exhausted search can start again
+after its class condition clears and becomes true again.
 
 **`Engine.Configure(profile)`** and **`Engine.settings`** (`Engine/Settings.lua`). The engine reads configuration only
 from `Engine.settings`. `Configure` assigns `specs`, `packs`, `toggles`, `displays`, `performance` and
@@ -541,15 +570,29 @@ after the first successful specialization read, including a read retried on a la
 
 **What bumps what.** A class release bumps `## Version` in its pack's TOC. `CONTENT_API` and every content TOC's
 `## X-Hekili-ContentAPI` change together, only when the content surface changes: the Register* API, `Hekili.Client`,
-or the environment names above (now 14: 10 added `Hekili:GetLocale` and the packs' `Locales/`, 11 the aura field
+or the environment names above (10 added `Hekili:GetLocale` and the packs' `Locales/`, 11 the aura field
 `enchants`, 12 `kit:RegisterSelector`, 13 the `now` verb `removeStack`, the aura fields `consumeIcd` and `swingHaste`
 and the reaction outcome `land`, 14 the `now` names `instant`, `cast_start` and `target.health`, the ability fields
-`onLand` and `now_finish` and `spec:RegisterGcdMod`). `tests/Forever/content_spec.lua` checks the TOCs and the constant agree.
+`onLand` and `now_finish` and `spec:RegisterGcdMod`). Version 15 added ranked talent cost modifiers and 16 added
+ability ranks and effects. Version 17 supports navigation-only recommendations, target memory identity, roster
+roles and encounter status. Version 18 adds the shared `Hekili:NewTankRecovery` observer, readable health for
+living roster members through `Hekili.Client.GroupMemberHealthFraction`, per-spell self-target checks through
+`Hekili:CanSelfCastHelpfulSpell`, and per-spec `supportsLeveling` and `recoveryDisplay`. A recovery display
+lists the health cues that may appear when combat or target visibility normally hides that display. Its out-of-combat
+threshold uses readable player health. Its combat cues can use the client's protected health curves.
+The optional `upkeep` entry identifies a personal buff by action and spell ranks. When a trained buff is
+missing, a combat-only Primary can show it once the rotation selects it as the next usable action.
+`tests/Forever/content_spec.lua` checks the TOCs and the constant agree.
+
+Protection Warrior and Paladin supply the observer with their class’s range probes and spells that can recover
+threat. It matches the selected enemy to a visible nameplate when needed, identifies the group member being
+attacked and tracks completed, targeted player casts. A target change, roster change or change of victim
+clears the attempt history. Class packs decide when area damage, a target switch or a taunt is warranted.
 
 **Active spec.** The client reports one pseudo-spec per class, so the core picks the spec (`ns.PickSpec`,
 `Engine/Schema/Selectors.lua`; the tree arithmetic, ids, share keys and migration are `Engine/Schema/Trees.lua`'s) from
 the talent tree with the most points: the spec the character activated for that tree
-(`profile.specChoice["Name-Realm"] = { [tree] = key, last = tree }`) when the player activated one of its packs
+(`profile.specChoice[playerGUID] = { [tree] = key, last = tree }`) when the player activated one of its packs
 (`packManual`); else the first of the class's **selectors** that holds; else the spec stored for the tree (a choice from
 before pack-level activation, or one whose pack went back to the default); else the tree's first spec; on no points or a tie, the last dominant tree seen; with none seen, the first
 supported spec. A respec or dual-spec swap that moves the dominant tree therefore switches the spec, and two builds of

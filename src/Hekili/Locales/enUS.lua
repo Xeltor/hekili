@@ -210,7 +210,7 @@ L["Fade as Unusable"] = true
 L["Fade the primary icon when you should wait before using the ability, similar to when an ability is lacking required resources."] = true
 L["%s Desaturate"] = true
 L["Desaturate the primary icon when you should wait before using the ability."] = true
-L["If enabled, small indicators for target-swapping, aura-cancellation, etc. may appear on your primary icon."] = true
+L["Show a full-size icon when you should switch targets and a small marker when you should cancel an aura."] = true
 L["If enabled, these indicators will appear on queued icons as well as the primary icon, when appropriate."] = true
 L["Appearance"] = true
 L["%s Appearance"] = true
@@ -220,7 +220,7 @@ L["Select the zoom percentage for indicator icon textures. (Roughly 30% will tri
 L["Keep Aspect Ratio"] = true
 L["When enabled, indicator icons will maintain their original aspect ratio when resized."] = true
 L["Indicators"] = true
-L["Indicators are small icons that can indicate target-swapping or (rarely) cancelling auras."] = true
+L["A gold arrow means cycle forward through enemies and a violet arrow means cycle backward. Both fill the icon. Size and position control the small aura-cancellation marker."] = true
 
 -- Hekili/Options/Options.lua
 L["Call Action List"] = true

@@ -30,6 +30,7 @@ local RESOLVED = {
     "C_Spell.GetSpellCooldown",
     "C_Spell.IsSpellUsable",
     "C_Spell.GetSpellInfo",
+    "C_UnitAuras.GetAuraDataBySpellName",
     "UnitCastingInfo",
     "UnitChannelInfo",
     "CreateFrame",
@@ -107,6 +108,62 @@ describe("ns.Facade", function()
         end
     end)
 
+    it("requires positive group combat evidence for a living hostile target", function()
+        for _, name in ipairs({
+            "UnitExists",
+            "UnitCanAttack",
+            "UnitIsPlayer",
+            "UnitAffectingCombat",
+            "UnitThreatSituation",
+            "UnitIsUnit",
+            "UnitInParty",
+            "UnitInRaid",
+        }) do
+            answers[name] = api[name]
+        end
+        local engaged = Facade.TargetInPlayerCombat
+        ctl.unitCombat.target, ctl.unitIs.targettarget = false, "player"
+        assert.is_false(engaged(), "an idle mob looking at us")
+        ctl.unitCombat.target = true
+        assert.is_true(engaged())
+        ctl.unitIs.targettarget = "pet"
+        assert.is_true(engaged())
+        ctl.unitIs.targettarget, ctl.inParty.targettarget = "party1", true
+        assert.is_true(engaged())
+        ctl.unitIs.targettarget, ctl.inParty.targettarget, ctl.inRaid.targettarget = "raid6", false, 6
+        assert.is_true(engaged())
+        ctl.inRaid.targettarget, ctl.unitIs.targettarget = nil, nil
+        assert.is_nil(engaged(), "another group's fight")
+        ctl.threat.target = 0
+        assert.is_true(engaged(), "on the mob's threat table, below tanking threat")
+        for _, field in ipairs({ "unitCombat", "exists", "friendly", "dead", "isPlayer" }) do
+            local was = ctl[field].target
+            ctl[field].target = fake.SECRET
+            assert.is_nil(engaged(), field)
+            ctl[field].target = was
+        end
+        ctl.dead.target = true
+        assert.is_nil(engaged())
+        ctl.dead.target, ctl.isPlayer.target = false, true
+        assert.is_nil(engaged())
+        ctl.isPlayer.target, ctl.friendly.target = false, true
+        assert.is_nil(engaged())
+
+        ctl.friendly.target, ctl.threat.target, ctl.unitCombat.target = false, nil, fake.SECRET
+        ctl.guid.target, ctl.unitIs.target = fake.SECRET, "nameplate1"
+        ctl.unitCombat.nameplate1, ctl.inRaid.nameplate1target = true, 1
+        ctl.Fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        ctl.Fire("PLAYER_TARGET_CHANGED")
+        assert.are.equal(1, Facade.TargetMemoryKey())
+        assert.is_true(engaged(), "matching active plate confirms the fight")
+        ctl.unitIs.target = fake.SECRET
+        assert.is_nil(engaged(), "no current plain match to that plate")
+        ctl.unitIs.target, ctl.inRaid.nameplate1target = "nameplate1", fake.SECRET
+        assert.is_nil(engaged(), "unreadable victim cannot establish group membership")
+        ctl.Fire("NAME_PLATE_UNIT_REMOVED", "nameplate1")
+        assert.is_nil(engaged())
+    end)
+
     it("keeps exactly the inventory's names, each with its class, a reason and a function", function()
         assert.are.same(names, Facade.Inventory())
         local count = { passthrough = 0, hybrid = 0, virtual = 0, display = 0 }
@@ -117,8 +174,105 @@ describe("ns.Facade", function()
             assert.is_function(entry(n), n)
             assert.is_string(Facade.Why(n), n)
         end
-        assert.are.same({ passthrough = 123, hybrid = 47, virtual = 25, display = 3 }, count)
+        assert.are.same({ passthrough = 130, hybrid = 49, virtual = 25, display = 3 }, count)
         assert.is_nil(Facade.Status("NotAGameFunction"))
+    end)
+
+    it("checks roster roles, main tank assignments and raid encounters with restricted values", function()
+        answers.UnitGroupRolesAssigned = api.UnitGroupRolesAssigned
+        answers.GetPartyAssignment = api.GetPartyAssignment
+        answers["C_InstanceEncounter.IsEncounterInProgress"] = api.C_InstanceEncounter.IsEncounterInProgress
+        assert.are.equal("NONE", Facade.GroupRole("raid9"))
+        ctl.groupRoles.raid9 = "HEALER"
+        assert.are.equal("HEALER", Facade.GroupRole("raid9"))
+        ctl.mainTank.raid9 = true
+        assert.are.equal("TANK", Facade.GroupRole("raid9"))
+        ctl.mainTank.raid9 = fake.SECRET
+        assert.is_nil(Facade.GroupRole("raid9"))
+        ctl.groupRoles.raid9 = "TANK"
+        assert.are.equal("TANK", Facade.GroupRole("raid9"))
+        ctl.mainTank.raid9, ctl.groupRoles.raid9 = nil, fake.SECRET
+        assert.is_nil(Facade.GroupRole("raid9"))
+        assert.is_false(Facade.C_InstanceEncounter.IsEncounterInProgress())
+        ctl.encounterInProgress = true
+        assert.is_true(Facade.C_InstanceEncounter.IsEncounterInProgress())
+        ctl.encounterInProgress = fake.SECRET
+        assert.is_nil(Facade.C_InstanceEncounter.IsEncounterInProgress())
+    end)
+
+    it("recognizes a meal by localized aura name only while the player is out of combat", function()
+        answers.UnitAffectingCombat = api.UnitAffectingCombat
+        ctl.auras.player.HELPFUL = { { spellId = 470369, name = "Spell 433" } }
+        assert.is_true(Facade.PlayerEatingOrDrinking())
+        ctl.auras.player.HELPFUL[1] = { spellId = 446714, name = "Spell 430" }
+        assert.is_true(Facade.PlayerEatingOrDrinking())
+        ctl.auras.player.HELPFUL[1] = { spellId = 1294007, name = "Well Fed" }
+        assert.is_false(Facade.PlayerEatingOrDrinking())
+        ctl.auraError.player = true
+        assert.is_nil(Facade.PlayerEatingOrDrinking())
+        ctl.combat = true
+        assert.is_nil(Facade.PlayerEatingOrDrinking())
+    end)
+
+    it("uses only readable, living group member health for emergency threat recovery", function()
+        answers.UnitHealth, answers.UnitHealthMax, answers.UnitExists =
+            api.UnitHealth, api.UnitHealthMax, api.UnitExists
+        ctl.exists.party2, ctl.unitHealth.party2, ctl.unitHealthMax.party2 = true, 240, 1000
+        assert.are.equal(0.24, Facade.GroupMemberHealthFraction("party2"))
+        ctl.dead.party2 = true
+        assert.is_nil(Facade.GroupMemberHealthFraction("party2"))
+        ctl.dead.party2, ctl.unitHealth.party2 = false, fake.SECRET
+        assert.is_nil(Facade.GroupMemberHealthFraction("party2"))
+        ctl.unitHealth.party2, ctl.unitHealthMax.party2 = 240, fake.SECRET
+        assert.is_nil(Facade.GroupMemberHealthFraction("party2"))
+        assert.is_nil(Facade.GroupMemberHealthFraction("target"))
+        assert.is_nil(Facade.GroupMemberHealthFraction("raid30"))
+    end)
+
+    it("allows native helpful self-casts on an enemy, on the player or with no target", function()
+        for _, n in ipairs({ "GetCVar", "GetModifiedClick", "UnitExists", "UnitIsUnit", "UnitCanAttack" }) do
+            answers[n] = api[n]
+        end
+        local can = Facade.CanSelfCastHelpfulSpell
+        ctl.exists.target = false
+        assert.is_true(can())
+        ctl.exists.target = true
+        assert.is_true(can())
+        ctl.friendly.target = true
+        assert.is_false(can(), "a normal key would heal the selected ally")
+        ctl.unitIs.target, ctl.cvars.autoSelfCast = "player", "0"
+        assert.is_true(can(), "the player is explicitly selected")
+        ctl.unitIs.target, ctl.friendly.target = nil, false
+        assert.is_false(can(), "auto self-cast is disabled on an enemy")
+        ctl.cvars.autoSelfCast = "1"
+        ctl.exists.target = fake.SECRET
+        assert.is_false(can(), "unknown target")
+        ctl.exists.target, ctl.friendly.target = true, fake.SECRET
+        assert.is_false(can(), "unknown hostility")
+    end)
+
+    it("holds a native self-heal when another recipient could receive its keypress", function()
+        for _, n in ipairs({ "GetCVar", "GetModifiedClick", "UnitExists", "UnitIsUnit", "UnitCanAttack" }) do
+            answers[n] = api[n]
+        end
+        local can = Facade.CanSelfCastHelpfulSpell
+        ctl.exists.mouseover, ctl.friendly.mouseover = true, true
+        assert.is_true(can(), "mouseover casting disabled")
+        ctl.cvars.enableMouseoverCast = "1"
+        assert.is_false(can(), "another friendly mouseover precedes self-cast")
+        ctl.friendly.mouseover = false
+        assert.is_true(can(), "a pure heal cannot go to a hostile mouseover")
+        ctl.exists.focus, ctl.friendly.focus = true, true
+        assert.is_true(can(), "no focus-cast chord")
+        ctl.modifiedClicks.FOCUSCAST = "SHIFT"
+        assert.is_false(can(), "the pressed binding may include the focus modifier")
+        ctl.unitIs.focus = "player"
+        assert.is_true(can())
+        for _, unit in ipairs({ "softfriend", "softinteract" }) do
+            ctl.exists[unit], ctl.friendly[unit] = true, true
+            assert.is_false(can(), unit)
+            ctl.exists[unit] = false
+        end
     end)
 
     it("never calls the game for a virtual row's answer", function()

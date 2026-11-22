@@ -30,12 +30,10 @@
 -- pin's replay was 0.923 (117) with 14.65/min flicker (off-GCD Maul alternation; oracle 0.00).
 -- Worked (Task 7g): the bear's 11.25 rage a white swing and a crit's 8.65 more; Primal Fury's 5 on our crits (16959) as
 -- the strikes' `onCrit`.
--- Translation: Frenzied Regeneration (< 25%) and Barkskin (<= 60%) read the player's health, which the client hides in
--- combat: both lines are omitted (translator rule 23, owner L1462); Feral imports this list, so its bear lines lose
--- them too.
+-- The translator omits numeric combat health reads. The shared Feral recipe restores both defenses with display health bands.
 -- Sim-setup difference (ruling L16): wowsims's sim starts in Dire Bear Form (its pre-pull) and its list never shifts, so out of form
 -- the list showed nothing; the `bear_form` line (the Feral APL's own cat_form pattern) never fires in the replay.
-return {
+return require("tools.wowsims.feral_pve")({
     class = "DRUID",
     pack = "Guardian (wowsims.com)",
     spec = "guardian",
@@ -56,7 +54,7 @@ return {
     },
     -- player-facing lines of the in-game description
     notes = {
-        "Barkskin and Frenzied Regeneration are not in this priority: they wait for low health, and the game hides your health from addons in combat. Use them by hand.",
+        "Defensives offers Barkskin and rage-funded Frenzied Regeneration at low health.",
     },
     -- a tank: the raid's tank (the target swings at it) and presets.ts:55-69's healing model (apply_defaults.ts:108-125)
     tank = true,
@@ -76,16 +74,6 @@ return {
     -- by role (docs/dev/wowsims-packs.md): Maul a rage dump as Heroic Strike, always tier 2, every line (owner ruling
     -- 2026-10-22 extended to Guardian, Fable for the owner 2026-11-17); Lacerate (every line) and Demoralizing Roar at 2
     focus = { maul = 2, lacerate = 2, demoralizing_roar = 2 },
-    -- Before Primal Bite Maul is the only rage sink: queued whenever affordable instead of at
-    -- wowsims's 20, which pools for the on-GCD strikes a low-level bear lacks (ruling L18; silent once Primal Bite is
-    -- known). The adaptive list maintains Faerie Fire (#15) and Demoralizing Roar (#16, "Maintain the attack-power
-    -- debuff") itself, whenever the debuff is down and at every level, above every strike: the leveling Roar and
-    -- Faerie Fire lines R45 guarded were dead behind them and are gone (L47).
-    -- Rule 15: the raid debuff, a setting off in game and on in the harness (the user's ruling, 2026-10-21)
-    maintenance = { demoralizing_roar = "maintain_demoralizing_roar" },
-    leveling = { "maul,use_off_gcd=1,focus=2,if=!action.primal_bite.known" },
-    -- wowsims's sim starts in Dire Bear Form (its pre-pull shift only with Furor under 10 rage): the form first, as
-    -- Balance's Moonkin Form (ruling L16); the re-pin's Faerie Fire line has no form gate, so a trailing line came after
-    -- it. Silent in the replay (the log is in Bear Form from the pre-pull on).
-    levelingFirst = { "bear_form,if=!buff.bear_form.up" },
-}
+    maintenance = { demoralizing_roar = { setting = "maintain_demoralizing_roar", orWhen = "feral_pack_roar" } },
+    leveling = {},
+})

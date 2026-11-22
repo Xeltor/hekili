@@ -45,18 +45,115 @@
 --   PROT_REPLAY procs).
 -- Regen: Paladin.lua's seeds and tests/Forever/helpers/paladin_world.lua's `fsr = { 17.38, 0 }` were not refreshed to this
 -- log's 17.3 / 0.8 (within tolerance; lanes 10/11 precedent).
--- Leveling (R41, owner policy, supersedes R28's L10 filler and R28a's `!talent.holy_shield.enabled` guard): no leveling
--- line. The old Seal of Fury refresh (`remains<24`) recast a seal with 24 s left only to fill Holy Strike's cooldown
--- for the live gate (L10 8.6 -> 4.4; a player report, R40); wowsims's own Seal of Fury line re-seals when the seal is
--- down. Live idle, measured limits with the named cause: L10 8.6 s, nothing useful to cast: Holy Strike and Judgement
--- cooling, Seal of Fury and Righteous Fury up (L15 the same). L20-L25 6.4 s, nothing useful to cast: Holy Strike (10 s)
--- and Consecration (8 s) cooling, the seal up, Judgement off the GCD, Exorcism (879 ranks) unusable off Undead/Demon
--- (the kit refuses; the harness world's missing creature-type check, paladin_world.lua:132, made it look castable);
--- mana 70-92%, no gap-AB effect; reported, never gated (the gates sample L10/L40/L60). L40 8.4 s (R28): out of mana
--- (86), nothing castable; the band L32 11.0, L35-L40 8.4 has the same cause, gated at L40 only; L41 on 4.4
--- (Shieldsworn's Holy Strike every 6 s).
 -- Re-pin 4b0030a44b (0.7): APL and gear are upstream's .siml files (translated the same as the .json), the log re-exported at
 -- the new pin; Holy Shield now casts rank 4 (1239570, 240 mana: R31 retired, owner tooltips 100/150/195/240) and the replay world no longer drops it (L120).
+-- The simulator's tanked raid priority stays in its original order. Short field pulls skip
+-- the Crusader setup and use the equipped shield, current assignment and available mana.
+local field = "prot_pal_field&prot_pal_attack_target"
+local fight = field .. "&combat>0"
+local melee = "&target.within5&!target.outside5"
+local judgement = "&target.within10&!target.outside10&prot_paladin_judgement_allowed"
+local damageSeal = "((!prot_pal_tanking|!action.seal_of_fury.known)&(!seal_up|buff.seal_of_fury.up))"
+local tankSeal = "prot_pal_tanking&buff.seal_of_fury.down"
+local tankBuff = "buff.righteous_fury.down&prot_pal_maintain_fury"
+local raidSetup = "(prot_pal_sustained|combat=0&prot_pal_raid_prep)"
+
+-- These lead both lists, so a heal between pulls precedes a new seal or attack.
+local preparation = {
+    "holy_light,display_below=50,if=combat=0&toggle.defensives&prot_pal_big_heal",
+    "flash_of_light,display_below=80,if=combat=0&toggle.defensives&prot_pal_cast_heal",
+    "holy_light,display_below=80,if=combat=0&toggle.defensives&prot_pal_cast_heal",
+    "righteous_fury,if=combat=0&" .. tankBuff,
+    "retribution_aura,if=combat=0&prot_pal_field&prot_pal_aura_missing",
+    "devotion_aura,if=combat=0&prot_pal_field&prot_pal_aura_missing&!action.retribution_aura.known",
+    "seal_of_fury,focus=2,if=combat=0&prot_pal_field&" .. tankSeal,
+    "seal_of_righteousness,if=combat=0&prot_pal_field&" .. damageSeal,
+    "auto_attack,use_off_gcd=1,if=combat=0&prot_pal_start_attack",
+}
+
+local extra = {}
+local function add(line)
+    extra[#extra + 1] = { before = "templars_bulwark", translated = true, line = line }
+end
+
+-- The client paints overlapping health bands in priority order. An available absorb buys time without
+-- surrendering threat or draining mana. Reserve the instant full heal for imminent death.
+add(
+    "templars_bulwark,use_off_gcd=1,display_below=65,if=toggle.defensives&prot_pal_heavy_pressure&buff.templars_bulwark.down"
+)
+add(
+    "templars_bulwark,use_off_gcd=1,display_below=45,if=toggle.defensives&prot_pal_combat_defense&buff.templars_bulwark.down"
+)
+add("lay_on_hands,display_below=15,if=combat>0&toggle.defensives&prot_pal_emergency_heal")
+add("hammer_of_justice,display_below=45,if=toggle.defensives&prot_pal_stun_to_heal")
+add("healthstone,use_off_gcd=1,display_below=30,if=toggle.defensives&prot_pal_combat_defense")
+add("healing_potion,use_off_gcd=1,display_below=40,if=toggle.defensives&prot_pal_combat_defense")
+add("divine_shield,display_below=20,if=toggle.defensives&prot_pal_solo_immunity")
+add("divine_protection,display_below=20,if=toggle.defensives&prot_pal_solo_immunity")
+add(
+    "hammer_of_justice,if=prot_pal_attack_target&combat>0&toggle.interrupts&debuff.casting.up"
+        .. "&!boss&!target.is_boss&target.within10&!target.outside10&debuff.hammer_of_justice.down"
+)
+
+-- Fury Judgement is a taunt. Only the recovery policy can promote it on an enemy we don't hold.
+add("seal_of_fury,focus=2,if=prot_paladin_prepare_taunt")
+add("judgement,use_off_gcd=1,if=prot_paladin_last_resort&buff.seal_of_fury.up&prot_paladin_judgement_allowed")
+add("swift_judgement,use_off_gcd=1,if=prot_paladin_last_resort&buff.seal_of_fury.up&prot_paladin_judgement_allowed")
+add("consecration,if=prot_paladin_ground_pickup&prot_pal_can_consecrate&!prot_paladin_urgent_pickup")
+add("recover_threat,use_off_gcd=1,if=prot_paladin_recovery_pack")
+add("holy_strike,if=prot_paladin_loose_melee&weapon.size>0")
+add("judgement,use_off_gcd=1,if=prot_paladin_loose_target&prot_paladin_judgement_allowed")
+add("swift_judgement,use_off_gcd=1,if=prot_paladin_loose_target&prot_paladin_judgement_allowed")
+add("holy_shock,if=prot_paladin_loose_target")
+
+add("holy_light,display_below=50,if=combat>0&toggle.defensives&prot_pal_big_heal")
+add("flash_of_light,display_below=55,if=combat>0&toggle.defensives&prot_pal_cast_heal")
+add("holy_light,display_below=55,if=combat>0&toggle.defensives&prot_pal_cast_heal")
+add("flash_of_light,display_below=25,if=combat>0&toggle.defensives&prot_pal_desperate_solo_heal")
+add("holy_light,display_below=25,if=combat>0&toggle.defensives&prot_pal_desperate_solo_heal")
+add(
+    "blessing_of_freedom,if=prot_pal_combat_defense&toggle.defensives&paladin_movement_control&!paladin_incapacitated"
+        .. "&prot_pal_attack_target&target.outside5&prot_pal_self_utility&buff.blessing_of_freedom.down"
+)
+add(
+    "cleanse,if=toggle.defensives&prot_pal_solo_dispel&(buff.dispellable_magic.up|buff.dispellable_poison.up|buff.dispellable_disease.up)"
+)
+add("purify,if=toggle.defensives&prot_pal_solo_dispel&(buff.dispellable_poison.up|buff.dispellable_disease.up)")
+add(
+    "holy_strike,if=toggle.defensives&prot_pal_heavy_pressure&prot_pal_attack_target&weapon.size>0&target.within5&!target.outside5"
+        .. "&talent.iron_creed.enabled&buff.righteous_fury.up&buff.iron_creed.remains<=gcd.max"
+)
+
+add("righteous_fury,if=combat>0&" .. tankBuff)
+add("auto_attack,use_off_gcd=1,if=combat>0&prot_pal_start_attack")
+-- During a last-resort rescue only the preparation above may change seals.
+add("seal_of_fury,focus=2,if=" .. fight .. "&" .. tankSeal .. "&!prot_paladin_last_resort")
+-- A raid off-tank may have chosen a specific utility seal. Keep it until it expires.
+add("seal_of_righteousness,if=prot_pal_attack_target&" .. damageSeal)
+add(
+    "holy_shield,focus=2,if=prot_pal_field&prot_pal_combat_defense&toggle.defensives&prot_pal_shield_pressure&buff.holy_shield.down"
+)
+add("consecration,if=" .. fight .. "&prot_pal_pack&prot_pal_can_consecrate&target.within8&!target.outside8")
+add("holy_strike,if=" .. field .. melee .. "&weapon.size>0")
+add("judgement,use_off_gcd=1,if=" .. field .. judgement .. "&prot_pal_spare_mana>=action.judgement.cost")
+add("swift_judgement,use_off_gcd=1,if=" .. field .. judgement)
+add(
+    "hammer_of_wrath,if="
+        .. fight
+        .. "&!prot_pal_pack&(!moving|action.hammer_of_wrath.cast_time=0)"
+        .. "&target.within30&!target.outside30&prot_pal_spare_mana>=action.hammer_of_wrath.cost"
+)
+add("exorcism,if=" .. field .. "&target.within30&!target.outside30&prot_pal_spare_mana>=action.exorcism.cost")
+add(
+    "holy_shock,if="
+        .. field
+        .. "&target.within20&!target.outside20&prot_pal_spare_mana>=action.holy_shock.cost"
+        .. "&(!talent.consecrated_ground.enabled|debuff.consecrated_ground.up)"
+)
+add("consecration,if=" .. fight .. "&prot_pal_durable&prot_pal_can_consecrate&target.within8&!target.outside8")
+add("retribution_aura,if=" .. fight .. "&prot_pal_aura_missing")
+add("devotion_aura,if=" .. fight .. "&prot_pal_aura_missing&!action.retribution_aura.known")
+
 return {
     class = "PALADIN",
     pack = "Protection (wowsims.com)",
@@ -92,5 +189,20 @@ return {
     -- major cooldown wowsims's autocastOtherCooldowns casts at the pull (log line 223: 110 mana, off the GCD)
     map = { [25903] = "holy_shock", [1311015] = "templars_bulwark" },
     focus = { seal_of_fury = 2, holy_shield = 2 },
-    leveling = {},
+    prepullSkip = { "righteous_fury" }, -- preparation supplies the same buff after any needed self-heal
+    guard = {
+        retribution_aura = raidSetup .. "&prot_pal_aura_missing",
+        seal_of_the_crusader = raidSetup .. "&prot_pal_tanking&!seal_up",
+        templars_bulwark = "target.is_dummy&prot_pal_sustained&prot_pal_tanking&toggle.defensives",
+        seal_of_fury = "prot_pal_sustained&prot_pal_tanking&!prot_paladin_last_resort",
+        judgement = "prot_pal_sustained&prot_paladin_judgement_allowed",
+        swift_judgement = "prot_pal_sustained&prot_paladin_judgement_allowed",
+        holy_shield = "prot_pal_sustained&prot_pal_tanking&toggle.defensives&(target.is_dummy|prot_pal_shield_pressure)",
+        holy_strike = "prot_pal_sustained&weapon.size>0",
+        holy_shock = "prot_pal_sustained",
+        consecration = "prot_pal_sustained&prot_pal_ground_safe&target.within8&!target.outside8",
+        exorcism = "prot_pal_sustained",
+    },
+    levelingFirst = preparation,
+    extra = extra,
 }

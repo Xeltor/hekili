@@ -398,7 +398,7 @@ do
                 specs = {
                     -- ['**'] = specTemplate
                 },
-                specChoice = {}, -- [ "Name-Realm" ] = spec key: each character's active spec (per-spec plan)
+                specChoice = {}, -- [ player GUID ] = { [talent tree] = spec key, last = tree }
                 specMigrated = {}, -- [ class token ] = true: the legacy pseudo-spec profile was copied to the specs
 
                 packs = {
@@ -8750,7 +8750,7 @@ do
             end
         end
 
-        if nameMap[ result.action ] then
+        if result.name and nameMap[ result.action ] then
             result[ nameMap[ result.action ] ] = result.name
             result.name = nil
         end

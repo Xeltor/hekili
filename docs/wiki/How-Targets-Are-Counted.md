@@ -35,7 +35,17 @@ With **Count Damaged Enemies** checked, an enemy the player has damaged counts f
 
 ## Target swaps
 
-With **Allow Target Swaps** checked, a priority that keeps a debuff on several enemies can suggest using an ability on another enemy. The suggestion shows as a small indicator on the icon. Target swaps are off by default; they can also be turned on with Recommend Target Swaps on the menu that a left click on the Hekili Forever minimap button opens, or with `/hekili set cycle on`.
+Turn on **Allow Target Swaps** under your specialization's **Targeting** tab to let a priority suggest switching enemies. With **Indicators** enabled on the display, a gold arrow pointing right into a cyan target fills the recommendation icon. Use your forward enemy-targeting key. For example, when another enemy needs Corruption, selecting that enemy brings up the ability for your new target.
+
+During combat, follow the first icon on the **Primary** display. If its forward cue lands on an idle enemy, or Hekili cannot confirm the enemy is fighting you or your group, a violet arrow points left into an amber target. Press your backward enemy-targeting key. WoW chooses which enemy each key selects.
+
+If you return to the enemy you just left and the same ability still needs a different target, the violet arrow can appear again. Follow it one enemy at a time. In either direction Hekili checks the ability after each switch. The search ends when the ability is ready on the selected enemy, the priority changes, an enemy repeats, or the search reaches the number of other enemies counted. If a backward switch lands on another unconfirmed enemy, damage recommendations stay blank until you select an enemy already in the fight or combat ends.
+
+Target swaps are off by default. You can also turn them on by left-clicking the minimap button and choosing “Recommend Target Swaps” or by typing `/hekili set cycle on`.
+
+For Protection Warriors, **Allow Target Swaps** also covers threat recovery in outdoor groups, dungeons and raid trash between bosses. When a nearby mob leaves you for a groupmate, Hekili favors Thunder Clap if it can reach the mob. If the mob still needs attention, the arrow helps you switch and build threat with Shield Slam, Revenge or Sunder Armor. Taunt can appear if two of those attacks on the same mob still leave it attacking the same groupmate. Once you have threat, the regular damage and defensive priorities resume. Boss handoffs are manual. Solo play skips group threat recovery.
+
+Protection Paladins use the same setting in outdoor groups, dungeons and on raid trash. If Consecration can safely reach a loose mob, you can keep your current target. Otherwise an arrow can direct you to the mob attacking your groupmate. If direct attacks fail to bring it back, Hekili can recommend Judgement with Seal of Fury active. This is the Paladin’s 10-yard taunt. When a mob is attacking a groupmate at 25% health or lower and Hekili can read that health, it can prioritize the switch and taunt immediately. Solo play uses the normal combat rotation, and raid boss handoffs stay manual.
 
 Target swaps need enemy nameplates: **Show Enemy Nameplates** and **Show All Nameplates** on, in the open world too. Hekili Forever remembers the debuffs placed on each enemy that was targeted. An enemy whose nameplate disappears is forgotten, so its debuff may be suggested again. On enemies other than the current target, the time left on a debuff is estimated, not read.
 

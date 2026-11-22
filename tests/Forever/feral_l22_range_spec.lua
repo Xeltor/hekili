@@ -46,7 +46,7 @@ local MELEE = { 1082, 5221, 779, 1079, 6808, 5211, 8998 }
 
 local function recs(combat, distance)
     local c = dlw.Feral.character()
-    c.level = 22
+    c.level, c.instanceType = 22, "none"
     c.known = KNOWN
     c.talents = { [16934] = 5, [16947] = 3, [17002] = 2, [16998] = 2 } -- snap1 lines 9-12
     c.ranges = c.ranges or {}
@@ -74,6 +74,7 @@ local function recs(combat, distance)
     local t = H.ctl.now + 0.2
     assert(headless.cycle(H, t))
     if combat then
+        H.ctl.combat, H.ctl.unitCombat.target, H.ctl.threat.target = true, true, 3
         H.Fire("PLAYER_REGEN_DISABLED")
     end
     t = t + 1

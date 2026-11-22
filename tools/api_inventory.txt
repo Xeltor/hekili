@@ -1,6 +1,7 @@
 AuraUtil.FindAura	virtual
 AuraUtil.ForEachAura	virtual
 AuraUtil.UnpackAuraData	passthrough
+C_ActionBar.GetActionText	passthrough
 C_ActionBar.HasBonusActionBar	passthrough
 C_AddOns.GetAddOnMetadata	passthrough
 C_AddOns.IsAddOnLoaded	passthrough
@@ -16,6 +17,7 @@ C_DamageMeter.GetCombatSessionFromType	passthrough
 C_DamageMeter.IsDamageMeterAvailable	passthrough
 C_GamepadUI.GetFirstGamepadActionBarStorageSlotIndexForActiveStance	passthrough
 C_GamepadUI.GetFirstGamepadActionStorageSlotIndex	passthrough
+C_InstanceEncounter.IsEncounterInProgress	hybrid
 C_Item.GetDetailedItemLevelInfo	passthrough
 C_Item.GetItemCooldown	passthrough
 C_Item.GetItemCount	passthrough
@@ -29,6 +31,7 @@ C_Item.IsEquippedItem	passthrough
 C_Item.IsUsableItem	passthrough
 C_LossOfControl.GetActiveLossOfControlData	passthrough
 C_LossOfControl.GetActiveLossOfControlDataCount	passthrough
+C_Macro.GetMacroName	passthrough
 C_PetBattles.IsInBattle	passthrough
 C_PlayerInfo.IsPlayerInTimerunningHeroicWorldTier	passthrough
 C_PvP.IsWarModeDesired	passthrough
@@ -81,6 +84,7 @@ C_VideoOptions.GetCurrentGameWindowSize	passthrough
 CombatLogGetCurrentEventInfo	virtual
 CreateFrame	virtual
 GetActionInfo	passthrough
+GetBindingAction	passthrough
 GetBindingKey	passthrough
 GetBuildInfo	passthrough
 GetCVar	passthrough
@@ -97,15 +101,19 @@ GetInstanceInfo	passthrough
 GetInventoryItemID	passthrough
 GetItemGem	virtual
 GetItemInfo	virtual
+GetMacroBody	passthrough
 GetMacroItem	passthrough
 GetMacroSpell	passthrough
 GetManaRegen	hybrid
 GetMasteryEffect	hybrid
 GetMeleeHaste	hybrid
+GetModifiedClick	passthrough
 GetNetStats	passthrough
 GetNumClasses	passthrough
 GetNumGroupMembers	passthrough
+GetNumMacros	passthrough
 GetNumSubgroupMembers	passthrough
+GetPartyAssignment	passthrough
 GetPowerRegenForPowerType	hybrid
 GetRangedCritChance	hybrid
 GetRealmName	passthrough
@@ -164,6 +172,7 @@ UnitExists	hybrid
 UnitFactionGroup	passthrough
 UnitGUID	hybrid
 UnitGetTotalAbsorbs	virtual
+UnitGroupRolesAssigned	hybrid
 UnitHasVehicleUI	passthrough
 UnitHealth	virtual
 UnitHealthMax	hybrid

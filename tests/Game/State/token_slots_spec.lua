@@ -97,6 +97,40 @@ describe("token-keyed target memory (lane T2m)", function()
 
     local WORLDS = { "token", "guid" }
 
+    it("identifies the selected target across tabs and invalidates recycled plate keys and identity modes", function()
+        start("token")
+        local facade = ns.Facade
+        tab(1, 10)
+        local a = facade.TargetMemoryKey()
+        local generation = facade.TargetMemoryGeneration(a)
+        assert.are.equal(1, a)
+        assert.is_number(generation)
+        tab(2, 11)
+        assert.are.equal(generation, facade.TargetMemoryGeneration(a))
+        tab(1, 12)
+        assert.are.equal(a, facade.TargetMemoryKey())
+        assert.are.equal(generation, facade.TargetMemoryGeneration(a))
+        plate("NAME_PLATE_UNIT_REMOVED", 1, 13)
+        assert.is_nil(facade.TargetMemoryKey())
+        assert.is_nil(facade.TargetMemoryGeneration(a))
+        plate("NAME_PLATE_UNIT_ADDED", 1, 14)
+        tab(1, 15)
+        local replacement = facade.TargetMemoryGeneration(a)
+        assert.is_number(replacement)
+        assert.are_not.equal(generation, replacement)
+        world = "guid"
+        tab(1, 16)
+        assert.are.equal("Creature-1", facade.TargetMemoryKey())
+        assert.is_nil(facade.TargetMemoryGeneration(a))
+        world = "token"
+        tab(1, 17)
+        assert.are_not.equal(replacement, facade.TargetMemoryGeneration(a))
+        assert.is_nil(facade.TargetMemoryGeneration("Creature-1"))
+        tab(nil, 18)
+        assert.is_nil(facade.TargetMemoryKey())
+        assert.is_nil(facade.TargetMemoryGeneration(nil))
+    end)
+
     it("remembers each mob's debuff across tabs; the plain-GUID twin gives the same answers (task 3)", function()
         local got = {}
         for _, w in ipairs(WORLDS) do

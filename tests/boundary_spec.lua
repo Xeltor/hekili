@@ -22,6 +22,9 @@ for _, name in ipairs(require("helpers.addons").CONTENT) do
 end
 local PUBLIC = {
     NewClass = true,
+    NewTankRecovery = true,
+    CanSelfCastHelpfulSpell = true,
+    TargetSwapTexture = true,
     NewShared = true,
     NewRace = true,
     State = true,

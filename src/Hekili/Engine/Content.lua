@@ -62,7 +62,10 @@ local format = string.format
 --   Also without a bump: Hekili:NewClass's `gcd` (dry-gcd); an older core ignores it and keeps its own class clauses.
 -- 16 (2026-11-18, dry-pack-api): the ability fields `ranks` (with a field's `{ byRank = values }`) and `effect`: an
 -- older core registers such an ability with no id, copy, known, handler or now.
-local CONTENT_API = 16
+-- 17: targeted navigation abilities, target memory identity, group roles and encounter state. A Warrior
+-- pack using these facilities needs a core that can distinguish a target cue from a spell recommendation.
+-- 18: Hekili:NewTankRecovery, group member health measurements and per-spec leveling support.
+local CONTENT_API = 18
 
 local done, notice = false, nil
 

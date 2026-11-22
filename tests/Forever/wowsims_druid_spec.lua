@@ -209,7 +209,7 @@ describe("the Druid wowsims.com packs #slow #wowsims", function()
         assert.matches("\n# Setting maintain_demoralizing_roar %(", simc)
         -- re-pin ab0f00e4fc (wowsims #1087): both lines sit in the one default list, each behind the movement gate
         assert.matches(
-            "\nactions%+=/demoralizing_roar,focus=2,if=settings%.maintain_demoralizing_roar&%(!%(!%(debuff%.demoralizing_roar%.remains<=0%)%)&",
+            "\nactions%+=/demoralizing_roar,focus=2,if=%(settings%.maintain_demoralizing_roar|feral_pack_roar%)&%(!%(!%(debuff%.demoralizing_roar%.remains<=0%)%)&",
             simc
         )
         assert.matches(

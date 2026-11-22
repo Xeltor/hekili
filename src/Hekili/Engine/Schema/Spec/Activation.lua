@@ -23,9 +23,113 @@ local function talentRank( t )
     return ( select( 12, GetTalentInfoByID( t ) ) ) or 0
 end
 
---- The key a character's spec choice is stored under: "Name-Realm".
-function ns.CharKey()
-    return ( UnitName( "player" ) or "?" ) .. "-" .. ( GetRealmName() or "?" )
+-- Forever characters may share a given name. Cache the player's plain GUID through identity restrictions.
+-- A login can start with no realm or no readable player. Resolve it without running a spec rebuild every frame.
+local playerGUID, legacyKey, partialKey, retryPending
+local temporaryChoices = setmetatable( {}, { __mode = "k" } )
+local function readIdentity()
+    local previousGUID, previousKey, previousPartial = playerGUID, legacyKey, partialKey
+    if not playerGUID then
+        local guid = UnitGUID( "player" )
+        if guid and guid ~= "" then
+            playerGUID = guid
+            _G.HekiliSpecPlayerGUID = guid
+        else
+            -- The client restores this character's own file even on a restricted /reload.
+            local saved = rawget( _G, "HekiliSpecPlayerGUID" )
+            if type( saved ) == "string" and saved ~= "" then playerGUID = saved end
+        end
+    end
+    if not legacyKey then
+        local name, realm = UnitName( "player" ), GetRealmName()
+        if name and name ~= "" then
+            partialKey = name .. "-"
+            if not Facade.issecretvalue( realm ) and realm and realm ~= "" then legacyKey = partialKey .. realm end
+        end
+    end
+    return playerGUID ~= previousGUID or legacyKey ~= previousKey or partialKey ~= previousPartial
+end
+
+local function needsIdentity()
+    if not playerGUID then return true end
+    if legacyKey then return false end
+    -- With a GUID the realm matters only if there is a legacy choice left to recover.
+    for key, value in pairs( Hekili.Engine.settings.specChoice ) do
+        if type( key ) == "string" and key ~= playerGUID and not key:match( "^Player%-%d+%-%x+$" )
+            and key:match( "^[^?%-]+%-" ) and key ~= partialKey
+            and ( not partialKey or key:sub( 1, #partialKey ) == partialKey ) then
+            if type( value ) == "string" then return true end
+            if type( value ) == "table" and ( value[ 0 ] or value[ 1 ] or value[ 2 ] or value[ 3 ] ) then return true end
+        end
+    end
+    return false
+end
+
+local function retryIdentity()
+    retryPending = nil
+    if readIdentity() then Hekili.PendingSpecializationChange = true end
+    if needsIdentity() then
+        retryPending = true
+        C_Timer.After( 5, retryIdentity )
+    end
+end
+
+-- Move explicit choices for this class. A partial Name- additionally requires the player's manual pack flag.
+-- A remembered tree number alone cannot identify which namesake or even which class it belonged to.
+local function legacySpec( key, requireManual )
+    local spec = class.kit.specs[ key ]
+    if not spec or not requireManual then return spec end
+    local options = rawget( Hekili.Engine.settings.specs, spec.id )
+    return type( options ) == "table" and options.packManual
+end
+
+local function migrateChoice( all, choice, from, requireManual )
+    local old = from and all[ from ]
+    if choice.legacy then return end
+    if type( old ) == "string" and legacySpec( old, requireManual ) then
+        if not ( choice[ 0 ] or choice[ 1 ] or choice[ 2 ] or choice[ 3 ] ) then
+            choice.legacy = old -- converted on the talent walk, as for the original scalar setting
+            all[ from ] = nil
+        end
+    elseif type( old ) == "table" then
+        for tree, key in pairs( old ) do
+            if type( tree ) == "number" and not choice[ tree ] and legacySpec( key, requireManual ) then
+                choice[ tree ] = key
+                if tree == old.last then choice.last = choice.last or tree end
+                old[ tree ] = nil
+            end
+        end
+    end
+end
+
+local function charChoice( tree, writable )
+    local all = Hekili.Engine.settings.specChoice
+    readIdentity()
+    local waiting = needsIdentity()
+    if not retryPending and waiting then
+        retryPending = true
+        C_Timer.After( 1, retryIdentity )
+    end
+    local choice = playerGUID and all[ playerGUID ] or temporaryChoices[ all ]
+    if not choice then choice = {} end
+    if playerGUID then
+        all[ playerGUID ] = choice
+        if temporaryChoices[ all ] then
+            for k, v in pairs( temporaryChoices[ all ] ) do choice[ k ] = v end
+            temporaryChoices[ all ] = nil
+        end
+        migrateChoice( all, choice, legacyKey )
+        if not waiting then migrateChoice( all, choice, partialKey, true ) end
+    else
+        temporaryChoices[ all ] = choice
+    end
+    if choice.legacy then
+        if not writable then return choice.legacy end
+        local slot = tree or choice.last or 0
+        choice[ slot ] = choice[ slot ] or choice.legacy
+        choice.legacy = nil
+    end
+    return choice
 end
 
 function Hekili:GetActiveSpecOption( opt )
@@ -68,7 +172,7 @@ function Hekili:SpecializationChanged()
     local tree, source
     local selector
     if kit then
-        tree, source, _, selector = ns.PickSpec( kit, Hekili.Engine.settings.specChoice[ ns.CharKey() ], talentRank, UnitLevel( "player" ), Hekili.Engine.settings.specs, settledID and class.specs[ settledID ] )
+        tree, source, _, selector = ns.PickSpec( kit, charChoice(), talentRank, UnitLevel( "player" ), Hekili.Engine.settings.specs, settledID and class.specs[ settledID ] )
     end
     local currentID = tree and tree.id or clientID
 
@@ -369,19 +473,6 @@ function Hekili:SpecializationChanged()
     return true
 end
 
--- This character's spec choice table ({ [tree] = spec key, last = tree }; Selectors.lua's PickSpec), made on first use;
--- a legacy scalar choice moves onto `tree` (the dominant tree now, else 0) once.
-local function charChoice( tree )
-    local all, key = Hekili.Engine.settings.specChoice, ns.CharKey()
-    local choice = all[ key ]
-    if type( choice ) ~= "table" then
-        all[ key ] = { [ tree or 0 ] = type( choice ) == "string" and choice or nil }
-        choice = all[ key ]
-    end
-    return choice
-end
-
-
 local function notifyPick()
     if note then
         Hekili:Notify( note, 6 )
@@ -412,7 +503,7 @@ ns.SelectPackForPick = selectPack -- RestoreDefaults: again once the built-in pr
 function Hekili:SettleSpecChoice( clientID )
     local kit, settings = class.kit, Hekili.Engine.settings
     local tree = ns.DominantTree( ns.TreePoints( kit.talents, talentRank ) )
-    local choice = charChoice( tree )
+    local choice = charChoice( tree, true )
     if tree then choice.last = tree end
     local pick, source, _, sel = ns.PickSpec( kit, choice, talentRank, UnitLevel( "player" ), settings.specs, settledID and class.specs[ settledID ] )
     if ns.MigrateTrees( settings.specs, settings.packs, settings.specMigrated, kit, clientID, pick ) then
@@ -449,7 +540,7 @@ function Hekili:ActivatePack( specID, name )
     local kit, s = class.kit, class.specs[ specID ]
     if not kit or not s or rawget( s, "kit" ) ~= kit then return true end -- a spec outside the class kit
     local tree = ns.DominantTree( ns.TreePoints( kit.talents, talentRank ) )
-    local choice = charChoice( tree )
+    local choice = charChoice( tree, true )
     choice[ tree or choice.last or 0 ] = s.key
     self.PendingSpecializationChange = true
     return true

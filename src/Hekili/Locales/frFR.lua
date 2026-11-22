@@ -219,7 +219,7 @@ L["Fade as Unusable"] = "Estomper si inutilisable"
 L["Fade the primary icon when you should wait before using the ability, similar to when an ability is lacking required resources."] = "Estompe l’icône principale quand tu dois attendre avant d’utiliser la technique, comme quand il manque les ressources nécessaires."
 L["%s Desaturate"] = "%s Désaturer"
 L["Desaturate the primary icon when you should wait before using the ability."] = "Désature l’icône principale quand tu dois attendre avant d’utiliser la technique."
-L["If enabled, small indicators for target-swapping, aura-cancellation, etc. may appear on your primary icon."] = "Si activé, de petits indicateurs (changement de cible, annulation d’aura, etc.) peuvent apparaître sur ton icône principale."
+L["Show a full-size icon when you should switch targets and a small marker when you should cancel an aura."] = "Affiche une icône pleine taille quand tu dois changer de cible et un petit repère quand tu dois annuler une aura."
 L["If enabled, these indicators will appear on queued icons as well as the primary icon, when appropriate."] = "Si activé, ces indicateurs apparaissent aussi sur les icônes en file, en plus de l’icône principale, le cas échéant."
 L["Appearance"] = "Apparence"
 L["%s Appearance"] = "Apparence (%s)"
@@ -229,7 +229,7 @@ L["Select the zoom percentage for indicator icon textures. (Roughly 30% will tri
 L["Keep Aspect Ratio"] = "Garder les proportions"
 L["When enabled, indicator icons will maintain their original aspect ratio when resized."] = "Si activé, les icônes d’indicateur gardent leurs proportions d’origine quand elles sont redimensionnées."
 L["Indicators"] = "Indicateurs"
-L["Indicators are small icons that can indicate target-swapping or (rarely) cancelling auras."] = "Les indicateurs sont de petites icônes qui peuvent signaler un changement de cible ou (rarement) l’annulation d’une aura."
+L["A gold arrow means cycle forward through enemies and a violet arrow means cycle backward. Both fill the icon. Size and position control the small aura-cancellation marker."] = "Une flèche dorée indique de passer à l’ennemi suivant et une flèche violette, à l’ennemi précédent. Toutes deux occupent toute l’icône. La taille et la position s’appliquent au petit repère qui indique quand annuler une aura."
 
 -- Hekili/Options/Options.lua
 L["Call Action List"] = "Appeler une liste d’actions"

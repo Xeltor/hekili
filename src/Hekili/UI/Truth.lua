@@ -354,6 +354,27 @@ local function refreshHealthCue( cue, event, unit )
     end
 end
 
+function Truth.DrawHealthCueCooldown( layer, choice, conf )
+    if choice.gcdStart then
+        if not layer.swipe then
+            layer.swipe = CreateFrame( "Cooldown", nil, layer, "CooldownFrameTemplate" )
+            layer.swipe:SetAllPoints( layer )
+            layer.swipe:SetDrawBling( false )
+            layer.swipe:SetDrawEdge( false )
+            layer.swipe:SetHideCountdownNumbers( true )
+            layer.swipe.noCooldownCount = true
+        end
+        layer.swipe:SetSwipeColor( 0, 0, 0, conf.cooldownSwipeAlpha )
+        if layer.gcdStart ~= choice.gcdStart or layer.gcdDuration ~= choice.gcdDuration then
+            layer.swipe:SetCooldown( choice.gcdStart, choice.gcdDuration )
+            layer.swipe:Show()
+        end
+    elseif layer.gcdStart then
+        layer.swipe:Hide()
+    end
+    layer.gcdStart, layer.gcdDuration = choice.gcdStart, choice.gcdDuration
+end
+
 function Truth.ClearHealthCue( d )
     local cue = d.healthCue
     if not cue or not cue.button then return end
@@ -368,8 +389,46 @@ function Truth.ClearHealthCue( d )
     cue.button, cue.watchesPet = nil, nil
 end
 
-function Truth.DrawHealthCue( d, out, conf )
-    local button, cues = d.Buttons[ 1 ], out.healthCues
+-- Between pulls the normal buttons may all be hidden. Under the health cues, draw the
+-- rotation's first action only if it is the requested personal buff and executable now.
+function Truth.DrawUpkeep( d, out, conf, upkeep, now )
+    local rec = upkeep and out.count > 0 and out.recs[1]
+    local layer = d.upkeepCue
+    if not rec or rec.actionName ~= upkeep.action or out.version == d.blankVersion or d.alpha == 0
+        or not rec.exact_time or rec.exact_time > now or not C_Spell.IsSpellUsable( rec.actionID )
+        or Facade.C_UnitAuras.GetPlayerAuraBySpellID( upkeep.ranks[1] ) then
+        if layer then layer:Hide() end
+        return
+    end
+    local timeline = d.style == ns.UI.Styles.timeline and d.styleFrames.timeline
+    local button = d.Buttons[ timeline and timeline.press or 1 ]
+    if not layer then
+        layer = CreateFrame( "Frame", nil, d )
+        layer.icon = layer:CreateTexture( nil, "ARTWORK" )
+        layer.icon:SetAllPoints( layer )
+        d.upkeepCue = layer
+    end
+    local changed = layer.button ~= button
+    if changed then
+        layer:ClearAllPoints()
+        layer:SetAllPoints( button )
+        layer:SetFrameLevel( button:GetFrameLevel() + 1 )
+        layer.button = button
+    end
+    layer.action = upkeep.action
+    if changed or layer.texture ~= rec.texture then
+        layer.texture = rec.texture
+        layer.icon:SetTexture( rec.texture )
+        if button.texCoords then layer.icon:SetTexCoord( unpack( button.texCoords ) )
+        else layer.icon:SetTexCoord( button.Texture:GetTexCoord() ) end
+    end
+    d.style.DrawHealthCueDetails( layer, button, layer, conf, changed )
+    layer:Show()
+end
+
+function Truth.DrawHealthCue( d, out, conf, allowed )
+    local timeline = d.style == ns.UI.Styles.timeline and d.styleFrames.timeline
+    local button, cues = d.Buttons[ timeline and timeline.press or 1 ], out.healthCues
     if not button or not cues or cues.n == 0 or out.version == d.blankVersion or d.alpha == 0 or Hekili.Pause then
         Truth.ClearHealthCue( d )
         return
@@ -407,7 +466,7 @@ function Truth.DrawHealthCue( d, out, conf )
         local unit = choice.unit or "player"
         -- Only an unconditional lower band covers every smaller health value. Layer the rest in priority order.
         local floor = unit == "target" and targetFloor or unit == "player" and playerFloor or 0
-        local curve = choice.texture and healthCurve( floor, choice.percent, unit )
+        local curve = choice.texture and ( not allowed or allowed[ choice.action ] ) and healthCurve( floor, choice.percent, unit )
         if curve then
             count = count + 1
             if unit == "target" then targetFloor = choice.percent
@@ -435,7 +494,8 @@ function Truth.DrawHealthCue( d, out, conf )
                 -- Leave room for this layer's cooldown below the next higher-priority icon.
                 layer:SetFrameLevel( cue:GetFrameLevel() + 2 * order )
                 layer.icon:SetTexture( choice.texture )
-                layer.icon:SetTexCoord( unpack( button.texCoords ) )
+                if button.texCoords then layer.icon:SetTexCoord( unpack( button.texCoords ) )
+                else layer.icon:SetTexCoord( button.Texture:GetTexCoord() ) end
                 layer:Show()
                 changed = true
             end

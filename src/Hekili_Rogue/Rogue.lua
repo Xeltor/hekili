@@ -921,6 +921,7 @@ end
 spec:RegisterAbilities(rogue({
     auto_attack = {
         id = 6603,
+        texture = 135274, -- INV_Sword_04: the same Attack artwork with every equipped weapon.
         cooldown = 0,
         gcd = "off",
         startsCombat = true,

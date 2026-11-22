@@ -353,7 +353,9 @@ describe("the Protection leveling priority", function()
             for _, list in pairs(H.Hekili.DB.profile.packs[PACK].lists) do
                 for _, entry in ipairs(list) do
                     assert.is_not_equal("disarm", entry.action)
-                    assert.is_not_equal("taunt", entry.action)
+                    if entry.action == "taunt" then
+                        assert.is_truthy(entry.criteria and entry.criteria:find("prot_last_resort_taunt", 1, true))
+                    end
                 end
             end
         end

@@ -88,7 +88,7 @@ function ns.UI.Resolve( d, conf, out, now )
         r.targets, r.detected, r.single, r.inMelee = shown, detected, tMax == 1, inMelee
         r.cdAsked = false
 
-        if def and exact_time then
+        if def and exact_time and not rec.targetSwap then
             local name = def.rangeSpell or def.itemSpellName or def.actualName or def.name
             r.inRange = not ( hostile and name and LSR.IsSpellInRange( name, "target" ) == 0 )
 
@@ -124,6 +124,7 @@ function ns.UI.Resolve( d, conf, out, now )
             r.glow = rec.actionID > 0 and IsSpellOverlayed( rec.actionID )
         else
             r.inRange, r.usable, r.delay, r.earliest, r.desaturate, r.glow = true, true, 0, 0, false, false
+            if rec.targetSwap then r.inMelee = true end
         end
     end
 end

@@ -12,6 +12,8 @@ local FILE = "src/Hekili_Paladin/Paladin.lua"
 -- cooldown, gcd }, from the DB2 (`wowdb spell <name>`): the cooldown is the larger of RecoveryTime and
 -- CategoryRecoveryTime; gcd "spell" for 1.5 s, "totem" for 1.0 s, "off" for 0.
 local KIT = {
+    auto_attack = { { 6603 }, 0, 0, "off" },
+    devotion_aura = { { 465, 10290, 643, 10291, 1032, 10292, 10293 }, 0, 0, "spell" },
     seal_of_command = { { 20375, 20915, 20918, 20919, 20920 }, 210, 0, "spell" },
     seal_of_righteousness = {
         { 20154, 21084, 20287, 20288, 20289, 20290, 20291, 20292, 20293 },
@@ -107,9 +109,9 @@ describe("Forever Paladin", function()
 
     it("registers the kit with the DB2's ranks, top-rank costs, cooldowns and GCDs", function()
         local n = 0
-        for key, a in pairs(w.abilities) do
+        for key, want in pairs(KIT) do
             n = n + 1
-            local want = assert(KIT[key], "unexpected ability " .. key)
+            local a = assert(w.abilities[key], "missing ability " .. key)
             local ids = want[1]
             for _, id in ipairs(ids) do -- the top rank known: its cost
                 w.game.known[id] = false
@@ -124,7 +126,15 @@ describe("Forever Paladin", function()
             )
             assert.are.equal("function", type(a.known), key)
         end
-        assert.are.equal(37, n)
+        assert.are.equal(39, n)
+        for key in pairs(w.abilities) do
+            assert.is_true(KIT[key] ~= nil or key == "recover_threat", key)
+        end
+        local recovery = w.abilities.recover_threat
+        assert.is_true(recovery.targetSwap)
+        assert.is_true(recovery.unlisted)
+        assert.is_false(recovery.startsCombat)
+        assert.are.equal("function", type(recovery.targetSwapSafe))
         assert.are.equal("PALADIN", w.class)
         assert.is_nil(w.options)
     end)
@@ -333,11 +343,17 @@ describe("Forever Paladin", function()
         assert.are.equal(2.5, ld.run(w.abilities.holy_light.cast, ld.env(w)))
         assert.are.equal(1.5, ld.run(w.abilities.flash_of_light.cast, ld.env(w)))
         assert.are.equal(2, ld.run(w.abilities.holy_wrath.cast, ld.env(w)))
-        -- Lay on Hands drains the mana left (wowsims lay_on_hands.go)
+        -- An undirected Lay on Hands empties mana without starting the five-second rule.
         for _, field in ipairs({ "now", "handler" }) do
             local e = ld.env(w)
+            e.cast_id = 10310
             ld.run(w.abilities.lay_on_hands[field], e)
-            assert.are.same({ { 1000, "mana" } }, e.spent, field)
+            assert.are.equal(0, e.mana.current, field)
+            assert.are.same({}, e.spent, field)
+            assert.are.same({}, e.gained, field)
+            if field == "now" then
+                assert.are.same({ { "mana", 0, 550 } }, e.reset)
+            end
         end
         -- Divine Shield, Divine Protection and Blessing of Protection bring Forbearance (60 s less Sacred Duty's 5 s a rank)
         -- and refuse under it
@@ -591,7 +607,7 @@ describe("Forever Paladin", function()
         function()
             local tb = w.abilities.templars_bulwark
             assert.are.same(
-                { 1311015, 0, "off", "mana", "cooldowns" },
+                { 1311015, 0, "off", "mana", "defensives" },
                 { tb.id, tb.cast, tb.gcd, tb.spendType, tb.toggle }
             )
             assert.are.same({ 1311015, 8 }, { w.auras.templars_bulwark.id, w.auras.templars_bulwark.duration })
@@ -853,7 +869,9 @@ describe("Forever Paladin priorities", function()
                     local isList = e.action == "run_action_list" or e.action == "call_action_list" or pe.LINE[e.action]
                     -- stoneform: the Dwarf racial (Hekili_Shared/Races), rule 13's line for a tank
                     -- use_items is Hekili's `all` (Hekili_Shared/Shared/Items.lua), as in druid_spec
-                    local shared = e.action == "use_items" or e.action == "stoneform"
+                    local shared = e.action == "use_items"
+                        or merged.abilities[e.action] ~= nil
+                        or merged.racial[e.action] ~= nil
                     assert.is_true(cls.abilities[e.action] ~= nil or isList or shared, where)
                     for kind, key in (e.criteria or ""):gmatch("(%a+)%.([%w_]+)") do
                         if kinds[kind] then
@@ -910,12 +928,16 @@ describe("Forever Paladin priorities", function()
     end)
 
     it("Protection (wowsims.com): Holy Shock reads the Consecrated Ground talent (talentIsKnown 1310905)", function()
-        line(
-            "Protection (wowsims.com)",
-            "default",
-            "holy_shock",
-            "(!talent.consecrated_ground.enabled||debuff.consecrated_ground.up)"
-        )
+        for _, entry in ipairs(packs["Protection (wowsims.com)"].lists.default) do
+            local condition = entry.criteria or ""
+            if entry.action == "holy_shock" and condition:find("prot_pal_sustained", 1, true) then
+                assert.is_not_nil(
+                    condition:find("(!talent.consecrated_ground.enabled||debuff.consecrated_ground.up)", 1, true)
+                )
+                return
+            end
+        end
+        error("missing sustained Holy Shock")
     end)
 end)
 

@@ -37,7 +37,7 @@ The **glossary** defines the terms used across this wiki: the player terms of th
 | Selector | A rule in a class addon that picks a specialization and a priority from the talents ([Choosing a priority](Choosing-A-Priority)). |
 | Snapshot | A record of how one set of recommendations was chosen, line by line ([Reading a snapshot](Reading-A-Snapshot)). |
 | Specialization | One talent tree of a class, with its own priorities and settings. Feral Combat has two: Feral and Guardian. |
-| Target swap | A suggestion to use an ability on another enemy, shown as a small indicator on the icon ([How targets are counted](How-Targets-Are-Counted)). |
+| Target swap | A full-size arrow directing you to cycle enemies. Gold points forward and violet points backward. [How targets are counted](How-Targets-Are-Counted). |
 | Toggle | A switch that lets the priority use or skip a group of abilities, such as major cooldowns ([Toggles](Toggles)). |
 | Window | A named span of time that a class addon defines and a priority can open and test, for a span the game shows no aura for ([APL windows](APL-Windows)). |
 | wowsims.com | The rotation simulator whose rotations the built-in priorities are translated from, and against which they are measured ([Accuracy](Accuracy)). |

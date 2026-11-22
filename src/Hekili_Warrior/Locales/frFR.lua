@@ -18,6 +18,7 @@ end
 L["Arms"] = "Armes"
 L["Fury"] = "Fureur"
 L["Protection"] = "Protection"
+-- L["Recover Threat"] = ""
 L["Recklessness (wowsims.com)"] = "Témérité (wowsims.com)"
 L["The wowsims.com priority's Recklessness ON/OFF switch (its default in wowsims's own APL)."] = "L’interrupteur Témérité ON/OFF de la priorité wowsims.com (sa valeur par défaut dans l’APL de wowsims)."
 L["Stance Dance (wowsims.com)"] = "Danse des postures (wowsims.com)"

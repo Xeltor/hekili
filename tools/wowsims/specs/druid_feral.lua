@@ -45,7 +45,7 @@
 -- less, Ferocious Bite pooling to 75 energy (60 at 5 combo points, 45 under Clearcasting). The 0.9 owner deviation
 -- L1169 (omit the 2/3-target group calls) and CN24 (other-target reads) have nothing left to apply to: gone. Claw: two
 -- adjacent lines (`condition.claw`, re-derived on the new lines).
-return {
+return require("tools.wowsims.feral_pve")({
     class = "DRUID",
     pack = "Feral (wowsims.com)",
     spec = "feral",
@@ -97,4 +97,4 @@ return {
         rake = 2,
     },
     leveling = {},
-}
+})

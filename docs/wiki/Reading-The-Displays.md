@@ -37,7 +37,8 @@ Each part of an icon has a meaning:
 - **Delay indicator**: when the ability should be pressed a little later, a coloured icon or a countdown can show the wait (**Indicator**, on the **Delays** tab).
 - **Red tint**: the ability, or melee range, is out of reach (the **Range** tab).
 - **Glow**: the game itself is lighting the ability, for example after a proc (**Enable Overlay Glow**).
-- **Indicators**, at the right edge: a small mark, for example when the ability should be used on a different target.
+- **Target swap** fills the recommendation icon. A gold arrow pointing right means cycle forward. A violet arrow pointing left means cycle backward. It can guide you back from an idle enemy, then past the starting enemy if the same ability still needs a target. If the damage display goes blank during the search, select an enemy already fighting your group. [How targets are counted](How-Targets-Are-Counted#target-swaps).
+- **Aura cancellation** appears as a small mark at the edge of the ability icon.
 - **Caption**: a short note that some priority lines attach to an ability. Captions are off by default.
 
 ## The Timeline style
@@ -52,6 +53,12 @@ When Hekili Forever cannot be sure that a resource will be there in time, the Ti
 
 ![The Primary display in the Timeline style, three elements numbered: 1 the Next box, 2 the Now circle with its countdown, 3 the Lane](images/Reading-The-Displays-2.png)
 <!-- Hekili Forever 0.11.0; Druid Feral; in game, in combat on an open-world enemy -->
+
+## Protection Paladin buffs and recovery
+
+Protection’s **Primary** display can show a missing Righteous Fury between pulls, even at full health with combat-only visibility. Its icon disappears once the buff is active. This works with **Defensives** off or on a separate display.
+
+With **Defensives** enabled, Protection can show a self-heal between pulls. If your display normally appears only with an enemy in combat, the healing icon can appear by itself when you are injured and have a heal ready. The other abilities stay hidden. The same display can show an emergency self-defense in combat if you lose your selected enemy. A separate **Defensives** display receives those cues when enabled.
 
 ## Modern overlays
 

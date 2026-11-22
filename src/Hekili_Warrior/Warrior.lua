@@ -214,6 +214,7 @@ local unblockedAvg, UNBLOCKED_WEIGHT = 0, 0.2 -- an EMA of the unblocked post-ar
 local lastIncomingSwing = 0
 local warriorPlates, pullFirstSeen = {}, {}
 local pull = { updated = -1 }
+local recovery
 -- Each fight learns its own mobs' hits: a full block before the fight's first unblocked hit estimates 0.
 spec:RegisterEvent("PLAYER_REGEN_ENABLED", function()
     unblockedAvg = 0
@@ -980,8 +981,23 @@ local function strikeAvoid()
 end
 
 spec:RegisterAbilities({
+    recover_threat = {
+        name = L["Recover Threat"],
+        texture = Hekili.TargetSwapTexture,
+        unlisted = true,
+        targetSwap = true,
+        targetSwapSafe = function()
+            return recovery.safeLanding()
+        end,
+        gcd = "off",
+        startsCombat = false,
+        usable = function()
+            return state.prot_recover_threat
+        end,
+    },
     auto_attack = {
         id = 6603,
+        texture = 135274, -- INV_Sword_04: the same Attack artwork with every equipped weapon.
         cast = 0,
         cooldown = 0,
         gcd = "off",
@@ -2503,11 +2519,102 @@ local function warriorVictim(unit)
     if not state.solo and plain(Facade.UnitExists(unit)) == true then
         for _, member in ipairs(partyUnits) do
             if plain(Facade.UnitIsUnit(unit, member)) == true then
-                return false, true
+                return false, true, member
             end
         end
     end
     return false, false
+end
+
+do
+    local builders = {}
+    for _, ranks in ipairs({ SHIELD_SLAM, REVENGE, SUNDER_ARMOR }) do
+        for _, id in ipairs(ranks) do
+            builders[id] = true
+        end
+    end
+    recovery = Hekili:NewTankRecovery(spec, {
+        specKey = "protection",
+        plates = warriorPlates,
+        meleeSpell = function()
+            return SUNDER_ARMOR[knownRank(SUNDER_ARMOR)]
+                or REVENGE[knownRank(REVENGE)]
+                or SHIELD_SLAM[knownRank(SHIELD_SLAM)]
+        end,
+        safePack = function()
+            return Facade.DebuffCount(20511, GetTime()) == 0
+        end,
+        usableBuilder = function(guid, time)
+            return not guid or not Facade.DebuffBlocked("sunder_armor", time, guid)
+        end,
+        classifyCast = function(id)
+            if builders[id] then
+                return "builder"
+            end
+            if id == 355 then
+                return "rescue"
+            end
+        end,
+    })
+    spec:RegisterStateExpr("prot_loose_victim", function()
+        local current = recovery.evidence()
+        return current and current.loose or false
+    end)
+
+    spec:RegisterStateExpr("prot_recovery_pack", function()
+        local current = recovery.evidence()
+        return current and current.other or false
+    end)
+
+    local function canUseOnNextGCD(spell, rage)
+        local action = state.action[spell]
+        return action.known
+            and not action.disabled
+            and rage >= action.cost
+            and state:IsUsable(spell)
+            and state.cooldown[spell].remains <= state.gcd.remains
+    end
+
+    local function canBuildThreat(current, rage)
+        return (
+            current.builder
+            and state.weapon.size > 0
+            and state.action.sunder_armor.known
+            and not state.action.sunder_armor.disabled
+            and rage >= state.action.sunder_armor.cost
+        )
+            or canUseOnNextGCD("revenge", rage)
+            or canUseOnNextGCD("shield_slam", rage)
+    end
+
+    spec:RegisterStateExpr("prot_recovery_block", function()
+        local current = recovery.evidence()
+        if not current or not current.other or not state.prot_melee_target then
+            return false
+        end
+        -- Block is off the GCD. Keep enough Rage for the best threat action available after it.
+        local rage = state.prot_current_rage
+            - action.shield_block.cost
+            - (debuff.casting.up and state.prot_bash_reserve or 0)
+        if canUseOnNextGCD("thunder_clap", state.prot_current_rage) then
+            return canUseOnNextGCD("thunder_clap", rage)
+        end
+        return canBuildThreat(current, rage)
+    end)
+
+    spec:RegisterStateExpr("prot_recover_threat", function()
+        local current = recovery.evidence()
+        if not current or not current.other or state.weapon.size <= 0 then
+            return false
+        end
+        local rage = state.prot_current_rage - (debuff.casting.up and state.prot_bash_reserve or 0)
+        -- Clap is centered on us; a positive melee check on the loose mob puts it within the radius.
+        -- Re-read the victim and threat after its real cast, including packs larger than its four-target cap.
+        if canUseOnNextGCD("thunder_clap", rage) then
+            return false
+        end
+        return canBuildThreat(current, rage)
+    end)
 end
 
 local function observePullEnemy(guid, time)
@@ -2538,7 +2645,10 @@ local function warriorPull()
     pull.currentMelee, pull.currentRendEligible = false, false
     pull.rendExpires, pull.sunderExpires = 0, 0
     pull.packLoose, pull.nearbyOnMe, pull.nearbyMeleeOnMe = false, false, false
-    local onMe, onParty = warriorVictim("targettarget")
+    local onMe, onParty, member = warriorVictim("targettarget")
+    local role = tank and not state.solo and Facade.GroupRole("player")
+    pull.threatRole = role ~= "HEALER" and role ~= "DAMAGER"
+    pull.otherTank = member and Facade.GroupRole(member) == "TANK" or false
     local status = not state.solo and plain(Facade.UnitThreatSituation("player", "target")) or nil
     pull.status, pull.onMe = status, onMe
     pull.targetEngaged = plain(Facade.UnitAffectingCombat("target")) == true and (onMe or onParty or status ~= nil)
@@ -2586,7 +2696,7 @@ local function warriorPull()
             and plain(Facade.UnitIsDead(plate)) == false
             and plain(Facade.UnitAffectingCombat(plate)) == true
         then
-            local plateOnMe, plateOnParty = warriorVictim(victim)
+            local plateOnMe, plateOnParty, plateMember = warriorVictim(victim)
             if plateOnMe or plateOnParty then
                 if tank then
                     observePullEnemy(plateGUID, time)
@@ -2601,7 +2711,7 @@ local function warriorPull()
                         pull.nearbyOnMe = pull.nearbyOnMe or plateOnMe
                         local _, creatureType = Facade.UnitCreatureType(plate)
                         pull.nearbyMeleeOnMe = pull.nearbyMeleeOnMe or (plateOnMe and plain(creatureType) ~= 4)
-                        if plateOnParty and not pull.packLoose then
+                        if plateOnParty and not pull.packLoose and Facade.GroupRole(plateMember) ~= "TANK" then
                             local plateThreat = plain(Facade.UnitThreatSituation("player", plate))
                             pull.packLoose = plateThreat == nil or plateThreat < 2
                         end
@@ -2628,10 +2738,13 @@ spec:RegisterStateExpr("prot_threat_spend", function()
     if combat == 0 or solo or not state.prot_contextual then
         return false
     end
+    local current = warriorPull()
+    if not current.threatRole or current.otherTank then
+        return false
+    end
     if debuff.taunt.up then
         return true
     end
-    local current = warriorPull()
     local engagedAt = pullFirstSeen[current.target]
     return current.targetEngaged
         and (
@@ -2647,7 +2760,28 @@ spec:RegisterStateExpr("prot_pack_threat_spend", function()
         and state.prot_contextual
         and state.max_targets ~= 1
         and state.toggle.mode ~= "single"
+        and warriorPull().threatRole
         and warriorPull().packLoose
+end)
+
+-- Execute spends the entire remaining pool. Use a legal current stance on a controlled, short
+-- single-target fight without consuming Rage reserved for an interrupt or mitigation.
+spec:RegisterStateExpr("prot_controlled_finisher", function()
+    if
+        combat == 0
+        or not state.prot_attack_target
+        or not state.prot_short_pull
+        or state.true_active_enemies > 1
+        or state.prot_dump_reserve > 0
+        or state.prot_threat_spend
+        or state.prot_pack_threat_spend
+    then
+        return false
+    end
+    local current = warriorPull()
+    return current.targetEngaged
+        and current.nearby <= 1
+        and (solo or current.otherTank or current.status == 3 and current.onMe)
 end)
 
 spec:RegisterStateExpr("prot_nearby_enemies", function()
@@ -2733,6 +2867,13 @@ spec:RegisterStateExpr("prot_start_attack", function()
     return state.spec.protection and state.warrior_start_attack
 end)
 
+spec:RegisterHook("CanAcceptCycleTarget", function(key)
+    if state.spec.protection and (key == "rend" or key == "sunder_armor") then
+        local current = warriorPull()
+        return current.currentMelee and (key ~= "rend" or current.currentRendEligible)
+    end
+end)
+
 local function protectionSpreadTargets(rend)
     if state.combat == 0 or not state.prot_contextual or state.max_targets == 1 or state.toggle.mode == "single" then
         return 0
@@ -2740,6 +2881,9 @@ local function protectionSpreadTargets(rend)
     local current = warriorPull()
     if not current.targetEngaged then
         return 0
+    end
+    if state.cycleInfo.selected then
+        return rend and current.rendSpreadTargets or current.spreadTargets
     end
     -- The global aura count includes the current target. If it is missing its aura, exclude it from
     -- the comparison: it cannot prove that ANOTHER eligible unit needs a cast. Forecast-only current
@@ -2792,6 +2936,13 @@ spec:RegisterStateExpr("prot_melee_target", function()
         and target.creature_type ~= "elemental"
         and debuff.casting.down
         and (solo or warriorPull().onMe)
+end)
+
+spec:RegisterStateExpr("prot_last_resort_taunt", function()
+    return recovery.lastResort()
+        and buff.defensive_stance.up
+        and debuff.taunt.down
+        and not Facade.DebuffBlocked("taunt", GetTime(), Facade.UnitGUID("target"))
 end)
 
 -- A tank still gains mitigation, threat and access to Revenge without a shield. In a dungeon,
@@ -3053,8 +3204,8 @@ spec:RegisterSetting("maintain_thunder_clap", false, {
 -- /hekili priority <name>.
 spec:RegisterPack(
     "Protection (wowsims.com)",
-    20261120002,
-    [[Hekili:T312YTTrs7NfDXYLSIcf1b6y7YYvzN4SjBLdUS8FYDeAi5qsScealoifTLk9S)3DpdagmadWasqjVBYnXeN65R7Ppn9mD0StN95zxTKLWN9lNn5SxC6PNnzYKZMDvY9H8zxfYwCdBn8dF2w4)(XOGe(Ie3a)hVE4Db3f7UnE8IGTJW38EVa2sKAZtD9s(r)zZRLWXH8fZU63F3N(0p(RF61H5uC2vBCxUKl(mE8IggTx)41jB4pET8ENSkiIFlp6XRxYxXs9sE8639XF6XRHB)41LisQ7j4WhFYDSOi3GOtkg(tyHEXNijWy4IX)R4a)rhddveZp2dyKLWVdWH2n(XRzlxg4)3HFCd)(4XpE93XsyVUgin8N)Xpdeztssy8Rp5K1UjBsNJCXjAV6iGMaYzZNSAYe(fRw8YZbY(TbbEldUZpgh71R9aUget8yyO(epH55YqWddW3XzjBE86F3nEdC1v3X5HU(RHFLe5EdhbS)sPylITWL5b3A479ccG7(9Pr3dF075rX8OBGpdU4dPr8By4p8s95iJ(tUR3KmcXKhlo2DbkBD3YIU)XRxWaPB8MG7E8AVG7(6nCMhcgqAY9JDVfhEGfH35Un4)LqXcpxUFIKDE867dsbPL4lHX4hGFq4pmazq4fsJ5YV87uiRqOaFWVMMSmaNWdt9qEJGe9nF7gw0A4FXh(UKeqJgNUs9xZrDcgDNm5t27ggXdzrmHAte)FN6gXXxb4dF(wGJzErC2s4hRqPcHuGdedIGvGVp5(XzdjiEsGBelEJiEC6we(B5ECGWX3buaUCohvgGNhKc0e(X80vRIZeBS0KaMKAOkyWQva9)nM)6uweaEpEsSegz8XDG6gqlCeyHcfcah(l4Ok7VN9qgo55Y9wEmcTK0iFHMEUGgvJWVkhjWCBMaukqqaTiWFLB02mdL54egZ)g8653lrwHAiW0jl2qYAqT72cLGpbECa49paPqi(TYz0vSBrz3N3K6VeTSa1WqqiaqWNZIWbiuzM8kIHG)1JT9y0yb0)Y0cUssH3fTfVK8t4UfWnynrkzWCBIqNkg0orlg3LXhxzSbLe4fJRbe4hlKtXGqhTA9dI2Y8Kt)mCsMeChlvsHp27EeMi2t9tC9uWmkB9G3WhLge355U1nrrpjJJqXEaEJyPEoIcyAjjkWZlxwMnO)M7IKa0(9tPXBQr7l32qmR7IS6kGac7uu3ptHoWhrpnYR9cMJpCH0ZfkM2YCrty3mICJlseqPhEHXiJc(d3sS(Nr92e0bglmZkooD9AEmQehIgDc3Asggj5AurjBExibzlIcIJrT0i2Cu8ln0qzUl5n0A7xaC34XrIDL0k1NZxgtE6e6QKvdBPyGY89fSs4phM3qO)nt)BhlCGWGWnOfLQ1mHCY7INBIujDoXai)jXoegISlY0SbN3zEcKwqlZ0L9b5jXt0NsUtJcqp2IObzo7aSHibcjssogQR5XxbWnGIDXwLG)tAyg5ewgaJaAFURLUhjA56dVAuAysSkczOAf98pMctWKwbrzHiErAuefdiroRJC7hV9duCp)fPqugCaEpjPfQcjbHKz1csQgiSX8d8)AH4sOOsZKEcjRyU5EfeoUCsbXmY1JG7NZtGiN(c6hNPxtc1F5JFlauiRi82ZZK347rIMCY7sQbGmfm0u9IjKDiCizqEutHWpzJ4zeD1XbqM)p0E9ZSuuArWbICtbejjxMYp6Tv4Rp)B(o3yw0w45RrBWeftam2GWvo9kc1374SWaFuThD5jj7MaGjXNcPc56tS7sy(KOsryzizMuinPGimzH4uWdKl5WkeZ0YLSL(GVyu(z4r4JXqmGlyiu))ryvlIh5Uklybf1fudw7Nfu5giXg0lcQwIrxZylMcmd9y3N5CauDNtQSeq11fqxHF4p4lsrRoxH2KhFn6)seN8ynVKhtVsUNzi)Xf1eWPgloAEgfmHetrX4GSMJcwbqE2vmsBmECiQEGi(Y8KNCKibyahiKVZ6flV80JDxDjM8Qd6CN)hjPmVb01cxkoc9IbsAnr8SfuwboKJKbysnHGM5yrO)bqYKGT44BLPtmMtZvll)LO4BWrywjJ1X340WbdpsWhJHbnXl)j34dXbEq8zLFsA4ObrOOWl4nxkUNdETZn8WKh)NvKkF1LNuIa9TqXeZQJ6bhzsC1rUrmw9mBu)qHbCKKO64vMyuUQY31WSaUYbK3ma9YqDOGQz(eEO8OLtlNy2k(OMN2rpe4OuEEbVlPa2HbFK8jZHOuospVxo5bH0uezIM9E7LAk10GTaC28vv((rTGEdkTguYYnNQyRPArvJH4ObL556bvKYciZM3A5tA3Pudoh0Mh0vX1Civij)lxHfopAxxA)efpfoap4U96bNDajekdK5n(rYsg5eEBOtE(dpyeGVDYaX1JX8SC9NIsm66aXQkNoyjNeTYuirHQ2DU9SmmMpGoIfnPIZqk16NriwAInpVD0T(DwfDypqJS8pf5ZL)oLXXyCLOGQmSiHCY6g7qxNBPQmHNzNwZtiRIhQkgoDubLetjAerEtZFVQCmsUQthrPHAW)m8YEavitZLAYBiZEmxyN5CqgC5ftkCqx8jLCwjz07yEELCvPEFWrvnMj4J0gVZNwmELjqXaQGd1XRe8kpCjb(yDk2QnytjMRB0TZ89GHc)9U0Y7q)DoHbUXabsdFOYJGFdl(NxvGbQ)8imhJy(ZbxOcgr5kiHAJ6oNpr)Ra1shrXzTqPt3VEMjVkr7Eu(Chhnegwl2UWBO43K9f8MyfVh1XGhVTLGh3kw0OteUMXvbGVOksMxvRKzF8pEKiflrLgCOvCk43qIAk3EuRy95dAdOjtbOCdsJhlRF4BUeMdgVL9hLsgQL1Hyj8fVRss)V5YZMw3QtkRWYs2abKf5hud51Z49OkYGoVgKIX00kqkfngS4Dex645gNCmUnExUyPt2wavt6oyvfRkmhktR7TGb9ddf2BrIQG4KgJU7k5wx(iPxOSsbNF78z0thpD0Or6cQbcbfaaP1zxLsQ8s7RuRHWTf3xBUNlkAKEwxYj(2SgKFTt4gi(GnMIDFmkZDKyV)iOu(gJ7TYEtSnuLYapPyHY008ei(SDBqmPoMRkpDsjLGeXU74SWJf2vhiLGYl1HYlfFRylICKvG9TNwVA9Wo4Qulns0iBud2fQCOn(p0MN3zbsTbeQBUzGbhlM9Gab)RrGvNGPQtED)fiFkelAydVxtYvB((6CbzqbWk2Pt4P5P5A8p0Nt1hiMSfHBj9yHApd3V3UYDvX5Ze)QYe2W0pbP1vxzPYkqBxgMoNDyPsXwKnXKUMOGnL0TCkFfBxvbRomMNGtHXJ3k3ylNQVOE9oZm(paIizvrko(nLNhbXK2ejENs5KKPBwLneUsfGrpEMaq0EolX)oKFBLb0M83oKHULIIsXolINOYTY8wbydRjepPf)3saEdj9RlflezvuWQkluR8GirCfnhR1hSjt(sR4HotdMZICNvmQXpFT2a1LLXlRzbM5COaXk82Y0THz82oKN8bMdbVSyUBrBJDcavuN7cI8woGUwrVVKZKrDwMuIvTq0auyzFZ7DXH7rc()gxeDqK96DMIpsAeu)ct0DF0zVN0iyHvcjVcsaXSuS07zgi(wCCCeNAljbqleeh3YDwgKqa(nME1guq0yut6f7tEFTXG1phxkjTyKWWkugQpXw3u4zt780DxZiSK44Wo9FuCGxGGcnn)RIO3uZB30A2QN5)cqvOswag1naAp04dFZ0hQ7z5z7E(bxF5lYGP)5oS5ogGmw2paYViUAUEsJs9AtvxbTTxFtBu3Pu51a2zvkwChbLnPiBv1r2ze0Lcxutb425XTJvfQX6hu7(qtBvcytefN04oI07LgrzGTHZa3FjmVmxcpPiT0qBdwBXC40NCZH(TeiMRZqECUxSVSyhQPqJI(HhvUuaRsJUx5iXusswG(Q7UvhHFNNH0ReNnvmR5nUm7at15moSP(AvxzIQSMY0N2AXHq8QnmAvcC(sampOFNkNecYvN2EqQ(iPC4TY9HCVNQAA9xnwq6gZcC4EXw1M9PIcW(Z12Kw5ODiLSHL91bzqHdlTZDNnXeQvZaQruBtkuJ6u6WdR4BohVxS)4TXeE1Cay(qrir0BEv3m8fPIQDqTlgZXfhPGlPxYb9nAZH)RosGCqrROU7eHlAH19GayRVg74HTiMDKz2v3cihOKwtpJh(IyS3OlOpC1VqnFT8GZo79ZUszmWhk7kKzxvitbke5MWJCzuZJObGzjW4AlnZfXTtZZTKMcjE707cBPNYeqRunb7BCQ9T7IOv)qJvzySznHFzCQY7(XkVt6lQKT)KsM4EDUyhoW5DrZvGGEJT6IsUYPnuD8ltC1Zzis8PAepJykNuzvIv)jd)bJ8Kff5WQJgUa86NEDKbEHbgqCkP)sa7ik)glNd1oU5n7RAFW5b(aV3WjEVlh596pZ71sbuk)sd6cANkVks188uqI8knIu6W2cwJtu)8oEi4R)CuBwDOGWiYoDsZq78PvSFXHOkET(q0x75eNGIEyrnOmDIcuYoP9QaPJJz3fQnEe7B8m2t8NE0SM4p1ZH)tkpsiLImPRaPRzOaxLtQVkhIKspstJQ(6X1YCgzwBU8P9Ngr9Wp9r2vfh1fZP)OFA(frbQ548tOupgZofbUUt6prD9ydAs9xPm3Pwk1zxrlzKaWoKTHfrnQBNRnT11eNO7)95hwT2daTkBr(spKqJlVctBCxzDX7QSQDtTpaLWTE4GcJLSZ2Fl5pOVkD7BSGgRsABDwabE9ai5zaP1QbI186i()BykR6fPHTl5q9W)uYbTsDvEOZDJWHQDeAFNxAUFeirJ(6vSnvOsnQarj9GczusUhJMYWwQI1MXCPDQKgp9qc7d5TX6(mDV79Zak1j0glDF9AAOyvx3taGJIz)WDNGg1(ZTDMozuoxEwtr)vQtkbtD3QzVP6gvSREslXv7xFuu75SSBh0Y9CxzOcqyYBVbvNDwy9)g9yr7or7PMSW69YTliYGkGEmZdZS9bJnBra3IVZZ1J2NBaOSTr7QmPkZ9SjLSzxWi5HEi(DJZBlEIfrqp3ukcQ7A7UIVUNTFl7qT9zBzZMot8VPIOw9aduk7tRoQd1CwhoyIVNT(9qGilA4J(50zqtAMkC8tr2h9ERG8fsok2wMBtlitxgxiq75gfP9GXnUglIzFAQ2rTgm1LE0U3Ci2K9UGaeFRN2(tgF3xN919ULrSrGvz5oxykbE8W(COKIDY9Fp19j22(j745FIKLpnzctFBu1gk5G37j6khQ9yHmPRloKPd3MGzV6zL6M3n20k9qIYx8KKO8xgDQIj1G6uGmL1(ZGcu)1Pl7wRU0hAzMRBzFk4OV1M0b6)a)xyUqPhyoSVc8FWdXBD(VAn0IQSu6RyhAGMM0ITTdAi2W05OW0sJ0GSLTwZEUGdbuBjz0Dhc7xXQMUlvRD3bRLfqCAlPnvCoySOQptnLaIst0uzeSrlUhQHMf9XdXcM2LSsDxZZftyvl(qSHPi5wAVAzV)0h2RtFIlvw)1wq9tLNecHUw6PdAdd1ltRM2xttva2Mc12Yzvi7CT29u6SPUUc2Y8bkS8s2TQlJ6uBgzrd5yDFgTJl0wicmTjTMwLqZzN3ulizbl3x9G0EMVpjzEHEiEfzqzhS7udh1aeTj)1r72EY)cZzi0hDLudmvlTLKnCtXsvEHTNmOApXws(Y2EBQLMBAg1rj5)Xpy2F1tj)vpL8NREkPtgF7Tbhz)3X0roQA(iw(hbMNI0qSTQcgTcmO122FwyS)VlmiknNRu(FDyAybNjvB8IDXRydEN0N40TH0)ZgZmzVacMaBWuC(b(nUEUpE9WVx(3zv6XZ()d]]
+    20261122003,
+    [[Hekili:T3vBZTTnY)pl(f)1FPPUYYpOCjzIZmjn9UR302ltCU23jAijijEMIKhbPD9nE0N9B3fGpbsqckr5KoTVjrIKyXU)W(ewI1A25Z(8SBwYI5Z(5lMCXlo)8lUyYKlNDt8JH8z3eYwChBn8bF2w4F)yuqmFrSBG)UBh(qWdc3TIXlc2ocFYh9cylrQnpX1l(h8NnVwclc5lMDZV(Up9PF4F(PxhMrXz3SXD5sUCyCXIgMTxV724n8D3QU2zRcI43ZJ2D7s(kwIx8UBF3h)XD3cxE3TLisI7z40lo7bwuKBq0z5t)zSqpXzkcmg(Y4)TiWF0PWufX8fEGGSe(Cao1UID3YwUmW))h(WD8hfJ3D7hyXSxxdln8N(HpdeztCCO41ND2A34njZrP4mThDeqtGZzZNSAYe(vRw8YlbY(DbbEldEWxGZ961EGudWexat1N4XmpxgY8We8bolEZUB)vxXg4B38aNh66Vg(uCK7DCKH9xQGTi2cxMhCPHV3liaU6Fnj6ryqVNhj4r3bdd(Y3NeXVJHFWlXNJc6p6UEt8iKN8ycH7ceBD3YIEC3Tlya6k2e8WUB9cE4B3WzEiZaOj3x4Epo9GicpZdBW)L4IfEUC)yL4S72hdsa0sosyo(7Whi(pmafq4bseC1i)qbYkbfya)ZK4Lb4cEyIhkBelrJ572WIwd)pEZ3fhdA04YvI)AoQtWORKIpPpByepKfXKQnr8)tIBehFeqo85BbjM5fXzlHpScrfItbjqojsrbgF8JJtNsaEIHliKprexKSfz)TCpoqyXdafGVoNJkdW9dsaAcFyEYQvIuyJLehWuudvbdwTcO)VW8xNWIaM3JhluSrQC8aOUb0cNbwOuHa4d)fCuL9xtVjdx8C5ElpfzT4KiFPMEgqJQr4OY4eyTnfavacYqlc8x5gTn1qzoUGX8Vd)(8hvCwUAii0Xl2qynO2DFUsWNapoa793auiehRAfDf7Ee7(8Me)LOLfOggcGaWc(CweobHfwjVHei4)9yBpfnwa9VuTGBuu4DrBXVs(jC3c8nynrkzWABSuNsaANOfJ7sXPvMBqjbEqrnmboyjojaqhTA9dI2Y8ul)mCrMaUtvkPWG9EeztK3t8JD9kWZi26bpHpIgK055U1nUGEsQeHWEaEbHsph5cyzjokWZldltN0FXDrCaA)(PeXMA0(YSnKR6UOOUciG0of19tvOd8rUNM51EbZXBUq55cHPTmx0e2nLi35Iebu6HhihQY5ZtjVjrXPW33gJQZXs2h9j9B8fj4sfzLVY13f5)cMNRIc2co0abWtTMRCUHGuzDz)aPgNeM958Lior6eag7Uw5eG0r8J5rrjHX467788q)DFwXz3agyPUDejRxZfi3hIEjK(HvRq0YhUmFQKMHUlUJEGKqcesvJucs8gmOafWHwmOhfES1OXb6)y7CE04kAMRjxbKzgyrISYInsHg1qI4lcOGtUOw(N4lUZJleOmiDdHGGGCLlHgYTaBjBof(r5CpyLmGfOyI0)Vm9)7u5sadINIUmk6UIKAA9XZnwTImpqO0juEbH4SKHFQPleDk1vNYfr6cJRpeaLGcAOu8IOamKKmCxQ3CG3qobI5tOoTk7XxbSRu(zRIX)ljmLCst)tlV0t0Q0AFghYK6DWh)yc4aHu7jkl9KTijkIcYLQ)Is7hV)7Pa7(lsGWO4e8EcPLQoXbs9GfeQgiTm8d8)wjCj1zjpPEsKvU28yboCC5SEemY3Qu6NZJHud8L0xKA4sG6p)XVdyuiTp8YZtXB85iOjJ8UKAaGPGNKIUPLyxM2vwAbsWxQiRwh15dvWO6nQq)USe)uZauWfssrEiuRHsFXf5JmVxRyO3uekKXDGuzv2xW8(EawZspk0J5tozXWwYGMcYxkimBz(jmpye)l015hCfSiWfdBn6AlUKZNhirbJrspK0S5bolmWhn3WyjQ5BtaaU4DHCmbNyimVe0JCrgkpFhilXei)ZGimlmrcWoUetgIPW6sjz8(u4eJujnT4iWvupGwnYm9HzK0Dl5vbTTXBIQdlzBjnML01G5479LsYpbtpYcy(bq8tipT)R0dNmzcx0VaOyVg4r0nzgavqCbC(rY)dfDA7CYKJeyDDzrrV9UsRbp(AmaJmrMt1cJDk9izHoHe8xSRAgb14XG0traoKIotjHaBRjkyfWYZUHrOOyCiIGihFDw2TokobeahiNmN1lwE95N6U6AC3foyun(Vfd6odOVlrChPhHbkAnrEVfuABoKJWbywNHGL1yzUzdGS9bFjJVxLV3yoTESS8ir4BWjyAJJ15VXjHdgEIuogpNcnMEN78Ha1pjhw57KeoAqecfEbV5A51CWV7ChpmE3)OcQ8nxFwjc03GIjHvNRhCIj4QJsJCU6zXO(PcdyQir15RmXOntOEwdRc4w7qzZaRxMvhkPAQVLNkpBz0YrWwXh18Yo6faNLYRl4vjfWom5Ju3zo4PYrf546jpjrtzKvA17TxRPutt2cWzZ3uz8JAH7nO0AqjlZCQITwrlQAmehnOSmxptfvyh(PRBTmK2Dk1GZbT1bDvCnhs5i5F6km35r76shgu8C4a8O72RhC2bKqQmqM34Gu10Zj8(qNS8hEYid(2jdKFFmMVMR)ueXOVhi32)0bl5e0QsbgbvTRC)fP8y2e6i3vBr(mK2AWxqwS0cB2(oq36pyv0HdGBu1NlpFUSNPmFmglvaOkdjUMrwxHd99ml1cl4P2P1ChYQ4PQWW5JYPKCjrJiQlAE8fXXi1UMDK1URb)ZWdJ7yHmnxQH3WoeWCHDMZbm46RMK7GoFiLCwPe0hyEELCvv86GJQAmtWBPnFxonF(ktG8jSaFuC(kXELNU4aFSqsB1MSPKW1n62z5EWqP)ExA7PO)oNWaxbqGKWNQCl4ZCMGxfWa1FEeMJHG)LqkkYmYYTqGAJ6oxorFuGAPJS65wO0P7xp1KVir7Eu(mhhnegwl2U0BO8ZK9f8K4(tlbkXy9amm9e2lloGd9C1fYaRSu1XRCwL)AlguC1HgK0pfnrP15qEJsSNSyCol8yHz8v2JJfiU(mBhwZdQ5hcN(rnKcCXP2ukWAUXWjZrv4R6H0sCuhdI)2wcIFVCZ7or4E3xfaXeQOH(QA1qpK4uNirAPq7q78xIPHe1kC5rTYRF5ynP2PKPCdseJvfA)nxdRbJ3Y(TsjL2Y(bTK9RO59MRVyAD7sSSJdw8giXizEA1qE9DECsfmOZ7fmFoTXmyb451r(vhpxr8P477(6flDsFxPw7dzOk963cowFAO0VxKSAuojcmStPWRQBPIgK(otYUC2k65JNoA0iDGAGeOagq5LSROujxBTUJ5gs7j)6AR9CzX70Z(vTW3M1GA0oHBG402yk295OS0rWE)rqf(kWxc5btSnuflbpPybl108KC8f73KysDmtvE6KrTgFZshiLyLxQZkVuow5lbZbRNUlx82ZneUSdUkpYHr1wNvC2(ajvxDu8j4DfwXr9E3TJGWe1TInWG7gZ(vGuZQbgRdUQ66x3lck9sWsJ3WR1eABZ4RZXutzr1M40j(P5f)A8AC8vaosIElqEjDEPjcdpef9UmpOIK8CIcffnBGINHednetnBgKhCch5zHGhvoYzxiUED87Im05KxlvX(8KDM018ySPY)LZin)nxMlQdf8yu)qmER6DC6u9b1llEQs4raIQUF0sRJamPTqIxP8cVsXVQyi9Plzg9WTsgIoAfk(Fps)UYeAt6LhZmluqrPq75b2kkTQ0QPJGKdEKJ(9s(hg2tIokMdzvuWQIfgkbsh1hSzJgL2qgD0DmNK7ERyykutLuoRrwEzn7)ntcLCCbzBzY2WuzBpsJ)ilHGxwmjYOTcNaqf15HGiVLdOVxqVVKZKrDgtkjQwanr45IRNL9U4W9eP8FNlYDqAd17mfVLYiO(9nP7(OZEpPzWcRecVcI3GfWJe7EpTJ0sD6dPdthMrfbqleKpUN7SmiMy43y6rBqbrtqnPxONQzFkG1VgxkdqbsyyRsd1xyRBj8IPDE5URPBwcooUl)Nic8cKuOP1)IC0BQ5PBAZJ1l8FfOkujlaJ6gaThA8MVz6t1DVSSDV8ORV8vzW0)yh2Cpdqku91JAeIQ56Pmk1lDwD1B3E9nTzDVsLxJXUOsTS7itztkYTvMMdJd6sTskxFWdBE7y5PAS4e1ECfO3KdytejIB8f2071DPWeBJKbU)IzEPUeEw50stTn8AlMdN)SBo0VLaXCDgYIZ9Idve7qnfAe6hEs5sbSkj6XcNCQsizo3x9LV1r2VZRq6vIZMkM187vn9C115moSP(Av3zsrSMY0NEZNdH4vBy0Ue48LaZ8K(vQCGzixDAVI0I3sHdVv9Asp4LQM2)vZ1aVPSahEqIvTzFwqb4WLABsRC0EKs2WY(6GmOWPLEXIxmXexxmdOg5ABsHAuNshEyfFZz87vho)2ycVAoamFMnuC0BEv3m8LPIQDE(ZNZX5N4HRPhYb9nAZzeTosGsqElLV)eHlBf9dGaylSlC8Ww12oYm7M7bohOK2F8cWZgIa)BCqo9HV9Z0FefuNV6zVF2nfMd8MQMhA2n5ykqHi3yEKlJ6XingywmmV2sZmiUDAEPL0uI4TtVRSLEfwaALQX4F)hO)mm0fOv)SfwzASzpHFD08bDV7d6K(srY2FOKjPxxk2J(sOlAUsoO3eRUOKx4WqwC(lt8IhdsK4t1iEkXkCG2lsS6BGGNmktwuKdR6GajZR3KdOa8cdcG8W0)1aVJC5FXY1qTUsOzFvhcFEK7lIgAmIU0ze13Ae1sbeLFPbDbTdnyfunlpfKiVsJiLolWG14KIdVJ9kr9h3EZQd5eg5SZN0mRD50k2V4uuLFTUxlQTDciwrpSOgRmDsbwjTHmkYiDCo7oO2yNy0yRyqYNE0SMKVITRXZQmsCkfzsxbsxZOa7wOHokkHiP0J00OQVECTuNrM1Ml3ui0mQh(PpYUk)OUyo9h9M(qgfOMU(G4s9ymM4sQDpQWAvAieIM2grO4bxOiPpKEfHyatollwMOkYIfnrI9DrYbwRksk09wBcgl3Njnlxu2S6(A3RSUQR5tiQ3I7ZxvWETy5ZNDdvMaIb2JmmTitH6oTcMoUcKKO7O8lpB1ABP0k2IYLTj8NvlJ9v0RyeyQJwi2s3fDUdY02nPLCg1RmJ996sJvgVTMDHyEtB2qV7xK15Wr(38Xcv6aPHT(In53Su)X05gK5y1HmT)22AUfziOrpKITP)wQ3zikzk2G69kBAxvkvS2mMl92PP5t3l(HqEBSUVu37E)mHkDcT5s3xVMgkwP9dKbWzXSF4UtqJA)z2otNmktkVOPm(kuBCIn1DRAvwhw6jTKuDyT2tTNT2UD4A7HSBU0K3EdQo9AhqKkb)UVVFA33Ap14pw)A97chzqZqpu6ZQsWrt6Bb3BZtRPAbw8flE0GQbve)NzWZMxFkbt65j0dEB3ZWWDipJmw7GA0iAw1Z2ilvEw(HmyFrLUVrLwoqf2NOOnNrcu(Vsp5N89qOF(wkzSy1jZPMJMZrd((I1EssoYI(tQFomr0IMPSiFosCQ37CPVosV6kBFLLM2lPogNdO9CFn1EcdnU9qsy1Z8UhuvS7il339YKnB8qsasU1ZH(ztU7RJQ9b3Ht2ayv2P2vMkwdE20owOyNC)3tnlLTDl1EEC9iSupX0Jd6rJnQA)pD0BvkDLJITeKkvVRmvCkt5M3NaZb1Iv1TUBShR6H0ZVspP4JeM81qJvzsnOofitzT)fqbQ)AmR9RZS6bTSPMRaAFcC0yTjDG(pW)u9mMF2KW(kW)Xoe)uRZ)vR)RkILkFf7r)E1KwSTn8fjgDTMYASSLDc2bUHdjR2sYO7plCyvoBAlhdq9cnFGmRLf5CAlPnLFSTSOwttnLasHE(QYmyJwCpu5olA7msemvUSsnd2xkHWQosJedtrYT0E1YwvRpSxFXZCPY6VUyRFQ8Kee6APNoQ93wVSSQh4lZxGHkaBtHAB5ywKEmS7EkD2uxxPyzkqO(w2TQP46uxXzr)JzDBXTNB0wcbgFJPMEfqnMDEtDmNfICF1YChy((sKPH3yyzhS7v)X1alAt(RJ2VJtWlmNHqF0eDniuT0fD2in5Bv5f2EyqR9WMPKlBBfVw6fVzudqL9t6YS)SfO(ZwG6pwTavNm(oydoY(VJPJCs18rS8N2QNJ0qS2zMjRadATT9JDL9)AxHCP5Efk738Qg2WzC1(eAF8k2G3j9foDBi9FmSMPADvWeydMIZFNFNRN7UBh(xv)8Et3E2)7]]
 )
 spec:RegisterPack(
     "Fury (wowsims.com)",

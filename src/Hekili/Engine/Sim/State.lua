@@ -721,12 +721,18 @@ end
 
 
 -- Cycling System...
+function state.IsTargetSwapSafe( ability )
+    local confirm = ability.funcs.targetSwapSafe
+    local safe = confirm and confirm()
+    return not Facade.issecretvalue( safe ) and safe == true
+end
+
 do
     local cycle = {}
     local debug = function( ... ) if Hekili.ActiveDebug then Hekili:Debug( ... ) end end
 
     -- force: another target whatever the current one holds (other_target=1, option D).
-    function state.SetupCycle( ability, quiet, force )
+    function state.SetupCycle( ability, quiet, force, changedTarget )
         wipe( cycle )
 
         if not ability and not quiet then
@@ -749,6 +755,17 @@ do
         end
 
         if force then
+            if changedTarget and cDebuff.down and state.active_dot[ aura ] < state.cycle_enemies then
+                local hostile, dead = UnitCanAttack( "player", "target" ), UnitIsDead( "target" )
+                if not Facade.issecretvalue( hostile ) and hostile and not Facade.issecretvalue( dead ) and dead == false
+                    and C_Spell.IsSpellInRange( ability.rangeSpell or ability.id, "target" ) == true
+                    and not Facade.DebuffBlocked( ability.key, state.now )
+                    and ns.callHook( "CanAcceptCycleTarget", ability.key ) ~= false then
+                    -- The first pick requested a different target. This one can receive the spell directly.
+                    cycle.selected = true
+                    return true
+                end
+            end
             cycle.expires = math.huge
             cycle.minTTD  = max( state.settings.cycle_min, ability.min_ttd or 0, cDebuff.duration / 2 )
             cycle.maxTTD  = ability.max_ttd
@@ -835,7 +852,7 @@ do
     end
 
     function state.ClearCycle()
-        if cycle.aura then wipe( cycle ) end
+        if cycle.aura or cycle.selected then wipe( cycle ) end
         state.cycle = nil
     end
 
@@ -7546,6 +7563,11 @@ do
 
         local ability = class.abilities[ spell ]
         if not ability then return true end
+        if rawget( ability, "targetSwap" ) then
+            -- A navigation-only instruction needs positive class evidence that a different target is wanted.
+            local wanted = ability.funcs.usable and ability.funcs.usable( self, ability )
+            return not Facade.issecretvalue( wanted ) and wanted == true and state.IsTargetSwapSafe( ability ), "no alternate target confirmed"
+        end
 
         if self.IsCycling(nil, true) then
             if Facade.DebuffCycleBlocked(spell, self.now, self.true_active_enemies) then
@@ -7764,7 +7786,7 @@ function state:TimeToReady( action, pool )
     local ability = class.abilities[ action ]
     if not ability then return 3600, "not modeled" end
 
-    if ability.id > -100 and ability.id < 0 then
+    if rawget( ability, "targetSwap" ) or ability.id > -100 and ability.id < 0 then
         return 0, "internal function"
     end
 

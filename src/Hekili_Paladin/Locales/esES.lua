@@ -19,6 +19,7 @@ end
 L["Holy"] = "Sagrado"
 L["Protection"] = "Protección"
 L["Retribution"] = "Reprensión"
+-- L["Recover Threat"] = ""
 L["Retribution (wowsims.com)"] = "Reprensión (wowsims.com)"
 L["Protection (wowsims.com)"] = "Protección (wowsims.com)"
 L["Holy Shock (wowsims.com)"] = "Choque Sagrado (wowsims.com)"

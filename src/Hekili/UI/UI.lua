@@ -154,6 +154,43 @@ function ns.UI.SetRecTexture( tex, rec )
     tex:SetTexture( rec.iconOverride or rec.texture )
 end
 
+-- Calibration helpers preview this artwork with the same crop as the recommendation button.
+Hekili.TargetSwapTexture = "Interface\\Addons\\Hekili\\Textures\\Cycle"
+Hekili.TargetSwapPreviousTexture = "Interface\\Addons\\Hekili\\Textures\\CyclePrevious"
+
+function ns.UI.IsStaleTargetSwap( rec, out )
+    return ( rec.indicator == "cycle" or rec.cycleOrigin or Status.swapPending )
+        and out.targetRevision ~= nil and out.targetRevision ~= Status.targetRevision
+end
+
+function ns.UI.BuildTargetSwap( b )
+    if not b.TargetSwap then
+        -- Switching targets is ready even during the spell's cooldown. Cover its swipe, tint and text,
+        -- below Classic's health cues. The pause overlay still goes above the swap artwork.
+        local layer = CreateFrame( "Frame", nil, b )
+        layer:SetAllPoints( b )
+        b.TargetSwap = layer:CreateTexture( nil, "ARTWORK" )
+        b.TargetSwap:SetAllPoints( layer )
+        if b.Mask then b.TargetSwap:AddMaskTexture( b.Mask ) end
+        if b.Overlay then b.Overlay:SetParent( layer ) end
+    end
+    b.TargetSwap:GetParent():SetFrameLevel( b:GetFrameLevel() + 4 )
+    b.TargetSwap:SetTexture( Hekili.TargetSwapTexture )
+    b.TargetSwap:SetTexCoord( b.Texture:GetTexCoord() )
+    b.TargetSwap:Hide()
+end
+
+function ns.UI.SetTargetSwap( b, show )
+    if show then
+        b.TargetSwap:Show()
+        b.Keybinding:Hide() -- gamepad bindings can be anchored outside the button
+    elseif b.swapShown then
+        b.TargetSwap:Hide()
+        b.Keybinding:Show()
+    end
+    b.swapShown = show
+end
+
 --- Sets keybinding text `text` on font string `fs` of icon `b`, at the keyboard anchor (`anchor`, offsets `x`, `y`);
 --- a gamepad binding's pictures at the gamepad group `g`'s own (anchor, x, y), justified from it the same way. The points
 --- change only when the kind of text, the anchor or the offsets do.
@@ -906,15 +943,71 @@ do
     -- A custom display has no engine output: it draws this empty one (stock gave it an empty queue).
     local noOutput = { version = 0, count = 0, recs = {} }
 
+    local function clearTargetReturn( d )
+        if d.returning then
+            d.TargetReturn:Hide()
+            d.returning = nil
+            d.returnHiddenAt = GetTime()
+            d.NewRecommendations = true
+        end
+    end
+
+    local function wantsTargetReturn( d, conf )
+        -- A duplicate target event can arrive after the previous key has already been pressed. Keep a
+        -- confirmed cue continuous until the engine distinguishes a new target, so it cannot fire twice.
+        return Status.targetNavigation == "cycle_previous" and Status.navigationStep
+            and ( Status.navigationRevision == Status.targetRevision or d.returning and d.returnStep == Status.navigationStep )
+            and Status.combat and not Hekili.Pause and not Hekili.Config and Hekili:GetActiveSpecOption( "cycle" )
+            and ( d.style == ns.UI.Styles.classic or d.style == ns.UI.Styles.timeline )
+            and Hekili.Engine.StyleGroup( conf, "indicators" ).enabled
+    end
+
+    local function clearUpkeep( d )
+        if d.upkeepCue then
+            d.upkeepCue:Hide()
+            d.upkeepCue.button = nil
+        end
+    end
+
     -- Unsubscribed: hide the icons and draw nothing until the next publish, so a re-shown display starts blank
     -- (stock cleared every queue each cycle) instead of showing the set it last drew.
     local function unsubscribe( d )
+        clearTargetReturn( d )
+        clearUpkeep( d )
         local out = Published[ d.id ]
         if out then Hekili.Engine.Unsubscribe( d.id, d.OnPublish ) end
         d.blankVersion = ( out or noOutput ).version
         d.style.Clear( d )
         if d.truthOn then ns.UI.Truth.Clear( d ) end
         ns.UI.Truth.ClearHealthCue( d )
+    end
+
+    local recipientEvents = {
+        PLAYER_TARGET_CHANGED = true, PLAYER_FOCUS_CHANGED = true, UPDATE_MOUSEOVER_UNIT = true,
+        PLAYER_SOFT_FRIEND_CHANGED = true, PLAYER_SOFT_INTERACT_CHANGED = true, CVAR_UPDATE = true,
+    }
+
+    local function unsafeSelfCast( out, actions )
+        local abilities = Registry.Abilities()
+        local first = out.count > 0 and out.recs[1].actionName
+        if actions[first] and not Hekili:CanSelfCastHelpfulSpell( abilities[first].id ) then return true end
+        local cues = out.healthCues
+        for i = 1, cues and cues.n or 0 do
+            local action = cues[i].action
+            if actions[action] and not Hekili:CanSelfCastHelpfulSpell( abilities[action].id ) then return true end
+        end
+        return false
+    end
+
+    local function retireUnsafeSelfCast( d, out )
+        local tree = Registry.Specs()[ Status.specID ]
+        local policy = tree and tree.recoveryDisplay
+        if d.alpha <= 0 or not policy or not policy.selfCast or not out or out.version == d.blankVersion then return end
+        if unsafeSelfCast( out, policy.selfCast ) then
+            unsubscribe( d )
+            d:UpdateAlpha()
+            Hekili:ForceUpdate( "SELF_CAST_RECIPIENT_CHANGED", true )
+        end
     end
 
     local alphaUpdateEvents = {
@@ -981,39 +1074,56 @@ do
 
         elseif id == "AOE" and Hekili:GetToggleState( "mode" ) == "reactive" and Hekili:GetNumTargets() < aoe then
             return 0
+        end
 
-        elseif zoneType == "pvp" or zoneType == "arena" then
-            if not conf.visibility.advanced then return conf.visibility.pvp.alpha end
+        local vis = ( zoneType == "pvp" or zoneType == "arena" ) and conf.visibility.pvp or conf.visibility.pve
+        if not conf.visibility.advanced then return vis.alpha end
+        if vis.hideMounted and IsMounted() then return 0 end
 
-            if conf.visibility.pvp.hideMounted and IsMounted() then return 0 end
+        if id == "Primary" and wantsTargetReturn( dPool.Primary, conf ) then
+            -- The forward cue was visible in combat. Keep just its return cue visible after leaving the pack.
+            return math.max( vis.combatTarget, vis.combat, vis.target, vis.always )
+        end
+        if vis.combatTarget > 0 and Status.combat and UnitExists( "target" ) and not UnitIsDead( "target" ) and UnitCanAttack( "player", "target" ) then
+            return vis.combatTarget
+        elseif vis.combat > 0 and Status.combat then
+            return vis.combat
+        elseif vis.target > 0 and UnitExists( "target" ) and not UnitIsDead( "target" ) and UnitCanAttack( "player", "target" ) then
+            return vis.target
+        elseif vis.always > 0 then
+            return vis.always
+        end
 
-            if conf.visibility.pvp.combatTarget > 0 and Status.combat and UnitExists( "target" ) and not UnitIsDead( "target" ) and UnitCanAttack( "player", "target" ) then
-                return conf.visibility.pvp.combatTarget
-            elseif conf.visibility.pvp.combat > 0 and Status.combat then
-                return conf.visibility.pvp.combat
-            elseif conf.visibility.pvp.target > 0 and UnitExists( "target" ) and not UnitIsDead( "target" ) and UnitCanAttack( "player", "target" ) then
-                return conf.visibility.pvp.target
-            elseif conf.visibility.pvp.always > 0 then
-                return conf.visibility.pvp.always
+        -- Keep only eligible self-care cues when normal visibility hides the queue, including
+        -- during a fight without an attackable target. The client can draw protected health bands.
+        local tree = Registry.Specs()[ Status.specID ]
+        local recovery = tree and tree.recoveryDisplay
+        local defenses = prof.toggles.defensives
+        local showsDefenses = defenses.value and id == ( defenses.separate and "Defensives" or "Primary" )
+        local upkeep = recovery and id == "Primary" and recovery.upkeep
+        if recovery and ( showsDefenses or upkeep )
+            and ( dPool[id].style == ns.UI.Styles.classic or dPool[id].style == ns.UI.Styles.timeline )
+            and zoneType ~= "pvp" and zoneType ~= "arena"
+            and not Hekili.Pause and not Hekili.Config and not IsMounted() and not Facade.UnitIsDeadOrGhost( "player" ) then
+            local alpha = math.max( vis.combatTarget, vis.combat, vis.target )
+            if alpha > 0 then
+                local spells
+                if showsDefenses then
+                    if Status.combat or InCombatLockdown() then
+                        if Facade.UnitAffectingCombat( "player" ) == true then spells = recovery.combat end
+                    else
+                        local hp = Facade.PlayerHealthFraction()
+                        if hp and hp > 0 and hp <= recovery.below / 100 then spells = recovery.spells end
+                    end
+                end
+                -- Subscribe for a missing trained self-buff. Only the rotation can select it for this role and pull.
+                if upkeep and Facade.KnownRank( upkeep.ranks ) > 0 and not Facade.C_UnitAuras.GetPlayerAuraBySpellID( upkeep.ranks[1] ) then
+                    return alpha, spells, upkeep
+                elseif spells then
+                    return alpha, spells
+                end
             end
-
-            return 0
         end
-
-        if not conf.visibility.advanced then return conf.visibility.pve.alpha end
-
-        if conf.visibility.pve.hideMounted and IsMounted() then return 0 end
-
-        if conf.visibility.pve.combatTarget > 0 and Status.combat and UnitExists( "target" ) and not UnitIsDead( "target" ) and UnitCanAttack( "player", "target" ) then
-            return conf.visibility.pve.combatTarget
-        elseif conf.visibility.pve.combat > 0 and Status.combat then
-            return conf.visibility.pve.combat
-        elseif conf.visibility.pve.target > 0 and UnitExists( "target" ) and not UnitIsDead( "target" ) and UnitCanAttack( "player", "target" ) then
-            return conf.visibility.pve.target
-        elseif conf.visibility.pve.always > 0 then
-            return conf.visibility.pve.always
-        end
-
         return 0
     end
 
@@ -1027,7 +1137,7 @@ do
 
     -- Visibility reads the spec and combat from Engine.Output.status, which the engine publishes from its next update
     -- (after PLAYER_REGEN_* or a spec change ran UpdateAlpha/UpdateDisplayVisibility): redo them when either moves.
-    local seenSpec, seenCombat
+    local seenSpec, seenCombat, seenNavigation
     ns.Output.Subscribe( "status", function( _, _, st )
         if st.specID ~= seenSpec then
             seenSpec, seenCombat = st.specID, st.combat
@@ -1040,12 +1150,19 @@ do
             seenCombat = st.combat
             for _, d in pairs( dPool ) do d:UpdateAlpha() end
         end
+        if st.targetNavigation ~= seenNavigation then
+            seenNavigation = st.targetNavigation
+            local primary = dPool.Primary
+            if primary and primary.Active then primary:UpdateAlpha() end
+        end
     end, true )
 
     -- Binds the display's style and builds it; the list it returns is the display's buttons (ns.UI.Buttons[ id ]).
     -- No style named (a profile older than styles) draws classic; an unknown name draws classic and says so. A switch
     -- clears the old style first, so nothing it drew stays on screen.
     local function bindStyle( d, conf )
+        clearTargetReturn( d )
+        clearUpkeep( d )
         local style = ns.UI.Styles[ conf.style ]
         if not style then
             if conf.style ~= nil and conf.style ~= d.styleWarned then -- once per unknown name, not on every rebuild
@@ -1071,6 +1188,13 @@ do
         end
         ns.UI.Buttons[ d.id ] = built
         d.Buttons = built
+        if d.id == "Primary" and ( style == ns.UI.Styles.classic or style == ns.UI.Styles.timeline ) then
+            -- The selected enemy can have no spell recommendations at all. Anchor to the button but inherit
+            -- visibility from the display so the previous-target cue survives the empty queue.
+            d.TargetReturn = d.TargetReturn or d:CreateTexture( nil, "OVERLAY" )
+            d.TargetReturn:SetTexture( Hekili.TargetSwapPreviousTexture )
+            d.TargetReturn:Hide()
+        end
         -- Modern (spec §5.1, M2): core's layer over whichever style is bound, only while its toggle is on
         d.truthOn = conf.truth.enabled == true
         if d.truthOn then ns.UI.Truth.Build( d, conf, d.Buttons ) end
@@ -1129,6 +1253,45 @@ do
             end
 
             local style, now = self.style, GetTime()
+            if self.NewRecommendations then retireUnsafeSelfCast( self, out ) end
+            if self.recoveryOnly or self.upkeepOnly then
+                if self.NewRecommendations or self.timer < 0 then
+                    self.NewRecommendations = nil
+                    self.timer = pulseDisplay
+                    local current = out.targetRevision == Status.targetRevision
+                    ns.UI.Truth.DrawUpkeep( self, out, conf, current and self.upkeepVersion ~= out.version and self.upkeepOnly, now )
+                    if current and self.recoveryOnly then
+                        ns.UI.Truth.DrawHealthCue( self, out, conf, self.recoveryOnly )
+                    else
+                        ns.UI.Truth.ClearHealthCue( self )
+                    end
+                end
+                return
+            end
+            if self.TargetReturn and self.alpha > 0 and wantsTargetReturn( self, conf ) then
+                if self.returnStep ~= Status.navigationStep then
+                    -- SBF issues one reverse key per continuous image. Give two distinct requests a
+                    -- visible release even when two forecasts finish within the same rendered frame.
+                    local hiddenAt = self.returning and now or self.returnHiddenAt
+                    self.nextReturnAt = hiddenAt and hiddenAt + 0.4
+                    self.returnStep = Status.navigationStep
+                end
+                if not self.returning then
+                    local timeline = conf.style == "timeline" and self.styleFrames.timeline
+                    local button = self.Buttons[ timeline and timeline.press or 1 ]
+                    style.Clear( self )
+                    if self.truthOn then ns.UI.Truth.Clear( self ) end
+                    ns.UI.Truth.ClearHealthCue( self )
+                    self.TargetReturn:ClearAllPoints()
+                    self.TargetReturn:SetAllPoints( button )
+                    self.TargetReturn:SetTexCoord( button.Texture:GetTexCoord() )
+                    self.returning = true
+                end
+                if self.nextReturnAt and now >= self.nextReturnAt then self.nextReturnAt = nil end
+                self.TargetReturn:SetShown( not self.nextReturnAt )
+                return
+            end
+            clearTargetReturn( self )
             -- What to show (UI/Resolve.lua) is asked of the client only when the style is about to draw.
             local draw = self.NewRecommendations or self.timer < 0
             if draw then ns.UI.Resolve( self, conf, out, now ) end
@@ -1139,8 +1302,17 @@ do
                 self.timer = pulseDisplay
                 style.Draw( self, conf, out, Status )
                 if self.truthOn then ns.UI.Truth.Draw( self, conf, out ) end
-                if out.healthCues and style == ns.UI.Styles.classic then
+                if out.healthCues and style.DrawHealthCueDetails then
                     ns.UI.Truth.DrawHealthCue( self, out, conf )
+                end
+                if self.id == "Primary" and ( style == ns.UI.Styles.classic or style == ns.UI.Styles.timeline )
+                    and self.alpha > 0 and not Hekili.Pause and not Hekili.Config
+                    and out.count > 0 and out.recs[ 1 ].indicator == "cycle" then
+                    local timeline = style == ns.UI.Styles.timeline and self.styleFrames.timeline
+                    local button = self.Buttons[ timeline and timeline.press or 1 ]
+                    if button and button.recIndex == 1 and button.swapShown then
+                        Hekili.Engine.TargetSwapShown( self.id, out.recs[ 1 ] )
+                    end
                 end
             end
         end
@@ -1157,7 +1329,24 @@ do
             end
 
             local preAlpha = self.alpha or 0
-            local newAlpha = CalculateAlpha( self.id )
+            local newAlpha, recoveryOnly, upkeepOnly = CalculateAlpha( self.id )
+            if self.upkeepOnly ~= upkeepOnly then
+                if upkeepOnly then
+                    self:RegisterUnitEvent( "UNIT_AURA", "player" )
+                    self:RegisterEvent( "GROUP_ROSTER_UPDATE" )
+                    self:RegisterEvent( "PLAYER_ROLES_ASSIGNED" )
+                else
+                    self:UnregisterEvent( "UNIT_AURA" )
+                    self:UnregisterEvent( "GROUP_ROSTER_UPDATE" )
+                    self:UnregisterEvent( "PLAYER_ROLES_ASSIGNED" )
+                end
+            end
+            if recoveryOnly ~= self.recoveryOnly or upkeepOnly ~= self.upkeepOnly then
+                unsubscribe( self )
+                self.recoveryOnly, self.upkeepOnly = recoveryOnly, upkeepOnly
+                self.NewRecommendations = true
+                if newAlpha > 0 then Hekili:ForceUpdate( "RECOVERY_DISPLAY_CHANGED" ) end
+            end
 
             if preAlpha > 0 and newAlpha == 0 then
                 self:SetAlpha( 0 )
@@ -1187,10 +1376,22 @@ do
 
             local conf = Hekili.DB.profile.displays[ self.id ]
 
+            -- The buff can have landed, a meal can have started, or another tank can now own this pull.
+            if self.upkeepOnly and ( event == "UNIT_AURA" or event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_ROLES_ASSIGNED" ) then
+                self.upkeepVersion = Published[self.id].version
+                if self.upkeepCue then self.upkeepCue:Hide() end
+                Hekili:ForceUpdate( "UPKEEP_STATE_CHANGED", true )
+            end
+            -- A heal on the last forecast could now select an ally.
+            if recipientEvents[event] then retireUnsafeSelfCast( self, Published[self.id] ) end
             if kbEvents[ event ] then
                 self.style.UpdateKeybindings( self )
 
             elseif alphaUpdateEvents[ event ] then
+                if event == "PLAYER_TARGET_CHANGED" then
+                    -- Retire the old target's swap cue on the next draw, even if the new forecast is still running.
+                    self.NewRecommendations = true
+                end
                 if event == "CLIENT_SCENE_OPENED" then
                     if ... == 1 then -- Minigame.
                         Hekili.ClientScene = true
@@ -1236,6 +1437,11 @@ do
                     for e in pairs( alphaUpdateEvents ) do
                         self:RegisterEvent( e )
                     end
+                    if self.id == "Primary" or self.id == "Defensives" or self.id == "AOE" then
+                        for e in pairs( recipientEvents ) do
+                            if not alphaUpdateEvents[e] then self:RegisterEvent( e ) end
+                        end
+                    end
 
                     -- Recheck spell displays if spells have changed.
                     self:RegisterEvent( "SPELLS_CHANGED" )
@@ -1254,6 +1460,8 @@ do
 
         function d:Deactivate()
             self.Active = false
+            clearTargetReturn( self )
+            clearUpkeep( self )
 
             self:SetScript( "OnUpdate", nil )
             self:SetScript( "OnEvent", nil )

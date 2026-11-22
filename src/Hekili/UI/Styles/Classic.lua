@@ -138,24 +138,7 @@ function Classic.DrawHealthCueDetails( layer, button, choice, conf, rebuild )
         layer.Keybinding:SetText( nil )
     end
 
-    if choice.gcdStart then
-        if not layer.swipe then
-            layer.swipe = CreateFrame( "Cooldown", nil, layer, "CooldownFrameTemplate" )
-            layer.swipe:SetAllPoints( layer )
-            layer.swipe:SetDrawBling( false )
-            layer.swipe:SetDrawEdge( false )
-            layer.swipe:SetHideCountdownNumbers( true )
-            layer.swipe.noCooldownCount = true
-        end
-        layer.swipe:SetSwipeColor( 0, 0, 0, conf.cooldownSwipeAlpha )
-        if layer.gcdStart ~= choice.gcdStart or layer.gcdDuration ~= choice.gcdDuration then
-            layer.swipe:SetCooldown( choice.gcdStart, choice.gcdDuration )
-            layer.swipe:Show()
-        end
-    elseif layer.gcdStart then
-        layer.swipe:Hide()
-    end
-    layer.gcdStart, layer.gcdDuration = choice.gcdStart, choice.gcdDuration
+    ns.UI.Truth.DrawHealthCueCooldown( layer, choice, conf )
 end
 
 local function CreateButton( dispID, id )
@@ -500,6 +483,7 @@ local function CreateButton( dispID, id )
     b:EnableMouse( false )
     b:SetMovable( false )
 
+    ns.UI.BuildTargetSwap( b )
     return b
 end
 
@@ -529,7 +513,7 @@ local function RefreshCooldowns( self, out )
                 start, duration, enabled, modRate = r.cdStart, r.cdDuration, r.cdEnabled, r.cdModRate
             elseif ability.item then
                 start, duration, enabled, modRate = GetItemCooldown( ability.item )
-            else
+            elseif not ability.targetSwap then
                 start, duration, enabled, modRate = GetSpellCooldown( ability.actionID )
             end
 
@@ -604,7 +588,7 @@ function Classic.UpdateKeybindings( d )
         for i, b in ipairs( self.Buttons ) do
             local a = b.Action
 
-            if a then
+            if a and not ( b.Ability and b.Ability.targetSwap ) then
                 b.Keybind, b.KeybindFrom = Hekili:GetBindingForAction( a, conf, i )
 
                 setKeybinding( b, ( i == 1 or conf.classic.keybindings.queued ) and b.Keybind or nil, conf.classic.keybindings, conf.classic.gamepad )
@@ -661,6 +645,9 @@ function Classic.Draw( d, conf, out, status )
             for i, b in ipairs( self.Buttons ) do
                 b.Recommendation = i <= conf.numIcons and out.recs[ i ] or NONE
                 b.recIndex = ( i <= conf.numIcons and i <= out.count ) and i or 0
+                if ns.UI.IsStaleTargetSwap( b.Recommendation, out ) then
+                    b.Recommendation, b.recIndex = NONE, 0
+                end
 
                 local action = b.Recommendation.actionName
                 local caption = b.Recommendation.caption
@@ -694,7 +681,7 @@ function Classic.Draw( d, conf, out, status )
                             local id = ability.item or ability.actionID
                             local isItem = ability.item ~= nil
 
-                            if id and ( isItem and IsCurrentItem( id ) or IsCurrentSpell( id ) ) and exact_time > GetTime() then
+                            if id and not ability.targetSwap and ( isItem and IsCurrentItem( id ) or IsCurrentSpell( id ) ) and exact_time > GetTime() then
                                 b.Highlight:Show()
                             else
                                 b.Highlight:Hide()
@@ -706,13 +693,9 @@ function Classic.Draw( d, conf, out, status )
                     end
 
 
-                    if conf.classic.indicators.enabled and indicator then
-                        if indicator == "cycle" then
-                            b.Icon:SetTexture("Interface\\Addons\\Hekili\\Textures\\Cycle")
-                        end
-                        if indicator == "cancel" then
-                            b.Icon:SetTexture("Interface\\Addons\\Hekili\\Textures\\Cancel")
-                        end
+                    ns.UI.SetTargetSwap( b, conf.classic.indicators.enabled and ( i == 1 or conf.classic.indicators.queued ) and indicator == "cycle" )
+                    if conf.classic.indicators.enabled and indicator == "cancel" then
+                        b.Icon:SetTexture("Interface\\Addons\\Hekili\\Textures\\Cancel")
                         b.Icon:Show()
                     else
                         b.Icon:Hide()

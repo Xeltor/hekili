@@ -18,6 +18,7 @@ end
 -- L["Arms"] = ""
 -- L["Fury"] = ""
 -- L["Protection"] = ""
+-- L["Recover Threat"] = ""
 -- L["Recklessness (wowsims.com)"] = ""
 -- L["The wowsims.com priority's Recklessness ON/OFF switch (its default in wowsims's own APL)."] = ""
 -- L["Stance Dance (wowsims.com)"] = ""

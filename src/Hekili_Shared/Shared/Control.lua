@@ -1,13 +1,13 @@
--- The class packs that use control-breaking racials share a single event-driven view of the player's control effects.
+-- Class packs share an event-driven view of the control effects that affect their abilities.
 local Client = Hekili.Client
 local class = Client.UnitClassBase("player")
-if class ~= "ROGUE" and class ~= "WARLOCK" then
+if class ~= "ROGUE" and class ~= "WARLOCK" and class ~= "PALADIN" then
     return
 end
 
 local shared = Hekili:NewShared()
 local melee = class == "ROGUE"
-local prefix = melee and "rogue_" or "warlock_"
+local prefix = class:lower() .. "_"
 local max, min, HUGE = math.max, math.min, math.huge
 
 local function plain(value)
@@ -52,6 +52,12 @@ local function refreshControl()
         if type(row) == "table" then
             local kind = plain(row.locType)
             local group = type(kind) == "string" and controlGroup[kind]
+            if class == "PALADIN" and kind == "SCHOOL_INTERRUPT" then
+                local schools = plain(row.lockoutSchool)
+                if type(schools) == "number" and math.floor(schools / Hekili.SCHOOL.holy) % 2 == 1 then
+                    group = "silence"
+                end
+            end
             if group then
                 local start, duration, remains = plain(row.startTime), plain(row.duration), plain(row.timeRemaining)
                 local expires
@@ -74,12 +80,14 @@ frame:RegisterEvent("LOSS_OF_CONTROL_UPDATE")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 refreshControl()
 
-shared:RegisterStateExpr(prefix .. "stunned", function()
-    return control.stun > query_time
-end)
-shared:RegisterStateExpr(prefix .. "forsaken_control", function()
-    return control.forsaken > query_time
-end)
+if class ~= "PALADIN" then
+    shared:RegisterStateExpr(prefix .. "stunned", function()
+        return control.stun > query_time
+    end)
+    shared:RegisterStateExpr(prefix .. "forsaken_control", function()
+        return control.forsaken > query_time
+    end)
+end
 shared:RegisterStateExpr(prefix .. "movement_control", function()
     return control.movement > query_time
 end)

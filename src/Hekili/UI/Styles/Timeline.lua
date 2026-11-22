@@ -49,7 +49,7 @@ local CIRCLE = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
 local WHITE = "Interface\\Buttons\\WHITE8X8" -- tinted with SetVertexColor: a mask does not apply to a SetColorTexture fill
 local GOLD_RING, GOLD_FRAME = "Interface\\AddOns\\Hekili\\Textures\\GoldRing", "Interface\\AddOns\\Hekili\\Textures\\GoldFrame"
 local GOLD_RING_IN, GOLD_FRAME_IN = 0.737, 0.691 -- the art's inner opening, a fraction of its width
-local CYCLE, CANCEL = "Interface\\Addons\\Hekili\\Textures\\Cycle", "Interface\\Addons\\Hekili\\Textures\\Cancel"
+local CANCEL = "Interface\\Addons\\Hekili\\Textures\\Cancel"
 
 -- TDF Render.ETA: labels in 0.1 s steps up to 10 s, built once ("" for none, "10+" past); whole seconds for "int".
 local ETA, ETA_INT = {}, {}
@@ -429,6 +429,7 @@ function Timeline.Build( d, conf )
         local b = T.cells[ i ]
         local size = i == 1 and nowS or ( i == 2 and nextS or iconS )
         dress( T, b, i, size, tl )
+        ns.UI.BuildTargetSwap( b )
         if i <= 2 then b.Cooldown:SetSwipeColor( 0, 0, 0, conf.cooldownSwipeAlpha ) end
         if i == 1 then place( T, b, 0, ( band - nowS ) / 2 )
         elseif i == 2 then place( T, b, nextX, ( band - nextS ) / 2 ) end
@@ -542,7 +543,7 @@ local function glowOff( b )
 end
 
 local function highlight( b, tl, ability, exact )
-    local id = ability and ( ability.item or ability.actionID )
+    local id = ability and not ability.targetSwap and ( ability.item or ability.actionID ) or nil
     local isItem = ability and ability.item ~= nil
     b.Highlight:SetShown( tl.glow.highlight and id ~= nil and ( isItem and IsCurrentItem( id ) or IsCurrentSpell( id ) ) and exact > GetTime() or false )
 end
@@ -674,6 +675,7 @@ local function assign( d, T, tl, conf, out, now, combat )
     for c = 1, SLOTS do
         local i = T.rec[ c ] -- record i, drawn by cell c
         local b, r = cells[ c ], recs[ i ] or NONE
+        if ns.UI.IsStaleTargetSwap( r, out ) then i, r = 0, NONE end
         b.Recommendation = recs[ i ]
         b.recIndex, b.isFocus = i, c == 1 and T.focused
         local action, exact = r.actionName, r.exact_time
@@ -687,9 +689,10 @@ local function assign( d, T, tl, conf, out, now, combat )
             ns.UI.SetRecTexture( b.Texture, r ) -- the APL line's icon= first (a style may ignore it)
             b.Label:SetText( r.label )
             local indicator = r.indicator
-            if ind.enabled and indicator and ( not queued or ind.queued ) then
-                if indicator == "cycle" then b.Icon:SetTexture( CYCLE ) end
-                if indicator == "cancel" then b.Icon:SetTexture( CANCEL ) end
+            local showIndicator = ind.enabled and ( not queued or ind.queued )
+            ns.UI.SetTargetSwap( b, showIndicator and indicator == "cycle" )
+            if showIndicator and indicator == "cancel" then
+                b.Icon:SetTexture( CANCEL )
                 b.Icon:Show()
             else
                 b.Icon:Hide()
@@ -772,7 +775,7 @@ local function sweep( b, extend, tl, now )
     local held = b.cdAction == b.Action and b.cdStart > 0 and now < b.cdEnd -- records are pooled: key on the action
     b.cdAction = b.Action
     local start, duration, enabled, modRate = 0, 0, 1, 1
-    if mode ~= "off" then
+    if mode ~= "off" and not ability.targetSwap then
         if ability.item then
             start, duration, enabled, modRate = GetItemCooldown( ability.item )
         else
@@ -931,13 +934,31 @@ function Timeline.UpdateKeybindings( d )
     if not kb.enabled then return end
     for c, b in ipairs( T.cells ) do
         local a, i = b.Action, T.rec[ c ]
-        if a then
+        if a and not ( b.Ability and b.Ability.targetSwap ) then
             b.Keybind, b.KeybindFrom = Hekili:GetBindingForAction( a, conf, i )
             setKeybinding( b, kb, conf.timeline.gamepad, c, i > 1, c == 1 and T.focused, b.Keybind )
         else
             setKeybinding( b, kb, conf.timeline.gamepad, c, false, false, nil )
         end
     end
+end
+
+function Timeline.DrawHealthCueDetails( layer, button, choice, conf, rebuild )
+    local tl, kb = conf.timeline, conf.timeline.keybindings
+    if kb.enabled then
+        if not layer.Keybinding then
+            layer.Keybinding = layer:CreateFontString( nil, "OVERLAY" )
+            rebuild = true
+        end
+        if rebuild then
+            local z = button.index
+            setFont( layer.Keybinding, kb[ zkey( z, "font" ) ], kb[ zkey( z, "fontSize" ) ], kb[ zkey( z, "fontStyle" ) ], kb[ zkey( z, "color" ) ] )
+        end
+        setKeybinding( layer, kb, tl.gamepad, button.index, false, false, Hekili:GetBindingForAction( choice.action, conf, 1 ) )
+    elseif layer.Keybinding then
+        layer.Keybinding:SetText( nil )
+    end
+    ns.UI.Truth.DrawHealthCueCooldown( layer, choice, conf )
 end
 
 --- Hides every frame and region it built (unsubscribe, Deactivate, a style switch).

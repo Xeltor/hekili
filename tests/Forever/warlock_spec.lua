@@ -1065,15 +1065,61 @@ describe("Forever Warlock through the engine", function()
         assert.is_false(havoc())
         spec.cycle = true
         assert.are.equal("cycle", havoc())
-        t = t + 0.1
-        H.ctl.now = t
-        H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-havoc", 1225228) -- landed on mob A, the target then
-        assert.is_false(havoc(), "one Havoc at a time")
+        -- Bring the shipped raid line to the press slot without first casting the raid opener.
+        local pack = H.Hekili.DB.profile.packs["Destruction (wowsims.com)"]
+        local line
+        for _, entry in ipairs(pack.lists.default) do
+            if
+                entry.action == "bane_of_havoc"
+                and entry.other_target == 1
+                and entry.criteria:find("warlock_sustained")
+            then
+                line = entry
+                break
+            end
+        end
+        assert.is_not_nil(line)
+        pack.lists = { default = { line } }
+        H.Hekili:LoadScripts()
+        assert.are.equal("cycle", havoc())
+        local origin = H.ctl.guid.target
+        H.ctl.guid.target = "Creature-2"
+        H.ctl.inRange.target = false
+        H.Fire("PLAYER_TARGET_CHANGED")
+        assert.are.equal("cycle", havoc(), "the new enemy is out of range")
+        H.ctl.inRange.target = true
+        H.ctl.unitCombat.target = false
+        assert.are.equal("cycle", havoc(), "an idle raid add is not a destination")
+        H.ctl.unitCombat.target, H.ctl.unitIs.targettarget = true, "player"
+        H.ctl.auras.target.HARMFUL[1] = {
+            name = "Fear",
+            spellId = H.Hekili.Class.auras.fear.id,
+            expirationTime = t + 10,
+            duration = 10,
+            applications = 1,
+            sourceUnit = "player",
+        }
+        H.Fire("UNIT_AURA", "target")
+        assert.are.equal("cycle", havoc(), "the Warlock's control is protected")
+        H.ctl.auras.target.HARMFUL[1] = nil
+        H.Fire("UNIT_AURA", "target")
+        assert.are.equal("", havoc(), "offer Havoc on the new enemy")
+        assert.are.equal("", havoc(), "the cue stays fulfilled until the cast")
+        H.ctl.guid.target = origin
+        H.Fire("PLAYER_TARGET_CHANGED")
+        assert.are.equal("cycle", havoc(), "the original enemy still requires a swap")
         H.ctl.guid.target = "Creature-2"
         H.Fire("PLAYER_TARGET_CHANGED")
-        assert.is_false(havoc(), "remembered on mob A after the tab")
+        assert.are.equal("", havoc())
+        t = t + 0.1
+        H.ctl.now = t
+        H.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-havoc", 1225228)
+        assert.is_false(havoc(), "one Havoc at a time")
+        H.ctl.guid.target = origin
+        H.Fire("PLAYER_TARGET_CHANGED")
+        assert.is_false(havoc(), "remembered on the secondary target after tabbing back")
         assert.are.equal(1, H.Hekili.State.active_dot.bane_of_havoc)
-        -- review M1: mob B dies, no target, two enemies left: the count is unknown (saturated, never 0), no Havoc flash
+        -- No target, two enemies left: the count is unknown (saturated, never 0), no Havoc flash.
         H.ctl.exists.target, H.ctl.guid.target = false, nil
         H.Fire("PLAYER_TARGET_CHANGED")
         assert.is_false(havoc(), "no target: Havoc is not shown again")

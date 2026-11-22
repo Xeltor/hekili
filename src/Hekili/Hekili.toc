@@ -8,7 +8,7 @@
 ## X-Website: https://github.com/zmsl/hekili
 ## X-Curse-Project-ID: 1753387
 ## SavedVariables: HekiliDB
-## SavedVariablesPerCharacter: HekiliCDMProof
+## SavedVariablesPerCharacter: HekiliCDMProof, HekiliSpecPlayerGUID
 ## OptionalDeps: ConsolePort, ElvUI, LibDualSpec-1.0, Masque, WeakAuras
 
 embeds.xml
@@ -98,6 +98,7 @@ Engine\Schema\Spec\Packs.lua
 Engine\Schema\Spec\Activation.lua
 Engine\Schema\Shared.lua
 Engine\Schema\Threat.lua
+Engine\Schema\TankRecovery.lua
 Engine\Output.lua
 Engine\Registry.lua
 Engine\Snapshot.lua

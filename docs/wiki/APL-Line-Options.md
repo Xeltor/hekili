@@ -22,7 +22,7 @@ An option written `=1` is on; `=0` or leaving it out is off. Options that hold a
 | `icon_if` | Condition | When the icon override shows | **Icon Condition** |
 | `cycle_targets` | 1 | Checks the other enemies and shows a target swap when the line suits another target better ([Target swaps](#target-swaps)) | **Cycle Targets** |
 | `max_cycle_targets` | Number | The most targets `cycle_targets` checks | **Max Cycle Targets** |
-| `other_target` | 1 | The line is for another enemy only, never the current target | none |
+| `other_target` | 1 | Requests a different enemy, then offers the ability once an eligible enemy is selected | none |
 | `buff_name` | Aura key | The aura `cancel_buff` removes | **Buff Name** |
 | `sec` | Seconds, or an expression | How long a `wait` line waits (0.5 when not given) | **Seconds** |
 | `for_next` | 1 | `pool_resource` delays the walk for the next line ([Pooling](#pooling)) | Pool for Next Entry (*ability*) |
@@ -60,7 +60,11 @@ actions+=/rip,focus=2,if=((!action.cat_form.known|buff.cat_form.up)&...
 
 ### Target swaps
 
-`cycle_targets=1` and `other_target=1` act only when target swaps are allowed for the specialization (`/hekili set cycle`) and more than one enemy is counted. With a single valid enemy the line is tested on the current target. A line that would be better on another target shows the target-swap indicator on its icon ([How targets are counted](How-Targets-Are-Counted)).
+When target swaps are enabled for the specialization (`/hekili set cycle on`) and a line calls for another enemy, the display shows the full-size target-swap icon. With swaps disabled or only one valid enemy, a `cycle_targets=1` line still checks the current target, and the priority skips an `other_target=1` line. [How targets are counted](How-Targets-Are-Counted).
+
+A first-slot `other_target=1` request remembers where it started. Select another eligible enemy in spell range and the same line can show its spell. If a suggested switch lands outside your fight, the previous-target cue asks you to go back. If the priority still needs another enemy when you return, it can continue in that direction through enemies fighting your group.
+
+Returning to an enemy already checked ends the search and restores its normal priorities. A new enemy joining the fight can make the same spread worth checking again.
 
 ### Pooling
 

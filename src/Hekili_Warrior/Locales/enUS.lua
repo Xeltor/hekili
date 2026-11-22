@@ -9,6 +9,7 @@ local L = LibStub("AceLocale-3.0"):NewLocale("Hekili_Warrior", "enUS", true, tru
 L["Arms"] = true
 L["Fury"] = true
 L["Protection"] = true
+L["Recover Threat"] = true
 L["Recklessness (wowsims.com)"] = true
 L["The wowsims.com priority's Recklessness ON/OFF switch (its default in wowsims's own APL)."] = true
 L["Stance Dance (wowsims.com)"] = true

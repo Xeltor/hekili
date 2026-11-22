@@ -18,6 +18,7 @@ end
 L["Arms"] = "Waffen"
 L["Fury"] = "Furor"
 L["Protection"] = "Schutz"
+-- L["Recover Threat"] = ""
 L["Recklessness (wowsims.com)"] = "Tollkühnheit (wowsims.com)"
 L["The wowsims.com priority's Recklessness ON/OFF switch (its default in wowsims's own APL)."] = "AN/AUS-Schalter der wowsims.com-Priorität für Tollkühnheit (Standard wie in der APL von wowsims)."
 L["Stance Dance (wowsims.com)"] = "Haltungstanz (wowsims.com)"

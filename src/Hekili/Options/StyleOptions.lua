@@ -868,7 +868,7 @@ function SO.indicators( styleKey, zones, order, id, conf )
         enabled = {
             type = "toggle",
             name = L["Enabled"],
-            desc = L["If enabled, small indicators for target-swapping, aura-cancellation, etc. may appear on your primary icon."],
+            desc = L["Show a full-size icon when you should switch targets and a small marker when you should cancel an aura."],
             order = 1,
             width = 1.49,
         },
@@ -987,7 +987,7 @@ return L["Position"] end,
     return {
         type = "group",
         name = L["Indicators"],
-        desc = L["Indicators are small icons that can indicate target-swapping or (rarely) cancelling auras."],
+        desc = L["A gold arrow means cycle forward through enemies and a violet arrow means cycle backward. Both fill the icon. Size and position control the small aura-cancellation marker."],
         order = order,
         args = args,
     }

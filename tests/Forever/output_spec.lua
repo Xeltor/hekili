@@ -318,6 +318,17 @@ describe("Engine.Output steady icons (the experimental hold, pure)", function()
         Out = select(2, load())
     end)
 
+    it("keeps a swap tied to the target at build start and releases its hold after tabbing", function()
+        local staged = Out.Begin("Primary")
+        staged[1].actionName, staged[1].time, staged[1].indicator = "rend", 1, "cycle"
+        Out.status.targetRevision = 1 -- a target change while the forecast was in progress
+        Out.Publish("Primary", 1)
+        assert.are.equal(0, Out.Primary.targetRevision)
+        pub(Out, { { "battle_shout", 1 } })
+        assert.are.equal("battle_shout", Out.Primary.recs[1].actionName)
+        assert.are.equal(1, Out.Primary.targetRevision)
+    end)
+
     for _, on in ipairs({ true, false }) do
         local function run(lists)
             Out.steady = on

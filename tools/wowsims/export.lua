@@ -439,6 +439,11 @@ function M.ids(a)
     return out
 end
 
+-- The pinned DB2 predates the launch trainer changes. Righteous Fury moved to level 10 in Blizzard's
+-- November 2 Forever notes (forum topic 2360696, post 9). Holy Shield's four trainer ranks were
+-- verified in the Forever client on November 6, including a fourth rank missing from the DB2.
+local paladinTrainerLevels = { [25780] = 10, [20925] = 30, [20927] = 40, [20928] = 50, [1239570] = 60 }
+
 --- Writes learn_<class>.lua: the DB2 learn level (SpellLevels.BaseLevel) of every positive spell ID of every ability in
 --- class `token`'s ability set (tests/Forever/helpers/engine.lua abilitySet: the kit's, the shared content's, every
 --- race's racials). IDs the DB2 lacks, or learns at 0, are left out (the replay content treats them as level 1).
@@ -463,8 +468,11 @@ function M.learn(token)
             token
         ),
         "-- from the Forever DB2 (SpellLevels.BaseLevel): the level each rank of each ability is learned at.",
-        "return {",
     }
+    if token == "PALADIN" then
+        out[#out + 1] = "-- Includes Forever trainer corrections for Righteous Fury and all four Holy Shield ranks."
+    end
+    out[#out + 1] = "return {"
     for i = 1, #ids, 150 do
         local chunk = {}
         for j = i, math.min(i + 149, #ids) do
@@ -476,9 +484,14 @@ function M.learn(token)
                 table.concat(chunk, ",")
             )
         )
+        local levels = {}
         for id, level in tsv:gmatch("\n(%d+)\t(%d+)") do
-            if tonumber(level) > 0 then
-                out[#out + 1] = ("    [%s] = %s,"):format(id, level)
+            levels[tonumber(id)] = tonumber(level)
+        end
+        for _, id in ipairs(chunk) do
+            local level = token == "PALADIN" and paladinTrainerLevels[id] or levels[id]
+            if level and level > 0 then
+                out[#out + 1] = ("    [%d] = %d,"):format(id, level)
             end
         end
     end

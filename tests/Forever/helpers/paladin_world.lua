@@ -210,6 +210,7 @@ local PACKS = {
     -- Seal of Fury, Holy Shield and Swift Judgement, a one-hander and a shield; the mob's swings at us blocked.
     Protection = {
         kit = {
+            "seal_of_righteousness",
             "seal_of_fury",
             "seal_of_the_crusader",
             "judgement",
@@ -225,6 +226,7 @@ local PACKS = {
             "templars_bulwark",
         },
         talents = { [1310994] = 1, [20925] = 1, [20473] = 1, [1328544] = 1, [1311015] = 1 }, -- Shieldsworn: the pin's preset (R28)
+        items = { [16] = { 1, "One-Hander", "INVTYPE_WEAPON" }, [17] = { 2, "Shield", "INVTYPE_SHIELD" } },
         weapon = { 70, 130, 2.7 },
         fsr = { 16.5, 0 }, -- the e4ef929e54 log: 16.50 outside, none casting (was 17.38)
         uptime = { "consecrated_ground" },
@@ -328,6 +330,7 @@ local function content(name, pack)
             classID = M.CLASS_ID,
             specID = M.CLIENT_SPEC,
             level = 60,
+            items = P.items,
             known = known,
             talents = P.talents,
             power = { type = MANA, token = "MANA", max = P.max or 6000 },
@@ -487,5 +490,11 @@ end
 M.Retribution, M.Protection =
     content("Retribution", "Retribution (wowsims.com)"), content("Protection", "Protection (wowsims.com)")
 M.HolyShock = content("HolyShock", "Holy Shock (wowsims.com)")
+
+-- This world's sole mob is tanked by the Paladin. The observer supplies its changing
+-- combat state and target-of-target, while the client can also report our threat on it.
+function M.Protection.beforeLogin(_, H)
+    H.ctl.threat.target = 3
+end
 
 return M

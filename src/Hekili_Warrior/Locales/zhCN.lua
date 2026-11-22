@@ -18,6 +18,7 @@ end
 L["Arms"] = "武器"
 L["Fury"] = "狂怒"
 L["Protection"] = "防护"
+-- L["Recover Threat"] = ""
 L["Recklessness (wowsims.com)"] = "鲁莽（wowsims）"
 L["The wowsims.com priority's Recklessness ON/OFF switch (its default in wowsims's own APL)."] = "wowsims 优先级的鲁莽开/关选项（默认值与 wowsims 自身 APL 相同）。"
 L["Stance Dance (wowsims.com)"] = "切姿态（wowsims）"

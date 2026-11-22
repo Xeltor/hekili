@@ -19,7 +19,7 @@ local function content(spec, base, pack, level, extra)
 end
 
 -- `base` as wowsims's character: without the spells in `drop` (by ID: ws.content only adds) and `world` over its WORLD.
-local function wowsims(base, drop, world)
+local function wowsims(base, drop, world, configure)
     return setmetatable({
         WORLD = setmetatable(world, { __index = base.WORLD }),
         character = function()
@@ -30,6 +30,9 @@ local function wowsims(base, drop, world)
                 end
             end
             c.known = known
+            if configure then
+                configure(c)
+            end
             return c
         end,
     }, { __index = base })
@@ -160,10 +163,42 @@ describe("the Paladin wowsims.com packs #slow #wowsims", function()
 
     -- The build takes no Holy Shock.
     local PROT_DROP = set(pw.Protection.IDS.holy_shock, EXORCISM_ANY)
-    local PROT = wowsims(pw.Protection, PROT_DROP, {
-        fsr = { [0] = { 16.5, 0 } },
-    })
+    local PROT = wowsims(pw.Protection, PROT_DROP, { fsr = { [0] = { 16.5, 0 } } }, function(c)
+        c.instanceType = "raid"
+        c.items = {
+            [16] = { 17016, "Dark Iron Destroyer", "INVTYPE_WEAPON" },
+            [17] = { 18168, "Force Reactive Disk", "INVTYPE_SHIELD" },
+        }
+    end)
+    -- The export assigns its sole player to raid.tanks. The observer supplies the boss's
+    -- target-of-target from the recorded fight. Keep the outdoor leveling worlds separate.
+    function PROT.beforeLogin(core, H)
+        pw.Protection.beforeLogin(core, H)
+        local ctl = H.ctl
+        ctl.isInRaid, ctl.inGroup, ctl.groupMembers = true, true, 1
+        ctl.groupRoles.player, ctl.classification = "TANK", "worldboss"
+    end
     local PROT_LIVE = wowsims(pw.Protection, PROT_DROP, {})
+
+    it("boots the Protection replay with its pinned raid assignment, weapon and shield", function()
+        local file = assert(io.open(ws.DIR .. "paladin_protection.json"))
+        local request = require("dkjson").decode(file:read("*a"))
+        file:close()
+        local items = request.raid.parties[1].players[1].equipment.items
+        assert.are.same({ index = 0, type = "Player" }, request.raid.tanks[1])
+        local C = content("paladin_protection", PROT, "Protection (wowsims.com)", 60)
+        local L = require("Game.harness.loop").new(C)
+        for _, H in ipairs({ L.us, L.oracle }) do
+            assert.are.same({}, H.loadErrors)
+            local client = H.Hekili.Client
+            assert.are.equal("raid", select(2, client.IsInInstance()))
+            assert.are.equal("TANK", client.GroupRole("player"))
+            assert.are.equal(3, client.UnitThreatSituation("player", "target"))
+            assert.are.equal(items[15].id, H.ctl.inventory[16])
+            assert.are.equal(items[16].id, H.ctl.inventory[17])
+            assert.is_truthy(H.Hekili.State.equipped.shield)
+        end
+    end)
 
     -- the replay floor: 0.750 (28) was measured on a fight the target never swung in (the export set no tank, GAP AE);
     -- as the tank, 0.583 (48), 0.625 over central fix 12: blocks and hits return mana (Improved Seal of Fury, 61 gains; Shield Specialization, 18)

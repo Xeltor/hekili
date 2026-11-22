@@ -496,7 +496,7 @@ describe("the shipped selectors (headless)", function()
         assert.are.same({ 100112, "Feral (wowsims.com)" }, { active(H) })
         local sp = H.Hekili.DB.profile.specs[100113]
         assert.are.same({ "(none)", true }, { sp.package, sp.packManual })
-        assert.is_nil(H.Hekili.DB.profile.specChoice["Player-Realm"][2])
+        assert.is_nil(H.Hekili.DB.profile.specChoice["Player-1"][2])
     end)
 
     it("leaves an automatic Frostfire alone until the player activates the Fire pack, then keeps Fire", function()
@@ -613,7 +613,7 @@ describe("the shipped selectors (headless)", function()
         local H = boot("druid", build("druid_feral", "druid"))
         rawset(H.Hekili.DB.profile.specs, 100113, "broken") -- never in a real profile (Options seeds a table)
         assert.is_nil(H.Hekili:SetSpecChoice("guardian"))
-        assert.is_nil(H.Hekili.DB.profile.specChoice["Player-Realm"][2])
+        assert.is_nil(H.Hekili.DB.profile.specChoice["Player-1"][2])
     end)
 
     it("rejects a selector for a spec the class does not have", function()

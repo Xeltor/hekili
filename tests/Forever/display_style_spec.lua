@@ -914,6 +914,176 @@ local function tlWrite(lines)
     f:close()
 end
 
+it("ships both target swap icons in the client's DXT3 texture format", function()
+    local H = boot()
+    local dxt3Header = "BLP2" .. string.char(1, 0, 0, 0, 2, 8, 1, 1)
+    for _, field in ipairs({ "TargetSwapTexture", "TargetSwapPreviousTexture" }) do
+        local relative = assert(H.Hekili[field]:match("^Interface\\Add[oO]ns\\(.+)$"))
+        local file = assert(io.open("src/" .. relative:gsub("\\", "/") .. ".blp", "rb"))
+        local header = file:read(#dxt3Header)
+        file:close()
+        assert.are.equal(dxt3Header, header, field)
+    end
+end)
+
+for _, style in ipairs({ "classic", "timeline" }) do
+    it("renders a navigation-only record without asking the client about a spell in " .. style, function()
+        local H, d = (style == "classic" and boot or tlBoot)()
+        local name, id = "test_target_navigation", -100001
+        H.Hekili.Class.abilities[name] = { name = name }
+        local settings = H.Hekili.DB.profile.displays.Primary[style]
+        settings.glow.highlight, settings.indicators.enabled = true, true
+        local guard = {
+            __index = function(_, key)
+                assert.are_not.equal(id, key, "navigation pseudo ID used as a spell")
+                assert.are_not.equal(name, key, "navigation instruction used as a spell name")
+            end,
+        }
+        for _, field in ipairs({ "cooldown", "current", "usable", "ranges" }) do
+            setmetatable(H.ctl[field], guard)
+        end
+        local r = H.ns.Output.Begin("Primary")[1]
+        r.actionName, r.actionID, r.name = name, id, name
+        r.targetSwap, r.indicator, r.offGCD = true, "cycle", true
+        r.time, r.since, r.exact_time, r.cost, r.busy = 0, 0, H.ctl.now, 0, 0
+        H.ns.Output.Publish("Primary", 1)
+        d.__scripts.OnUpdate(d, 0.2)
+        d:OnEvent("CURRENT_SPELL_CAST_CHANGED")
+        assert.is_true(d.Buttons[1].swapShown)
+        assert.is_true(d.resolved[1].usable)
+        assert.is_false(d.resolved[1].cdAsked)
+        assert.are.same({}, H.errors)
+    end)
+
+    it("shows a full-size target swap and retires it on a target change in " .. style, function()
+        local H, d = (style == "classic" and boot or tlBoot)()
+        local b = d.Buttons[1] -- tlBoot uses the press cell for the first pick
+        local indicators = H.Hekili.DB.profile.displays.Primary[style].indicators
+        local crop = { 0.13, 0.13, 0.13, 0.87, 0.87, 0.13, 0.87, 0.87 }
+        b.Texture.GetTexCoord = function()
+            return unpack(crop)
+        end
+        local art = b.TargetSwap
+        instrument(art)
+        local queuedArt = d.Buttons[2].TargetSwap
+        instrument(queuedArt)
+        art.SetTexCoord = function(widget, ...)
+            widget.crop = { ... }
+        end
+        H.Hekili:BuildUI()
+        local function tick()
+            d.__scripts.OnUpdate(d, 0.01)
+        end
+        local function pick(indicator, origin)
+            local function edit(s)
+                s[1].indicator = indicator
+                s[1].cycleOrigin = origin
+                s[1].iconOverride = "spell override"
+                s[2].indicator = "cycle"
+            end
+            if style == "classic" then
+                publish(H, edit)
+            else
+                tlPublish(H, nil, edit)
+            end
+            tick()
+        end
+
+        indicators.enabled = false
+        pick("cycle")
+        assert.is_false(art:IsShown())
+        indicators.enabled = true
+        indicators.queued = true
+        pick("cycle")
+        assert.are.equal(H.Hekili.TargetSwapTexture, art.__tex)
+        assert.are.same(crop, art.crop)
+        assert.are.equal(b, art:GetParent():GetParent())
+        assert.is_true(art:IsShown())
+        assert.is_false(b.Icon:IsShown())
+        assert.is_false(b.Keybinding:IsShown())
+        assert.is_true(queuedArt:IsShown())
+        indicators.queued = false
+        pick("cycle")
+        assert.is_true(art:IsShown())
+        assert.is_false(queuedArt:IsShown())
+
+        H.Fire("PLAYER_TARGET_CHANGED")
+        tick()
+        assert.is_false(b:IsShown()) -- neither another Tab nor a spell before the fresh forecast
+        pick(nil, "first enemy")
+        assert.is_true(b:IsShown())
+        assert.is_false(art:IsShown())
+        assert.is_true(b.Keybinding:IsShown())
+        assert.are.equal("spell override", b.Texture:GetTexture())
+        H.Fire("PLAYER_TARGET_CHANGED")
+        tick()
+        assert.is_false(b:IsShown(), "the accepted cast belonged to the previous enemy")
+        pick("cycle")
+        assert.is_true(art:IsShown())
+        indicators.enabled = false
+        pick("cycle")
+        assert.is_false(art:IsShown())
+        indicators.enabled = true
+        pick("cancel")
+        assert.is_false(art:IsShown())
+        assert.is_true(b.Icon:IsShown())
+        assert.are.equal("Interface\\Addons\\Hekili\\Textures\\Cancel", b.Icon:GetTexture())
+        assert.are.same({}, H.errors)
+    end)
+
+    it("shows only the previous-target cue with an empty, combat-only " .. style .. " display", function()
+        local H, d = (style == "classic" and boot or tlBoot)()
+        local conf = H.Hekili.DB.profile.displays.Primary
+        local vis, status = conf.visibility, H.ns.Output.status
+        H.Hekili.currentSpecOpts.cycle = true
+        vis.advanced = true
+        vis.pve.always, vis.pve.combat, vis.pve.target, vis.pve.combatTarget = 0, 0, 0, 1
+        H.ctl.exists.target = false
+        status.combat = true
+        H.ns.Output.Begin("Primary")
+        H.ns.Output.Publish("Primary", 0)
+        instrument(d.TargetReturn)
+        d.TargetReturn.SetShown = tlrec.SetShown
+        H.Hekili:BuildUI()
+        d:UpdateAlpha()
+        assert.are.equal(0, d.alpha)
+
+        status.targetNavigation, status.navigationRevision, status.navigationStep =
+            "cycle_previous", status.targetRevision, 1
+        H.ns.Output.Publish("status", 1)
+        d.__scripts.OnUpdate(d, 0.01)
+        assert.are.equal(1, d.alpha)
+        assert.are.equal(H.Hekili.TargetSwapPreviousTexture, d.TargetReturn:GetTexture())
+        assert.is_true(d.TargetReturn:IsShown())
+        for _, button in ipairs(d.Buttons) do
+            assert.is_false(button:IsShown())
+        end
+        H.Fire("PLAYER_TARGET_CHANGED")
+        d.__scripts.OnUpdate(d, 0.01)
+        assert.is_true(d.TargetReturn:IsShown(), "a duplicate target event must not release the held cue")
+        status.navigationRevision = status.targetRevision
+        d:UpdateAlpha()
+        d.__scripts.OnUpdate(d, 0.01)
+        assert.is_true(d.TargetReturn:IsShown(), "confirming the same target must not retrigger the reverse key")
+        status.navigationStep = 2
+        d.__scripts.OnUpdate(d, 0.01)
+        assert.is_false(d.TargetReturn:IsShown(), "consecutive reverse requests have a visible release")
+        H.ctl.now = H.ctl.now + 0.41
+        d.__scripts.OnUpdate(d, 0.41)
+        assert.is_true(d.TargetReturn:IsShown())
+        H.ctl.instanceType = "pvp"
+        vis.pvp.always, vis.pvp.combat, vis.pvp.target, vis.pvp.combatTarget = 0, 0, 0, 0.8
+        d:UpdateAlpha()
+        assert.are.equal(0.8, d.alpha, "recovery respects the active zone's visibility settings")
+        H.Hekili.currentSpecOpts.cycle = false
+        d:UpdateAlpha()
+        d.__scripts.OnUpdate(d, 0.01)
+        assert.are.equal(0, d.alpha)
+        assert.is_false(d.TargetReturn:IsShown())
+        assert.are.same({}, H.errors)
+    end)
+end
+
 describe("the timeline display style", function()
     it("draws a fixed 6-record publish over 3 frames as its recorded fixture", function()
         local H, d, T = tlBoot()

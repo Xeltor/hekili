@@ -47,6 +47,8 @@ local function display(withHealthCues)
         count = 0,
         recs = records(),
         scratch = records(),
+        targetRevision = 0,
+        scratchTargetRevision = 0,
         healthCues = withHealthCues and { n = 0 },
         scratchHealthCues = withHealthCues and { n = 0 },
         subs = slots(),
@@ -89,6 +91,7 @@ local Displays = {
         combatStart = 0, -- the combat start time (state.combat), 0 out of combat
         numTargets = 0,
         targetRevision = 0,
+        swapPending = false,
         petHealthRevision = 0,
         playerFloorRevision = 0,
         specID = nil,
@@ -138,6 +141,7 @@ local function steady(o, built, count)
     local recs, rawName, held, streak, kept = o.recs, o.rawName, o.held, o.streak, o.kept
     local acted, last, hold = o.acts ~= acts, o.count, Output.hold
     local window = READY + hold * Output.interval
+    local sameTarget = o.targetRevision == o.scratchTargetRevision
     for i = 1, SLOTS do
         local name, t, keep, run, back = false, 0, false, 0, false
         if i <= count then
@@ -146,7 +150,16 @@ local function steady(o, built, count)
             if t > READY then
                 run = rawName[i] == name and streak[i] + 1 or 1
             end
+            local targetChanged = not sameTarget
+                and (
+                    Displays.status.swapPending
+                    or old.indicator == "cycle"
+                    or new.indicator == "cycle"
+                    or old.cycleOrigin
+                    or new.cycleOrigin
+                )
             keep = not acted
+                and not targetChanged
                 and i <= last
                 and t > (name and name == kept[i] and READY or window)
                 and (old.time or 0) > READY
@@ -163,9 +176,10 @@ local function steady(o, built, count)
 end
 
 --- Clears `name`'s scratch set (every non-table field of every record, and each record's belief) and returns it.
-function Output.Begin(name)
+function Output.Begin(name, targetRevision)
     local o = Displays[name]
     local scratch, cues = o.scratch, o.scratchHealthCues
+    o.scratchTargetRevision = targetRevision or Displays.status.targetRevision
     for i = 1, SLOTS do
         local rec = scratch[i]
         for k, v in pairs(rec) do
@@ -212,7 +226,7 @@ end
 
 --- Publishes `count` records of `name`'s scratch set: the annotators run over them, scratch and recs swap, the version
 --- bumps, then each subscriber gets (name, version, output). No yield inside.
-function Output.Publish(name, count)
+function Output.Publish(name, count, immediate)
     local o = Displays[name]
     local built = o.scratch
     if built then
@@ -227,9 +241,10 @@ function Output.Publish(name, count)
                 fn(name, built[i], i)
             end
         end
-        if Output.steady then
+        if Output.steady and not immediate then
             steady(o, built, count)
         end
+        o.targetRevision = o.scratchTargetRevision
         o.acts = acts
         o.scratch, o.recs, o.count = o.recs, built, count
     end

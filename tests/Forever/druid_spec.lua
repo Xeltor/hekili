@@ -12,6 +12,7 @@ local LUA = io.open(".lua/bin/lua") and ".lua/bin/lua" or "lua5.1"
 -- 10; the cooldown is the larger of RecoveryTime and CategoryRecoveryTime; gcd "totem" for the 1.0 s
 -- StartRecoveryTime, "off" where it is 0 or has no row.
 local KIT = {
+    auto_attack = { { 6603 }, 0, nil, 0, "off" },
     claw = { { 1082, 3029, 5201, 9849, 9850 }, 45, "energy", 0, "totem" },
     shred = { { 5221, 6800, 8992, 9829, 9830 }, 60, "energy", 0, "totem" },
     rake = { { 1822, 1823, 1824, 9904, 1289140 }, 40, "energy", 0, "totem" },
@@ -142,6 +143,7 @@ local NOW = {
     "wrath",
     "healing_touch",
     "regrowth",
+    "rejuvenation",
     "rebirth",
     "hibernate",
     "soothe_animal",
@@ -238,7 +240,12 @@ describe("Forever Druid", function()
         function()
             local e = ld.env(w)
             local n = 0
-            for key, a in pairs(w.abilities) do
+            for key in pairs(w.abilities) do
+                assert.is_truthy(KIT[key] or key == "recover_threat", key)
+            end
+            assert.is_true(w.abilities.recover_threat.targetSwap)
+            for key in pairs(KIT) do
+                local a = assert(w.abilities[key])
                 n = n + 1
                 local want = KIT[key]
                 assert.is_not_nil(want, "unexpected ability " .. key)
@@ -256,7 +263,7 @@ describe("Forever Druid", function()
                     assert.are.equal(want[2], priced(w, ld.run(a.spend, e), a.spendType) or 0, key)
                 end
             end
-            assert.are.equal(56, n)
+            assert.are.equal(57, n)
             local stale = { tigers_fury = true }
             for _, id in ipairs({
                 5217,
@@ -427,15 +434,15 @@ describe("Forever Druid", function()
                 "insect_swarm",
                 "hurricane",
                 "entangling_roots",
-                "healing_touch",
-                "regrowth",
-                "rejuvenation",
                 "mark_of_the_wild",
                 "gift_of_the_wild",
                 "thorns",
                 "natures_grasp",
             }) do
                 assert.are.same({ nil, "feral_form" }, { a[k].form, a[k].nobuff }, k)
+            end
+            for _, key in ipairs({ "healing_touch", "regrowth", "rejuvenation" }) do
+                assert.are.equal("feral_form", ld.run(a[key].nobuff, ld.env(w)), key)
             end
             assert.are.same({ nil, nil }, { a.innervate.form, a.innervate.nobuff }) -- leaves the form (below)
             for _, k in ipairs({ "cat_form", "bear_form", "moonkin_form", "travel_form", "aquatic_form" }) do
@@ -482,7 +489,7 @@ describe("Forever Druid", function()
             ld.run(a.handler, e)
             ld.run(a.now, e)
             ld.run(a.start, e)
-            for _, gate in pairs({ ld.run(a.form, e), ld.run(a.buff, e), a.nobuff, a.aura }) do
+            for _, gate in pairs({ ld.run(a.form, e), ld.run(a.buff, e), ld.run(a.nobuff, e), a.aura }) do
                 table.insert(e.applied, gate)
             end
         end
@@ -740,7 +747,19 @@ describe("Forever Druid", function()
                 for _, f in ipairs({ "now", "handler" }) do
                     e.removed = {}
                     ld.run(w.abilities[key][f], e)
-                    assert.are.same({ "natures_swiftness" }, e.removed, key .. " " .. f)
+                    local leavesForm = key == "healing_touch" or key == "regrowth"
+                    local expected = leavesForm
+                            and {
+                                "cat_form",
+                                "bear_form",
+                                "moonkin_form",
+                                "travel_form",
+                                "aquatic_form",
+                                "maul",
+                                "natures_swiftness",
+                            }
+                        or { "natures_swiftness" }
+                    assert.are.same(expected, e.removed, key .. " " .. f)
                 end
             end
         end)
@@ -1021,7 +1040,9 @@ describe("Forever Druid", function()
         assert.are.same({ "clearcasting", -1, 1, COVERED }, { m.aura, m.pct, m.charges, m.spells })
         local first = {}
         for _, a in pairs(w.abilities) do
-            first[a.id] = true
+            if a.id then
+                first[a.id] = true
+            end
         end
         for _, id in ipairs(m.spells) do
             assert.is_true(first[id], tostring(id)) -- each is the rank-1 ID of a registered ability
@@ -1088,8 +1109,22 @@ describe("Forever Druid", function()
         -- Hekili's `all`: Hekili_Shared/Shared/Items.lua's use_items; Hekili_Shared/Races' Night Elf racial and the
         -- Skyborne racial's aura (energized); the core's cancel_buff (tests/Forever/apl_entry_spec.lua), its buff_name a
         -- registered aura
-        local sharedActions = { use_items = true, elunes_light = true, cancel_buff = true, variable = true }
-        local sharedAuras = { energized = true }
+        local sharedActions = {
+            use_items = true,
+            elunes_light = true,
+            cancel_buff = true,
+            variable = true,
+            healing_potion = true,
+            healthstone = true,
+        }
+        local sharedAuras = {
+            energized = true,
+            casting = true,
+            dispellable_poison = true,
+            dispellable_curse = true,
+            mark_of_the_wild = true,
+            gift_of_the_wild = true,
+        }
         local shared = { buff = sharedAuras, debuff = sharedAuras, action = sharedActions, cooldown = sharedActions }
         local kinds = {
             buff = w.auras,
@@ -1735,6 +1770,7 @@ describe("Forever Druid Movement (R8)", function()
     -- re-pin ab0f00e4fc (wowsims #1087): one flat list; the gate sits on each line after the move entry
     it("OFF hides Shred outside 5 yd and shows it inside; ON shows it outside too", function()
         local shred = lines("shred")
+        assert.matches("feral_prowling&!action%.ravage%.known", table.remove(shred, 1))
         assert.are.equal(2, #shred)
         for _, l in ipairs(shred) do
             assert.matches("&%(toggle%.movement&target%.outside5|target%.within5%)$", l)
@@ -1752,7 +1788,10 @@ describe("Forever Druid Movement (R8)", function()
         local maul = lines("maul", g)
         assert.are.equal(2, #maul)
         assert.matches("&%(toggle%.movement&target%.outside5|target%.within5%)$", maul[1])
-        assert.are.equal("actions+=/maul,use_off_gcd=1,focus=2,if=!action.primal_bite.known", maul[2])
+        assert.are.equal(
+            "actions+=/maul,use_off_gcd=1,focus=2,if=!action.primal_bite.known&(feral_sustained|feral_pull&feral_spell_range&(!action.frenzied_regeneration.known|buff.frenzied_regeneration.down))",
+            maul[2]
+        )
         local function at(yd)
             return world(yd, dlw.Guardian, g, "maul", 1)
         end
@@ -1973,6 +2012,8 @@ describe("Forever Druid Claw vs Shred (L602)", function()
     -- two adjacent Claw lines (since e4ef929e54), one recipe condition (the OR of wowsims's two, the second guarded)
     it("guards every Shred line, and the Claw lines, by position, the talent and Clearcasting", function()
         local shred, claw = lines("shred"), lines("claw")
+        assert.matches("feral_prowling&!action%.ravage%.known", table.remove(shred, 1))
+        assert.matches("feral_pull&!feral_behind", table.remove(claw))
         local S = "(settings.behind|!target.is_targeting_player)&(talent.improved_shred.rank>=2|buff.clearcasting.up)"
         local C = "(!settings.behind&target.is_targeting_player|talent.improved_shred.rank<2&!buff.clearcasting.up)"
         assert.are.equal(2, #shred)

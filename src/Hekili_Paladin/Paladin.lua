@@ -21,6 +21,7 @@
 -- ui/specs/paladin/*/apls/*.apl.json and sim/paladin/) is the reference for the priorities and the seal, Echo,
 -- Judgement and Holy Shield rules; no code is copied.
 
+local Hekili = Hekili -- State expressions run in the simulation's environment.
 local Facade = Hekili.Client
 local UnitClassBase, IsSpellUsable = Facade.UnitClassBase, Facade.C_Spell.IsSpellUsable
 local L = Hekili:GetLocale("Hekili_Paladin")
@@ -30,7 +31,8 @@ if UnitClassBase("player") ~= "PALADIN" then
 end
 
 local state = Hekili.State
-local max = math.max
+local min, max = math.min, math.max
+local RIGHTEOUS_FURY = { 25780, 407627 } -- 407627: the rune's (D4: registered, inert unless learned)
 
 -- The class kit and one spec a talent tree (ids the core's: Holy 100021, unsupported; Protection 100022, Retribution
 -- 100023; the client's one pseudo-spec, 1486, only keys the legacy profile the core migrates). Icons: the DB2 tabs'.
@@ -43,6 +45,30 @@ local spec = Hekili:NewClass("PALADIN", {
             tree = 2,
             icon = 135893,
             role = "tank",
+            supportsLeveling = true,
+            recoveryDisplay = {
+                upkeep = { action = "righteous_fury", ranks = RIGHTEOUS_FURY },
+                below = 80,
+                spells = { holy_light = true, flash_of_light = true },
+                selfCast = {
+                    holy_light = true,
+                    flash_of_light = true,
+                    lay_on_hands = true,
+                    blessing_of_freedom = true,
+                    cleanse = true,
+                    purify = true,
+                },
+                combat = {
+                    holy_light = true,
+                    flash_of_light = true,
+                    lay_on_hands = true,
+                    templars_bulwark = true,
+                    divine_protection = true,
+                    divine_shield = true,
+                    healing_potion = true,
+                    healthstone = true,
+                },
+            },
             package = "Protection (wowsims.com)",
         },
         {
@@ -76,6 +102,8 @@ local SEAL_OF_LIGHT = { 20165, 20347, 20348, 20349 }
 local SEAL_OF_LIGHT_COST = { 110, 140, 180, 210 }
 local SEAL_OF_WISDOM = { 20166, 20356, 20357 }
 local SEAL_OF_WISDOM_COST = { 135, 170, 200 }
+local JUDGEMENT = { 20271 }
+local SWIFT_JUDGEMENT = { 1310994 }
 local BASE_MANA = 1512 -- a fraction cost is of base mana (wowsims's ExtraClassBaseStats, level 60; Spec.lua)
 local HAMMER_OF_WRATH = { 24275, 24274, 24239 }
 local HAMMER_OF_WRATH_COST = { 295, 360, 425 }
@@ -96,6 +124,7 @@ local HOLY_SHOCK_COST = { 160, 225, 275, 325 }
 -- 70707's three-rank 150 / 195 / 240 ladder at 40 / 50 / 60 lacks it.
 local HOLY_SHIELD = { 20925, 20927, 20928, 1239570 }
 local HOLY_SHIELD_COST = { 100, 150, 195, 240 }
+local DEVOTION_AURA = { 465, 10290, 643, 10291, 1032, 10292, 10293 }
 local RETRIBUTION_AURA = { 7294, 10298, 10299, 10300, 10301 }
 -- Lane A (coverage; the pin's sim/paladin/spell_data_auto_gen.go ladders, costs and cooldowns from its spells_auto_gen.go).
 local HOLY_LIGHT = { 635, 639, 647, 1026, 1042, 3472, 10328, 10329, 25292 }
@@ -103,6 +132,7 @@ local HOLY_LIGHT_COST = { 35, 60, 110, 190, 275, 365, 465, 580, 660 }
 local FLASH_OF_LIGHT = { 19750, 19939, 19940, 19941, 19942, 19943 }
 local FLASH_OF_LIGHT_COST = { 35, 50, 70, 90, 115, 140 }
 local LAY_ON_HANDS = { 633, 2800, 10310 }
+local LAY_ON_HANDS_MANA = { [633] = 0, [2800] = 250, [10310] = 550 }
 local HOLY_WRATH = { 2812, 10318 }
 local HOLY_WRATH_COST = { 645, 805 }
 local HAMMER_OF_JUSTICE = { 853, 5588, 5589, 10308 }
@@ -117,10 +147,10 @@ local DIVINE_PROTECTION = { 498, 5573 }
 local DIVINE_PROTECTION_COST = { 15, 35 }
 -- Turn Evil (talent 1328370) overrides the three Turn Undead ranks with its own (1328374, 1328373, 1328372: same costs)
 local TURN_UNDEAD = { 2878, 5627, 10326, 1328374, 1328373, 1328372 }
+local REPENTANCE = { 20066 }
 local TURN_UNDEAD_COST = { 35, 50, 75, 35, 50, 75 }
 local LIGHTS_VIGIL = { 1310911, 1311590, 1311595 }
 local LIGHTS_VIGIL_COST = { 730, 1000, 1340 }
-local RIGHTEOUS_FURY = { 25780, 407627 } -- 407627: the rune's (D4: registered, inert unless learned)
 
 local function rest(ids)
     local out = {}
@@ -393,6 +423,8 @@ spec:RegisterAuras({
         consumedBy = { BLOCK = true, BLOCKED = true },
     },
     righteous_fury = { id = 25780, copy = { 407627 }, duration = 1800, max_stack = 1 },
+    -- Post-resurrection legacy buff: actual duration is observed; one minute at its first rank.
+    the_quick_and_the_dead = { id = 1262310, duration = 60, max_stack = 1 },
     retribution_aura = { id = 7294, copy = rest(RETRIBUTION_AURA), duration = 3600, max_stack = 1 },
     divine_favor = { id = 20216, duration = 3600, max_stack = 1 },
     -- Consecration's area aura on the target (1280353, DB2: 0.6 s on area enemies, refreshed by each 1 s tick; the one
@@ -440,7 +472,9 @@ spec:RegisterAuras({
     -- The Paladin auras (B6, one up at a time), Consecration's ranks (B7: wowsims registers each rank's dot; the Cooldown
     -- Manager's item links the five and 1280345-1280349 as a self aura: needs in-game check which unit shows it), the
     -- Holy-only auras (B8, Holy is unsupported) and the blessings (item 200215 etc.: our own casts, no priority reads them).
-    devotion_aura = { id = 465, copy = { 10290, 643, 10291, 1032, 10292, 10293 }, duration = 3600, max_stack = 1 },
+    paladin_autoattacking = { duration = 3600, max_stack = 1 },
+    sanctity_aura = { id = 20218, duration = 3600, max_stack = 1 },
+    devotion_aura = { id = 465, copy = rest(DEVOTION_AURA), duration = 3600, max_stack = 1 },
     concentration_aura = { id = 19746, duration = 3600, max_stack = 1 },
     fire_resistance_aura = { id = 19891, copy = { 19899, 19900 }, duration = 3600, max_stack = 1 },
     frost_resistance_aura = { id = 19888, copy = { 19897, 19898 }, duration = 3600, max_stack = 1 },
@@ -472,7 +506,13 @@ spec:RegisterAuras({
     blessing_of_light = { id = 19977, copy = { 19978, 19979, 25890 }, duration = 300, max_stack = 1 },
     -- The auras the abilities above apply, under the spell IDs the Cooldown Manager links (cdm/paladin.lua). One aura
     -- a Cooldown Manager item: Divine Shield's and Divine Protection's invulnerability is one (the item links both).
-    hammer_of_justice = { id = 1324513, copy = { 1324515, 1324516, 1324517 }, duration = 6, max_stack = 1 },
+    hammer_of_justice = {
+        id = 1324513,
+        copy = { 1324515, 1324516, 1324517 },
+        duration = 6,
+        max_stack = 1,
+        debuffRetryDelay = 30,
+    },
     turn_undead = { id = 1324543, copy = { 1324545, 1324546 }, duration = 20, max_stack = 1 },
     repentance = { id = 1324538, duration = 6, max_stack = 1 },
     blessing_of_freedom = { id = 1044, duration = 10, max_stack = 1 },
@@ -537,6 +577,730 @@ spec:RegisterStateExpr("seal_up", function()
         or buff.seal_of_light.up
         or buff.seal_of_wisdom.up
 end)
+
+-- A tracked fear or incapacitate is breakable by damage; a missing count for a learned control is ambiguous.
+local function noCrowdControl(ranks, auraID, t)
+    local count = Facade.DebuffCount(auraID, t)
+    return count == 0 or count == nil and knownRank(ranks) == 0
+end
+
+local function paladinNoBreakableControl()
+    local t = Facade.GetTime()
+    return noCrowdControl(TURN_UNDEAD, 1324543, t) and noCrowdControl(REPENTANCE, 1324538, t)
+end
+
+-- Holy Strike is a ten-second cooldown before Shieldsworn. Give two real attempts time to land
+-- on the same enemy before escalating to Judgement of Fury. Judgement and Swift Judgement both
+-- unleash the active seal; classify the real cast from the player's observed seal at cast time.
+local recovery
+do
+    local builders = {}
+    for _, ranks in ipairs({ HOLY_STRIKE, EXORCISM, HAMMER_OF_WRATH }) do
+        for _, id in ipairs(ranks) do
+            builders[id] = true
+        end
+    end
+    local shocks = {}
+    for _, id in ipairs(HOLY_SHOCK) do
+        shocks[id] = true
+    end
+    -- Holy Shock shares a cast ID between healing and damage. Only count a named hostile cast
+    -- when a heal on the player, a group member, a pet, focus or mouseover cannot explain it.
+    local function distinctRecipient(unit, name)
+        local exists = Facade.UnitExists(unit)
+        if not Facade.issecretvalue(exists) and exists == false or Facade.UnitIsUnit(unit, "target") == true then
+            return true
+        end
+        local recipient = Facade.UnitName(unit)
+        return recipient ~= nil and recipient ~= name
+    end
+    local healTargets = {}
+    for _, group in ipairs({ "raid", "party" }) do
+        local units = { "player", "pet", "focus", "mouseover" }
+        for i = 1, group == "raid" and 40 or 4 do
+            units[#units + 1] = group .. i
+            units[#units + 1] = group .. "pet" .. i
+        end
+        healTargets[group] = units
+    end
+    local function offensiveShock(name)
+        if not name or name == "" or name ~= Facade.UnitName("target") then
+            return false
+        end
+        local raid = Facade.IsInRaid()
+        if Facade.issecretvalue(raid) or raid == nil then
+            return false
+        end
+        for _, unit in ipairs(healTargets[raid and "raid" or "party"]) do
+            if not distinctRecipient(unit, name) then
+                return false
+            end
+        end
+        return true
+    end
+    local function criticalVictim(member)
+        local health = Facade.GroupMemberHealthFraction(member)
+        return health ~= nil and health > 0 and health <= 0.25
+    end
+
+    recovery = Hekili:NewTankRecovery(spec, {
+        specKey = "protection",
+        window = 15,
+        meleeSpell = function()
+            return HOLY_STRIKE[knownRank(HOLY_STRIKE)]
+        end,
+        rangeSpell = function()
+            -- Swift itself has a self-only range row. The learned hostile probes cap it at ten yards.
+            return JUDGEMENT[knownRank(JUDGEMENT)]
+                or knownRank(SWIFT_JUDGEMENT) > 0 and HAMMER_OF_JUSTICE[knownRank(HAMMER_OF_JUSTICE)]
+                or HOLY_STRIKE[knownRank(HOLY_STRIKE)]
+        end,
+        safePack = paladinNoBreakableControl,
+        urgentVictim = criticalVictim,
+        classifyCast = function(id, name)
+            if id == 20271 or id == 1310994 then
+                local aura = Facade.C_UnitAuras.GetPlayerAuraBySpellID
+                if aura(SEAL_OF_FURY[1]) then
+                    return "rescue"
+                elseif aura(SEAL_OF_RIGHTEOUSNESS[1]) or aura(SEAL_OF_COMMAND[1]) then
+                    return "builder"
+                end
+            elseif builders[id] or shocks[id] and offensiveShock(name) then
+                return "builder"
+            end
+        end,
+    })
+
+    spec:RegisterStateExpr("prot_paladin_loose_target", function()
+        local sample = recovery.evidence()
+        return sample and sample.loose or false
+    end)
+
+    spec:RegisterStateExpr("prot_paladin_recovery_pack", function()
+        local sample = recovery.evidence()
+        return sample and sample.other or false
+    end)
+
+    spec:RegisterStateExpr("prot_paladin_ground_pickup", function()
+        local sample = recovery.evidence()
+        return sample and sample.otherMelee or false
+    end)
+
+    spec:RegisterStateExpr("prot_paladin_loose_melee", function()
+        local sample = recovery.evidence()
+        return sample and sample.loose and sample.looseMelee or false
+    end)
+
+    spec:RegisterStateExpr("prot_paladin_urgent_pickup", function()
+        local sample = recovery.evidence()
+        return sample and sample.criticalOther or false
+    end)
+
+    spec:RegisterStateExpr("prot_paladin_last_resort", function()
+        local member = state.prot_paladin_loose_target
+        return member
+                and debuff.judgement_of_fury.down
+                and not Facade.DebuffImmunity("judgement_of_fury", Facade.UnitGUID("target"), Facade.GetTime())
+                and (criticalVictim(member) or not state.prot_paladin_urgent_pickup and recovery.lastResort())
+            or false
+    end)
+
+    local function usableSoon(spell, mana, horizon)
+        local action = state.action[spell]
+        return action.known and not action.disabled and action.cost <= mana and state.cooldown[spell].remains <= horizon
+    end
+
+    local function liveMana()
+        return min(state.mana.lo, state.mana.actual_lo or state.mana.lo)
+    end
+
+    local function canJudge(mana, horizon)
+        return usableSoon("judgement", mana, horizon) or usableSoon("swift_judgement", mana, horizon)
+    end
+
+    spec:RegisterStateExpr("prot_paladin_prepare_taunt", function()
+        return buff.seal_of_fury.down
+            and state.prot_paladin_last_resort
+            and canJudge(liveMana() - action.seal_of_fury.cost, gcd.max)
+    end)
+
+    spec:RegisterStateExpr("prot_paladin_judgement_allowed", function()
+        -- Fury Judgement also deals Holy damage when the mob is already ours. While off-tanking
+        -- (including a boss handoff), damage Judgements are available from a different seal.
+        return buff.seal_of_fury.down
+            or target.is_dummy
+            or state.prot_paladin_last_resort
+            or not state.prot_paladin_recovery_pack and recovery.holdingTarget()
+    end)
+
+    spec:RegisterStateExpr("prot_paladin_recover_threat", function()
+        local sample = recovery.evidence()
+        if not sample or not sample.other then
+            return false
+        end
+        local mana, horizon = liveMana(), state.gcd.remains
+        if
+            sample.otherMelee
+            and not sample.criticalOther
+            and state.prot_pal_can_consecrate
+            and usableSoon("consecration", mana, horizon)
+        then
+            return false
+        end
+        if
+            sample.criticalOther
+            and (
+                buff.seal_of_fury.up and canJudge(mana, horizon)
+                or usableSoon("seal_of_fury", mana, horizon) and canJudge(mana - action.seal_of_fury.cost, gcd.max)
+            )
+        then
+            return true
+        end
+        return sample.otherMelee
+                and (not sample.criticalOther or sample.criticalMelee)
+                and state.weapon.size > 0
+                and usableSoon("holy_strike", mana, horizon)
+            or usableSoon("holy_shock", mana, horizon)
+            or (buff.seal_of_righteousness.up or buff.seal_of_command.up) and canJudge(mana, horizon)
+    end)
+end
+
+local function plain(value)
+    if not Facade.issecretvalue(value) then
+        return value
+    end
+end
+
+local function paladinContext()
+    local _, instance = Facade.IsInInstance()
+    instance = plain(instance)
+    if instance == "none" or instance == "party" or instance == "scenario" or instance == "raid" then
+        return instance
+    end
+end
+
+-- Only the next real action can depend on the player's health. A forecast cannot know how
+-- much a heal will restore, whether it crits, or how much damage will arrive during its cast.
+spec:RegisterStateExpr("prot_pal_self_heal", function()
+    local heal = state.action[state.this_action]
+    return heal ~= nil
+        and state.offset == 0
+        and state.OnToggleDisplay("defensives")
+        and paladinContext() ~= nil
+        and not state.paladin_incapacitated
+        and buff.casting.down
+        and plain(Facade.UnitIsDeadOrGhost("player")) == false
+        and plain(Facade.IsMounted()) == false
+        and plain(Facade.UnitOnTaxi("player")) == false
+        and Hekili:CanSelfCastHelpfulSpell(heal.id)
+        and plain(Facade.UnitAffectingCombat("player")) == (combat > 0)
+end)
+
+spec:RegisterStateExpr("prot_pal_emergency_heal", function()
+    if not state.prot_pal_self_heal then
+        return false
+    end
+    -- Do not spend all mana because a forecast eventually reaches the end of an immunity.
+    -- The observed aura represents both Divine Shield and Divine Protection.
+    local immunity = Facade.C_UnitAuras.GetPlayerAuraBySpellID(DIVINE_SHIELD[1])
+    return not immunity or immunity.expirationTime > 0 and immunity.expirationTime - Facade.GetTime() <= state.gcd.max
+end)
+
+local function additionalAttacker()
+    for unit in pairs(recovery.plates) do
+        if
+            plain(Facade.UnitIsUnit(unit, "target")) ~= true
+            and plain(Facade.UnitExists(unit)) == true
+            and plain(Facade.UnitCanAttack("player", unit)) == true
+            and plain(Facade.UnitIsDead(unit)) ~= true
+            and plain(Facade.UnitAffectingCombat(unit)) ~= false
+        then
+            return true
+        end
+    end
+    return false
+end
+
+local function startableHeal()
+    if not state.prot_pal_self_heal or state.moving then
+        return nil
+    end
+    local heal = state.action[state.this_action]
+    if heal.cost <= min(state.mana.lo, state.mana.actual_lo or state.mana.lo) then
+        return heal
+    end
+end
+
+-- Hardcasting interrupts melee and blocks. An active tank needs a full protected casting
+-- window. While solo, a quick heal can still be worthwhile against a single ordinary enemy.
+local function canCastHeal(large)
+    local heal = startableHeal()
+    if not heal then
+        return false
+    end
+    if state.combat == 0 then
+        return Facade.PlayerEatingOrDrinking() == false
+    end
+    local pressure = recovery.evidence()
+    if pressure and (pressure.loose or pressure.other) then
+        return false
+    end
+    local cast = heal.cast_time
+    if state.buff.divine_shield.up and state.buff.divine_shield.remains >= cast then
+        return true
+    end
+    if additionalAttacker() then
+        return false
+    end
+    -- Healing does not break Repentance or Turn Undead. A controlled enemy can give us time
+    -- to cast even though it is deliberately ineligible for every hostile recommendation.
+    local controlled =
+        max(state.debuff.hammer_of_justice.remains, state.debuff.repentance.remains, state.debuff.turn_undead.remains)
+    if controlled > 0 and controlled >= cast and Facade.TargetInPlayerCombat() == true then
+        return true
+    end
+    if not state.prot_pal_attack_target then
+        return false
+    end
+    if not state.solo or plain(Facade.IsInRaid()) ~= false then
+        return recovery.otherTank()
+    end
+    return not large and not state.boss and not state.target.is_boss
+end
+
+spec:RegisterStateExpr("prot_pal_cast_heal", function()
+    return canCastHeal(false)
+end)
+spec:RegisterStateExpr("prot_pal_big_heal", function()
+    return canCastHeal(true)
+end)
+
+-- If the pack is entirely ours, a cast at critical health may be the last available way
+-- to live through it. The health-gated APL tries the trained instant defenses first.
+spec:RegisterStateExpr("prot_pal_desperate_solo_heal", function()
+    local heal = startableHeal()
+    return heal ~= nil
+        and state.prot_pal_solo_immunity
+        and additionalAttacker()
+        and state.buff.divine_shield.remains < heal.cast_time
+end)
+
+-- Against a single solo opponent a stun can buy a full cast. Reserve the mana for both actions.
+local function canHealAfterStun(heal, manaLeft)
+    return heal.known and not heal.disabled and heal.cost <= manaLeft and Hekili:CanSelfCastHelpfulSpell(heal.id)
+end
+
+spec:RegisterStateExpr("prot_pal_stun_to_heal", function()
+    if
+        not state.OnToggleDisplay("defensives")
+        or not state.prot_pal_attack_target
+        or not state.prot_pal_solo_immunity
+        or state.moving
+        or state.paladin_incapacitated
+        or state.offset > 0
+        or additionalAttacker()
+        or Facade.TargetInPlayerCombat() ~= true
+        or not target.within10
+        or target.outside10
+        or debuff.hammer_of_justice.up
+        or buff.divine_shield.up
+    then
+        return false
+    end
+    local manaLeft = min(mana.lo, mana.actual_lo or mana.lo) - action.hammer_of_justice.cost
+    return canHealAfterStun(action.flash_of_light, manaLeft) or canHealAfterStun(action.holy_light, manaLeft)
+end)
+
+spec:RegisterStateExpr("prot_pal_attack_target", function()
+    local instance = paladinContext()
+    if
+        not instance
+        or debuff.repentance.up
+        or debuff.turn_undead.up
+        or plain(Facade.UnitExists("target")) ~= true
+        or plain(Facade.UnitCanAttack("player", "target")) ~= true
+        or plain(Facade.UnitIsDead("target")) ~= false
+        or plain(Facade.UnitIsPlayer("target")) ~= false
+    then
+        return false
+    end
+    if target.is_dummy or Facade.TargetInPlayerCombat() == true then
+        return true
+    end
+    -- A deliberately selected idle outdoor enemy can start a pull. Inside an instance,
+    -- and once fighting outdoors, require evidence that the selected enemy belongs to our fight.
+    return instance == "none"
+        and plain(Facade.IsInRaid()) == false
+        and (combat == 0 or state.false_start > 0)
+        and plain(Facade.UnitAffectingCombat("target")) == false
+end)
+
+-- Verified raid trash uses the same mana and ground rules as dungeon trash. On a boss,
+-- in an ongoing raid encounter, or with an unreadable raid classification, use the tanked raid priority.
+local function raidPriority()
+    if paladinContext() ~= "raid" and plain(Facade.IsInRaid()) ~= true then
+        return false
+    end
+    if state.boss or state.target.is_boss or plain(Facade.C_InstanceEncounter.IsEncounterInProgress()) ~= false then
+        return true
+    end
+    local kind, level = plain(Facade.UnitClassification("target")), plain(Facade.UnitLevel("target"))
+    return type(level) ~= "number"
+        or level <= 0
+        or not (kind == "elite" or kind == "rareelite" or kind == "normal" or kind == "rare" or kind == "minus")
+end
+
+spec:RegisterStateExpr("prot_pal_raid_prep", function()
+    return target.is_dummy or raidPriority()
+end)
+
+spec:RegisterStateExpr("prot_pal_sustained", function()
+    return state.prot_pal_attack_target and state.prot_pal_raid_prep
+end)
+
+spec:RegisterStateExpr("prot_pal_field", function()
+    return paladinContext() ~= nil and not target.is_dummy and not raidPriority()
+end)
+
+spec:RegisterStateExpr("prot_pal_durable", function()
+    local kind = plain(Facade.UnitClassification("target"))
+    return boss or target.is_boss or kind == "elite" or kind == "rareelite" or kind == "worldboss"
+end)
+
+spec:RegisterStateExpr("prot_pal_self_utility", function()
+    return state.offset == 0 and Hekili:CanSelfCastHelpfulSpell(action[state.this_action].id)
+end)
+
+-- In group content dispels may be assigned or have encounter-specific consequences.
+-- On an ordinary solo outdoor pull the shared aura reader identifies actual removable effects.
+spec:RegisterStateExpr("prot_pal_solo_dispel", function()
+    return state.solo
+        and paladinContext() == "none"
+        and plain(Facade.GetNumGroupMembers()) == 0
+        and not state.boss
+        and not state.target.is_boss
+        and state.prot_pal_combat_defense
+        and state.prot_pal_attack_target
+        and not state.paladin_incapacitated
+        and state.prot_pal_self_utility
+end)
+
+-- A nearby plate is a reason to spend mana on an area spell only if it is fighting our group.
+-- An idle or unrelated hostile in the same radius makes that cast unsafe. Cache the live observations
+-- for the evaluation; simulated cooldowns and mana below still change between forecast slots.
+local packTime, packTarget, packCount, packSafe
+local function groundPack()
+    local t, key = Facade.GetTime(), Facade.TargetMemoryKey()
+    if t == packTime and key == packTarget then
+        return packCount, packSafe
+    end
+    packTime, packTarget = t, key
+    packCount, packSafe = 1, true
+    local probe = HOLY_STRIKE[knownRank(HOLY_STRIKE)] or 6603
+    for unit, victim in pairs(recovery.plates) do
+        local isCurrent = plain(Facade.UnitIsUnit(unit, "target"))
+        if
+            isCurrent ~= true
+            and plain(Facade.UnitExists(unit)) == true
+            and plain(Facade.UnitIsDead(unit)) == false
+            and plain(Facade.UnitCanAttack("player", unit)) == true
+        then
+            local lo, hi = Facade.LibRangeCheck:GetRange(unit)
+            local near = plain(Facade.C_Spell.IsSpellInRange(probe, unit)) == true or (type(hi) == "number" and hi <= 8)
+            if near or not (type(lo) == "number" and lo >= 8) then
+                local raid = plain(Facade.UnitInRaid(victim))
+                if
+                    plain(Facade.UnitAffectingCombat(unit)) ~= true
+                    or plain(Facade.UnitIsPlayer(unit)) ~= false
+                    or not (
+                        type(plain(Facade.UnitThreatSituation("player", unit))) == "number"
+                        or plain(Facade.UnitIsUnit(victim, "player")) == true
+                        or plain(Facade.UnitInParty(victim)) == true
+                        or type(raid) == "number" and raid > 0
+                    )
+                then
+                    packSafe = false
+                elseif near and isCurrent == false then
+                    packCount = packCount + 1
+                end
+            end
+        end
+    end
+    return packCount, packSafe
+end
+
+spec:RegisterStateExpr("prot_pal_pack", function()
+    return state.max_targets ~= 1 and state.toggle.mode ~= "single" and groundPack() > 1
+end)
+
+spec:RegisterStateExpr("prot_pal_tanking", function()
+    if target.is_dummy then
+        return true
+    end
+    local role = Facade.GroupRole("player")
+    if recovery.otherTank() then
+        return false
+    end
+    if solo and not (state.prot_pal_raid_prep and role == "TANK") then
+        return equipped.shield and (state.prot_pal_durable or state.prot_pal_pack)
+    end
+    if role ~= "TANK" and role ~= "NONE" then
+        return false
+    end
+    return role == "TANK" or recovery.holdingTarget()
+end)
+
+-- Righteous Fury is self upkeep for Protection, including an assigned off-tank.
+-- An unassigned group can use the selected spec unless someone else has the tank assignment.
+spec:RegisterStateExpr("prot_pal_maintain_fury", function()
+    if
+        not paladinContext()
+        or buff.righteous_fury.up
+        or buff.casting.up
+        or state.paladin_incapacitated
+        or plain(Facade.UnitIsDeadOrGhost("player")) ~= false
+        or plain(Facade.IsMounted()) ~= false
+        or plain(Facade.UnitOnTaxi("player")) ~= false
+        or plain(Facade.UnitHasVehicleUI("player")) ~= false
+        or action.righteous_fury.cost > min(mana.lo, mana.actual_lo or mana.lo)
+        or Facade.C_UnitAuras.GetPlayerAuraBySpellID(RIGHTEOUS_FURY[1])
+    then
+        return false
+    end
+    local inCombat = plain(Facade.UnitAffectingCombat("player"))
+    if inCombat == nil or not inCombat and Facade.PlayerEatingOrDrinking() ~= false then
+        return false
+    end
+    local grouped = plain(Facade.IsInGroup())
+    if grouped == false then
+        return true
+    end
+    local ownRole = Facade.GroupRole("player")
+    if grouped ~= true or ownRole ~= "TANK" and ownRole ~= "NONE" then
+        return false
+    end
+    if ownRole == "TANK" then
+        return true
+    end
+    local raid, count = plain(Facade.IsInRaid()), plain(Facade.GetNumGroupMembers())
+    if raid == nil or type(count) ~= "number" or count < 1 or recovery.otherTank() then
+        return false
+    end
+    local prefix = raid and "raid" or "party"
+    for i = 1, raid and count or count - 1 do
+        if Facade.GroupRole(prefix .. i) == "TANK" then
+            return false
+        end
+    end
+    return true
+end)
+
+spec:RegisterStateExpr("prot_pal_aura_missing", function()
+    return buff.retribution_aura.down
+        and buff.devotion_aura.down
+        and buff.concentration_aura.down
+        and buff.sanctity_aura.down
+        and buff.fire_resistance_aura.down
+        and buff.frost_resistance_aura.down
+        and buff.shadow_resistance_aura.down
+end)
+
+spec:RegisterStateExpr("prot_pal_start_attack", function()
+    return state.prot_pal_field
+        and state.prot_pal_attack_target
+        and state.weapon.size > 0
+        and target.within5
+        and not target.outside5
+        and plain(Facade.C_Spell.IsCurrentSpell(6603)) == false
+        and buff.paladin_autoattacking.down
+end)
+
+spec:RegisterHook("reset_precast", function()
+    if state.spec.protection then
+        if plain(Facade.C_Spell.IsCurrentSpell(6603)) == true then
+            applyBuff("paladin_autoattacking")
+        elseif buff.paladin_autoattacking.up then
+            removeBuff("paladin_autoattacking")
+        end
+    end
+end)
+
+spec:RegisterStateExpr("prot_pal_shield_pressure", function()
+    if not equipped.shield then
+        return false
+    end
+    local inMelee = target.within5 and not target.outside5
+    if solo then
+        -- Threat numbers need not exist for a solo player. A confirmed engaged melee enemy
+        -- targeting us is the evidence that a block can help on a durable pull or pack.
+        return (state.prot_pal_durable or state.prot_pal_pack)
+            and (
+                inMelee
+                    and Facade.TargetInPlayerCombat() == true
+                    and plain(Facade.UnitIsUnit("targettarget", "player")) == true
+                or state.prot_pal_other_melee > 0
+            )
+    end
+    return inMelee and recovery.holdingTarget() or state.prot_pal_other_melee > 0
+end)
+
+-- Expensive discretionary spells leave room for the next Holy Strike and, under melee pressure,
+-- the next Holy Shield. The live lower bound prevents a forecasted mana return funding a cast early.
+spec:RegisterStateExpr("prot_pal_spare_mana", function()
+    local available = min(mana.lo, mana.actual_lo or mana.lo)
+    if action.holy_strike.known and not action.holy_strike.disabled then
+        available = available - action.holy_strike.cost
+    end
+    if
+        state.toggle.defensives
+        and state.prot_pal_shield_pressure
+        and action.holy_shield.known
+        and not action.holy_shield.disabled
+    then
+        available = available - action.holy_shield.cost
+    end
+    return available
+end)
+
+spec:RegisterStateExpr("prot_pal_ground_safe", function()
+    local _, safe = groundPack()
+    return safe and debuff.repentance.down and debuff.turn_undead.down and paladinNoBreakableControl()
+end)
+
+spec:RegisterStateExpr("prot_pal_can_consecrate", function()
+    return state.prot_pal_ground_safe
+        and action.consecration.known
+        and not action.consecration.disabled
+        and state.prot_pal_spare_mana >= action.consecration.cost
+        and debuff.consecrated_ground.remains <= gcd.max
+end)
+
+-- A self absorb can help through a target switch or with no enemy selected. Read player combat
+-- directly so a simulated pull in a later recommendation slot never spends a defensive.
+spec:RegisterStateExpr("prot_pal_combat_defense", function()
+    return paladinContext() ~= nil
+        and plain(Facade.UnitAffectingCombat("player")) == true
+        and plain(Facade.UnitIsDeadOrGhost("player")) == false
+        and not target.is_dummy
+end)
+
+do
+    local function attackingMe(unit, victim)
+        return plain(Facade.UnitExists(unit)) == true
+            and plain(Facade.UnitIsDead(unit)) == false
+            and plain(Facade.UnitCanAttack("player", unit)) == true
+            and plain(Facade.UnitIsPlayer(unit)) == false
+            and plain(Facade.UnitAffectingCombat(unit)) == true
+            and plain(Facade.UnitIsUnit(victim, "player")) == true
+    end
+
+    -- Changing to a loose caster does not stop the other mobs' melee swings. Count only
+    -- distinct engaged nameplates with a positive melee range reading and the Paladin as victim.
+    local scanTime, scanTarget, otherMelee
+    spec:RegisterStateExpr("prot_pal_other_melee", function()
+        local t, key = Facade.GetTime(), Facade.TargetMemoryKey()
+        if t ~= scanTime or key ~= scanTarget then
+            scanTime, scanTarget, otherMelee = t, key, 0
+            local probe = HOLY_STRIKE[knownRank(HOLY_STRIKE)] or 6603
+            for unit, victim in pairs(recovery.plates) do
+                if
+                    plain(Facade.UnitIsUnit(unit, "target")) == false
+                    and attackingMe(unit, victim)
+                    and plain(Facade.C_Spell.IsSpellInRange(probe, unit)) == true
+                then
+                    otherMelee = otherMelee + 1
+                end
+            end
+        end
+        return otherMelee
+    end)
+
+    -- UNIT_COMBAT can identify a real hit on us even without a selected enemy or attacker GUID.
+    -- Hidden amounts cannot establish its size. Three actual melee attackers are separate evidence.
+    local hardHitUntil = 0
+    spec:RegisterUnitEvent("UNIT_COMBAT", "player", nil, function(_, _, kind, _, amount)
+        amount = plain(amount)
+        if state.spec.protection and plain(kind) == "WOUND" and type(amount) == "number" and amount > 0 then
+            local maximum = Facade.PlayerHealthMaximum()
+            if maximum and amount >= maximum * 0.25 then
+                hardHitUntil = Facade.GetTime() + 5
+            end
+        end
+    end)
+    local function clearHit()
+        hardHitUntil = 0
+    end
+    spec:RegisterEvent("PLAYER_REGEN_ENABLED", clearHit)
+    spec:RegisterEvent("PLAYER_ENTERING_WORLD", clearHit)
+
+    spec:RegisterStateExpr("prot_pal_heavy_pressure", function()
+        if not state.prot_pal_combat_defense then
+            return false
+        end
+        if Facade.GetTime() < hardHitUntil then
+            return true
+        end
+        local others = state.prot_pal_other_melee
+        return others >= 3
+            or others >= 2 and target.within5 and not target.outside5 and attackingMe("target", "targettarget")
+    end)
+
+    -- Temporary immunity makes mobs ignore the Paladin. Only offer it on an ordinary outdoor
+    -- solo fight where the visible combatants are enemies attacking us and nobody else can be seen
+    -- sharing the pull. Unknown roles, victims or encounter state do not establish that.
+    local function soloOpponent(unit, victim)
+        if
+            plain(Facade.UnitExists(unit)) == false
+            or plain(Facade.UnitIsDead(unit)) == true
+            or plain(Facade.UnitAffectingCombat(unit)) == false
+            or plain(Facade.UnitIsUnit(unit, "player")) == true
+        then
+            return true, false
+        end
+        local level = plain(Facade.UnitLevel(unit))
+        local kind = plain(Facade.UnitClassification(unit))
+        -- Insecure tank threat can expose an ungrouped ally even when their plate is hidden.
+        -- A truly solo enemy may have no threat number at all.
+        local threat = plain(Facade.UnitThreatSituation("player", unit))
+        local mine = attackingMe(unit, victim)
+            and (threat == nil or threat == 3)
+            and type(level) == "number"
+            and level > 0
+            and (kind == "normal" or kind == "elite" or kind == "rare" or kind == "rareelite" or kind == "minus")
+        return mine, mine
+    end
+
+    spec:RegisterStateExpr("prot_pal_solo_immunity", function()
+        if
+            not state.prot_pal_combat_defense
+            or paladinContext() ~= "none"
+            or not solo
+            or boss
+            or target.is_boss
+            or state.encounterID > 0
+            or plain(Facade.C_InstanceEncounter.IsEncounterInProgress()) ~= false
+            or plain(Facade.IsInGroup()) ~= false
+            or plain(Facade.IsInRaid()) ~= false
+            or plain(Facade.GetNumGroupMembers()) ~= 0
+            or plain(Facade.UnitExists("pet")) ~= false
+            or plain(Facade.UnitExists("boss1")) ~= false
+        then
+            return false
+        end
+        local safe, opponent = soloOpponent("target", "targettarget")
+        if not safe or not soloOpponent("focus", "focustarget") or not soloOpponent("mouseover", "mouseovertarget") then
+            return false
+        end
+        for unit, victim in pairs(recovery.plates) do
+            local alone, mine = soloOpponent(unit, victim)
+            if not alone then
+                return false
+            end
+            opponent = opponent or mine
+        end
+        return opponent
+    end)
+end
 
 -- The time to the next main-hand swing (Hekili_Warrior/Warrior.lua's, after Hekili's Classic profile): the swing gap
 -- Consecration and Exorcism wait for.
@@ -672,11 +1436,6 @@ local function spendsFavor()
         removeBuff("divine_favor")
     end
 end
-local function drainsMana()
-    return function()
-        spend(mana.current, "mana")
-    end
-end
 local function stuns(key)
     return function()
         applyDebuff("target", key)
@@ -693,6 +1452,35 @@ local function shielded(ids, short, long, other)
 end
 
 spec:RegisterAbilities({
+    recover_threat = {
+        name = L["Recover Threat"],
+        texture = Hekili.TargetSwapTexture,
+        unlisted = true,
+        targetSwap = true,
+        targetSwapSafe = recovery.safeLanding,
+        gcd = "off",
+        startsCombat = false,
+        usable = function()
+            return state.prot_paladin_recover_threat
+        end,
+    },
+    auto_attack = {
+        id = 6603,
+        texture = 135274, -- INV_Sword_04: the same Attack artwork with every equipped weapon.
+        cast = 0,
+        cooldown = 0,
+        gcd = "off",
+        startsCombat = true,
+        known = knows({ 6603 }),
+        nobuff = "paladin_autoattacking",
+        usable = function()
+            return state.prot_pal_start_attack
+        end,
+        handler = function()
+            applyBuff("paladin_autoattacking")
+        end,
+    },
+    devotion_aura = selfBuff("devotion_aura", DEVOTION_AURA),
     seal_of_command = seal("seal_of_command", SEAL_OF_COMMAND, SEAL_OF_COMMAND_COST),
     seal_of_righteousness = seal("seal_of_righteousness", SEAL_OF_RIGHTEOUSNESS, SEAL_OF_RIGHTEOUSNESS_COST),
     seal_of_the_crusader = seal("seal_of_the_crusader", SEAL_OF_THE_CRUSADER, SEAL_OF_THE_CRUSADER_COST),
@@ -893,6 +1681,7 @@ spec:RegisterAbilities({
 
         startsCombat = false,
         known = knows(HOLY_SHIELD),
+        equipped = "shield",
 
         now = function()
             applyBuff("holy_shield", nil, 4)
@@ -920,7 +1709,7 @@ spec:RegisterAbilities({
         spendType = "mana",
 
         startsCombat = false,
-        toggle = "cooldowns",
+        toggle = "defensives",
         known = knows({ 1311015 }),
 
         usable = function()
@@ -938,6 +1727,7 @@ spec:RegisterAbilities({
     holy_light = {
         id = 635,
         copy = rest(HOLY_LIGHT),
+        defensives = true,
         cast = 2.5,
         cooldown = 0,
         gcd = "spell",
@@ -955,6 +1745,7 @@ spec:RegisterAbilities({
     flash_of_light = {
         id = 19750,
         copy = rest(FLASH_OF_LIGHT),
+        defensives = true,
         cast = 1.5,
         cooldown = 0,
         gcd = "spell",
@@ -969,10 +1760,12 @@ spec:RegisterAbilities({
         handler = spendsFavor(),
     },
 
-    -- Heals for the maximum health and drains all the mana left (wowsims lay_on_hands.go); 20 min.
+    -- Lay on Hands empties our pool without interrupting spirit regeneration. Only its recipient
+    -- receives the rank's mana. The observed cast tracks the selected unit, which a macro can override.
     lay_on_hands = {
         id = 633,
         copy = rest(LAY_ON_HANDS),
+        defensives = true,
         cast = 0,
         cooldown = 1200,
         gcd = "spell",
@@ -980,8 +1773,29 @@ spec:RegisterAbilities({
         startsCombat = false,
         known = knows(LAY_ON_HANDS),
 
-        now = drainsMana(),
-        handler = drainsMana(),
+        now = function()
+            capResource("mana", 0)
+            -- Until a readable mana sample arrives, the recipient of a manual cast is unknown.
+            -- luacheck: push read globals resetResource cast_id
+            resetResource("mana", 0, LAY_ON_HANDS_MANA[cast_id])
+            -- luacheck: pop
+        end,
+        handler = function()
+            capResource("mana", 0)
+            if
+                state.this_action ~= "lay_on_hands"
+                or not state.spec.protection
+                or state.hardcast
+                or state.player.queued_ability == "lay_on_hands"
+            then
+                return
+            end
+            local selfCast, boundID = Hekili:CanSelfCastHelpfulSpell(LAY_ON_HANDS[1])
+            local amount = selfCast and LAY_ON_HANDS_MANA[boundID or LAY_ON_HANDS[knownRank(LAY_ON_HANDS)]]
+            if amount and amount > 0 then
+                gain(amount, "mana")
+            end
+        end,
     },
 
     -- Holy Conduit's cost cut and Purifying Power's cooldown cut (neither Benediction: not in its mask); Undead and Demons.
@@ -1031,6 +1845,7 @@ spec:RegisterAbilities({
 
         startsCombat = true,
         known = knows(HAMMER_OF_JUSTICE),
+        debuffApplication = "hammer_of_justice",
 
         now = stuns("hammer_of_justice"),
         handler = stuns("hammer_of_justice"),
@@ -1047,6 +1862,7 @@ spec:RegisterAbilities({
         spendType = "mana",
 
         startsCombat = false,
+        toggle = "defensives",
         known = knows({ 4987 }),
     },
 
@@ -1060,6 +1876,7 @@ spec:RegisterAbilities({
         spendType = "mana",
 
         startsCombat = false,
+        toggle = "defensives",
         known = knows({ 1152 }),
     },
 
@@ -1076,6 +1893,7 @@ spec:RegisterAbilities({
         spendType = "mana",
 
         startsCombat = false,
+        toggle = "defensives",
         known = knows({ 1044 }),
 
         now = function()
@@ -1149,6 +1967,7 @@ spec:RegisterAbilities({
         spend = benedictionCost(DIVINE_SHIELD_COST, DIVINE_SHIELD),
         spendType = "mana",
 
+        toggle = "defensives",
         startsCombat = false,
         known = knows(DIVINE_SHIELD),
 
@@ -1172,6 +1991,7 @@ spec:RegisterAbilities({
         spend = benedictionCost(DIVINE_PROTECTION_COST, DIVINE_PROTECTION),
         spendType = "mana",
 
+        toggle = "defensives",
         startsCombat = false,
         known = knows(DIVINE_PROTECTION),
 
@@ -1295,6 +2115,13 @@ spec:RegisterAbilities({
 
     righteous_fury = selfBuff("righteous_fury", RIGHTEOUS_FURY, {
         spend = function()
+            if
+                buff.the_quick_and_the_dead.up
+                and combat == 0
+                and plain(Facade.UnitAffectingCombat("player")) == false
+            then
+                return 0
+            end
             return 0.3 * (1 - 0.02 * talent.benediction.rank)
         end,
         spendType = "mana",
@@ -1349,8 +2176,8 @@ spec:RegisterPack(
 )
 spec:RegisterPack(
     "Protection (wowsims.com)",
-    20261120000,
-    [[Hekili:Lw12UTnoq0VL8sRnAQKTt20Sb1pKfbfnbPbfq9zkrjoYI1uIc8Y6AGa9TVdLTLLKL8gG4hSP5mZzUDgoK5KFrcyudqEzXSf3mF(Iz4hsGzBjqckPjRPRWdf0C87FQKgiXWLfvrt2i3O55AVez(uNMBfskZHwSLlmpwqIheyDjKGiD)Z3)WJVCxzdIKGmoJb7md0jNXB3vfzYGQO935NkvW)cQQigKsTctv09)85Qi86QOoGy5(o3R9lPckJx4F09(0sH2FpaE4F8qOftVeDLIwOfyIWWZsNR56QikJjl(iEynSv7vf9a1qVBGqAYpE8xiizgtP(oF)vCtMn2Lf(9uDkIjg504zPZMbxNMC7vEyzvjt5cS0tRJsTxPcqJJPMLk(QmdiT6WuRA7L80LxeBtt96EVNTS6Ptm(tl9vGrXJTobHuRI2cGEsgfcnqfHY0qSzeMOSAkduhHziPTHAP2ilam7ZD2mP2ggh7pcbnwaHLsUwwGw86jIWZavdOSPnWHXJbYlfuLom2k2qvRV0QbmcsdxLWwoVTM)2Ywb5qHzCv0B4PMWruSoIVyNYEn64TUqUP41ePuWWdTeOGCkVq)1LtgqidRXoG(8SPDsNdfW62BQmXQxU4yPQT0g8DFNrlyH7V4dxCQU9kAj4pqYUiO99zsX2qDMmz9UK1qfUGTrDGfUsjTfmpOW1uyVYGANnGg9C5EO5GGDiVovmYbxdTVg(JuLW15vprcW5fT7nJUpTi4AJU(9SDJX4XxQFFBFes(NdZr4ZqhiFKGef3akoLeCos4zzHedgk98ulcJlmA8CFwQZ2REJ22qACgD9B0OEm5oj8yC43fj2fC)vVGRFr(9qFBLATKqcQ5sUgb6)BgPV3MU707lJO3r6F361))yW5NdC(82Z7t3Cr3K5VpRb1tko1MpBe9om6qC8MGMNWp38r3TiTRbJSLzOrGgW6Trza4oDNZqZf977T3TCkOJSbQUkG1bQ1KjrZ(oSMl44Q6VTFtCTyY)b]]
+    20261122012,
+    [[Hekili:TZ13pkoos4)w4foq3C8RUPV(gD0sZQvNU50CJwPEFMGjXb82jXOyNUxo1I)2VYMei2joXMaZmpmpS7stsQVpBx5RQYLxwoD5VV85aehV8RZMm7HPtNnBY0zlFMVFhE5Z7q(VG2aFibfd)7FlLYX(Ccn5WQbVrFJrIzJ8PXdf35(ikkqyT1zKi(NtwUUwdZ2H9bl9PV8PF9ZF9J7ozXLpVLeeGp(yyMFdO9XdR4BXhwL)DJdPP4xXPhwfGdrzr8dR(0V9LdRGV(WkfJKrglGNnEhkcfqsgFg(XODrSX5gye8hJathn8dauPOewemqcGptfqtyhwHccOj)f4dVG3ZgDy1VI4OpwdLg8F)8VdgzlNVJ9XXJ3q4BZwlgfJ1U1HGnbMJwpjCYe89H(pE3iyAnLgsIGPEKKLSr7sXWdVgXxSLgT3lISzl)dbe2Ui0EV14i6BlMp5dKWf531K(C6Mnr4rWqdNWiVIz9fJApykWBnzJ3wmk6W)PI5)RlghgHyB9OH1cYJwdIpIXBafJdJRgcPcJJPzmVWS09kgDDwy4i1RpkG(wYzBhJijC4FKxZG9X8uY6mXf8qzPifeozOqcok48FkUrVycJrs2uVzdWVsVCB2V3rBosNDJEjbgG1djdMdfl4vMNmHihL8Iam58y5Nwol2miNM2tWmwtOnyqpDaFVy0PGPCKnS)GEYVnB37vPv2UHdRNwOmo1dX5GI3hYyy4jc924hSyA9uJXrP8873E3IEhD40xsY2bdYZMoJj84WbVxf2uejWdqz3W6x2nm4kMdaztp)0mgkaNEMp1D1oYPchJILIZ86MOBDlvRUvAu3gLPRQE03mviDTNqQFgBXmRWZsnOFOuEUs6nIXeNMGHuiIfp2ajScxuCueADe2BhLWaYwWOYxc(mgXWJk)YjyqoogCWtzERZIEdLQtov))hMlGTb3EWJ)19cXbgllfFCnshHkRtorH7BJchNl9oEjBPGW(GR6wusatdWPZpVc9uJVZJJXPBWj(7RkOGIHRj8n(dqyL4JDDqX4zjEGdufdd)nFR0POXzT7M40SMoeWlcGRL4BAET5YrjG8keUXJTv8IOMzN1Mzz0iQhjoolHW3xJvf34X0(VAwU6kkyOZAIY3BbneWFG3x33b0XXPPz74S(byP)PiAbmhlcc3BnLX6374JoIaUSI)o)pFdkNGKmDYPRtZ4msag(MClvHxgvf1fEliVOqjz4Dukggbzj8Yp9FKfSb8Zt4vfXumqKi(hidqt51OudJtL7(Kv9qrW6cu6vzc)gjK79DayF4)G9trshhDC2KsZsG8Gi(VuYOqC)eVtphUFpLNjtipWZFg1q4(uOMqiJSumQTry(ndYSAXgKPTWGaVVGRoTqPGrJXryC)3WODIiAK)h(Pjx0IR0y5E32pF64c5LbYXjHTuimBtw0Q09kNHAZs)oNH6CRJQ4wgQD0UnY5zwB7amK3H4fGJcOwZ(RgcqcpYesLV4NIXb0yfbATKeQbOCFMy4vnPRg8snpLgbVrNFfsIpcEdKWfBvuFds)QY0Zlfybhf6b5hhbXvoQtvdLROD7hHraFTjO1Xu)6xnfXy0gIFTzi6EYJ7YsjH77eDChunzo7Zg1WAKICOAK256bANdxpcChgrsH0f9fltJWjc2guBjCqOb5xx62tXIk5y)ZfGS3Oy0FQehWqbIp1PceTO0JNSP0JwsCOsHH1Ne0PR3CHCAHolfwVoovPepdS4wwHxEKhzcSwm90Ue0PfePn1QQQeAvLjmK4IRRqIemmMAJYlkpQ)IYJwKysZ0PTxe7swmoGCTjBR4AwjDKsRCYKOJrjONwK7LD6Uh5tz8lk9OBl7RVkN3G18T2tIt(s9uDMg0dcOkEPlF2qdazHqECsmEXKHQJK7QmsUBsJt0vmT20n(pPP(ewS9dQUXNc8QqK6Zy1bQmRcvM1YuZjeLKbwvYJQD(17G8cCkIU9ErLQvVdTWZxlXNGSubYxd9N62H0lLwwVXPxdaCy)uBzt0ejkDCcIWGP2449L8qk2S)QXMRevYvH2Q2UDvNwfch0RIyQC(4DFknsemS0foLU1GAUOWhtyO)2KHdBA(WcoBi5ObvZBOGrI)Tydh9Y)I(9QnhdRwNSkzjJVzwJHZ3Edgk0P30u1Y6SUsnJDxY4Yfh7(d0E)49ZMrn)RMkgPgOnMNsTbGknox(8R4ugCZANOIicJZKhJJJNEb4JFvESoYNsx(lWLkxw9YVoFsXjky5ZNl(E5Z(PeooLGGpzrpTk2KJLCGrnd4JLauDpfCf0tBtHa17Sh1lFyQG49AiwyE1kXQfchRytG2CtOPj)xlEgd4ukGIaKhmaIseSlgHwczjiWFxJaoGuZ1mEESu(sGhOqBq4ZcG)OHrFTvsAd3QRKslRP0qrLcA(p0OzPyGI32pr7s123mzlxvVaGPtmnru0HXY2RP9TPXnUrcvlQtpmVmu2VFoMBTN55l9BxYVweZU3w(zDRhDKFTi7nD(5NVCJmR6q4s)lLiRl)vZmZjbx9opz5Kw5wBkXuxeudZ7MyPHvxnmpLxQhQs811h1hZ3c8p3Gvjf0vi1OWSsX5uACQLmtPRMsa1vfBhqHXkojNxiO6ACw5jDoOZpy9yvMvKUOAvExT9Q2e1AMUeQjNPtfPye7o2GujB0fmnXgTk5UPCsxKSGdLR6Xib6C3CLuqxT000IA7EnskLg9kbWu(HLQcX8CSPoalTSUOxh8VSVVTsK1166SVKJ4BkHWZLYAfusBPRODHLHzxVMLfePl4OJ4C7RdZY2flHTT6nNFngOQq2ssAZUAJ0AATSKaTKf2SRYy2e4MQdDD1UgxB0Y2720pmn8woEnP0L3bCxY5O9oH3uRWBT6M7mvp9XMJFvyQl0rxpTLye2xULHv8VZTpxoMnPH32U04EF1LWDvko3ul3fiCF75r6ABfU0UTBt2P3Rhoq)rmUPkgO)TzpvUxpes7ZQTlBEAj0MM0xj7IJfTPmxEP5X6QdrxAUVKOMcj1sYOo0yZ266VKg6rkUOmxDGuxql1l5L02bcqoKSnzClsj(2oWKS1yah1gW7o7A9qe8D6ueih1Mc5u0vh3hUDJOkhVajdnU9knwyJdC8BY5oO5gekgOZnTt2xBfZoEIeKC1uKYM6WZLYx9g)mxp(xb4g78Z1azlAi0C9yEwV74LtK94SD3oEds2y7240SWRTNIajK2geRbfFJhkIVXNkc54rpcwjA(D(aryt(SZnfsRvfLUDskKy72(r1Dj0AMoL8qp8HDJwhoFfMpGfwKM8dMe9Bl7tdhmdPnnjo3ym9YZACX3N))g2l)5XY4Nhldlp0esVpxdo7ecwef2KONQoPd43YH1G)ZdJrRhgJM8WC8hxcl)LCq5xxcj3ABZDk)Zirv(v3D1vow5xBcP0lxUaSLcK4FJFHeroSAW)k)hBh5Lx())d]]
 )
 spec:RegisterPack(
     "Holy Shock (wowsims.com)",

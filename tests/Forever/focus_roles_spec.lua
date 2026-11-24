@@ -66,8 +66,8 @@ local WARLOCK_DEMO = {
     "corruption=2",
 }
 
--- Shadow Brand's second searing_pain is the end-of-fight line (!shadow_bolt.known|cast+travel>fight_remains): filler-like, never fires
--- in game (fight_remains reads 3600, gap AN), so it takes the lower tier (2) like the other upkeep lines; the DoT order differs from Demonology's
+-- Shadow Brand's second searing_pain is the end-of-fight line (!shadow_bolt.known|cast+travel>fight_remains): filler-like, so
+-- it takes the lower tier (2) like the other upkeep lines; the DoT order differs from Demonology's
 local WARLOCK_SHADOW_BRAND = {
     "shadow_bolt=1",
     "curse_of_the_elements=2",
@@ -117,7 +117,15 @@ local PACKS = {
     ["Hunter/APLs/Marksmanship Turret"] = { "hunters_mark=2", "serpent_sting=1" },
     ["Hunter/APLs/Survival Turret"] = { "hunters_mark=2", "serpent_sting=1" },
     ["Hunter/APLs/Survival Melee"] = { "raptor_strike=1", "hunters_mark=2", "raptor_strike=1", "serpent_sting=1" },
-    ["Paladin/APLs/Protection"] = { "seal_of_fury=2", "holy_shield=2" }, -- R41: the leveling refresh (R28) is gone
+    -- Field seal upkeep and recovery, then the WoWSims raid upkeep.
+    ["Paladin/APLs/Protection"] = {
+        "seal_of_fury=2",
+        "seal_of_fury=2",
+        "seal_of_fury=2",
+        "holy_shield=2",
+        "seal_of_fury=2",
+        "holy_shield=2",
+    },
     -- the Twist of Light seals (1): open
     ["Paladin/APLs/Retribution"] = {
         "hammer_of_wrath=1",
@@ -168,6 +176,8 @@ local PACKS = {
     -- with CN14 (spellIsChanneling); the pre-pull Shadow Bolt (travel fold) takes no tier
     ["Warlock/APLs/Affliction"] = {
         "shadow_bolt=1",
+        "corruption=2", -- Apply to the selected dungeon enemy.
+        "corruption=2", -- Cycle to another engaged enemy that needs it.
         "curse_of_the_elements=2",
         "curse_of_recklessness=2",
         "curse_of_weakness=2",

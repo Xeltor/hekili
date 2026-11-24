@@ -36,7 +36,7 @@ local def = {
     talents = {},
     units = {},
     pets = {}, -- the guardians: { key, cap, duration, slot } of each pet registered with a `cap` (Families/Pets.lua)
-    providers = {}, -- outcomes, presence, viewer (providersOf)
+    providers = {}, -- outcomes, presence, viewer, bands (providersOf)
     settings = {}, -- the spec's settings as plain values (Families/Now.lua's `settings`; refreshed by Hekili:SettingsChanged)
     windows = {}, -- the rotation windows (RegisterWindow's records; `steps` as ability indexes): Families/Windows.lua
     reactions = {}, -- RegisterReaction's records { key, who, outcome, hand, now }: Families/Now.lua (no ability index)
@@ -219,8 +219,9 @@ end
 
 local function providersOf()
     -- no option for the adaptive providers (cdm-default decision 107): the Outcomes provider is the default one and the
-    -- Cooldown Manager is on unless the debug-only session switch Hekili.cdmOff is true; a saved value is ignored
-    return "default", "router", Hekili.cdmOff ~= true
+    -- Cooldown Manager is on unless the debug-only session switch Hekili.cdmOff is true; a saved value is ignored. The
+    -- hidden-value bands likewise unless Hekili.bandOff is true (bands integration design 5.1; read from lane B1 on)
+    return "default", "router", Hekili.cdmOff ~= true, Hekili.bandOff ~= true
 end
 
 -- (cdm-panel) The Cooldown Manager switch of aura record `rec` (the Cooldown Manager panel, Options.lua): the profile's
@@ -242,12 +243,13 @@ local function cdmOf(rec)
 end
 
 local resolveApl -- below: the APL windows' records with this build's ability indexes
+local resolveBands -- below: the APL band points by this spec's power types
 local function buildDef()
     for _, name in ipairs(LISTS) do
         wipe(def[name])
     end
     local pv = def.providers
-    pv.outcomes, pv.presence, pv.viewer = providersOf()
+    pv.outcomes, pv.presence, pv.viewer, pv.bands = providersOf()
     def.school = ns.SCHOOL -- the spell schools by name (Families/Expect.lua compiles an ability's `school` to the mask)
     def.error = ns.Error -- the core's error channel (Sources/Forms.lua warns once per untracked form)
     -- the game constants, defined once in Engine/Sim/Constants.lua (border batch 3 item 4): the five-second rule's
@@ -426,15 +428,16 @@ local function buildDef()
     end
     def.units[1], def.units[2] = "player", "target"
     resolveApl() -- this build's ability indexes for the sequences' steps
+    resolveBands()
     settingsOf()
 end
 
---- (providers spec §3.4, decision 82; audit E17) The providers' inputs changed (Hekili.cdmOff, the harness's arms): the
---- build's providers follow providersOf; the belief swaps at its next drain (out of combat; at combat end
---- otherwise), keeping its records. Never a rebuild.
+--- (providers spec §3.4, decision 82; audit E17) The providers' inputs changed (Hekili.cdmOff, Hekili.bandOff, the
+--- harness's arms): the build's providers follow providersOf; the belief swaps at its next drain (out of combat; at
+--- combat end otherwise), keeping its records. Never a rebuild.
 function Hekili:ProvidersChanged()
     local pv = def.providers
-    pv.outcomes, pv.presence, pv.viewer = providersOf()
+    pv.outcomes, pv.presence, pv.viewer, pv.bands = providersOf()
 end
 
 --- (cdm-panel) A Cooldown Manager switch changed (the Cooldown Manager panel's setters): each aura record's `cdm`
@@ -478,6 +481,27 @@ end
 function ns.SetAplWindows(records, cap)
     def.aplSource, def.aplOpCap, def.aplGen = records, cap, (def.aplGen or 0) + 1
     resolveApl()
+end
+
+--- (bands integration design 3.3, lane B7) The active priority's harvested thresholds (Scripts.lua
+--- scripts:ApplyBands: { [resource key] = { points, deficit, pct } }, sorted plain numbers, a resource over the cap
+--- already left out) as def.bandPoints = { [powerType] = { points, deficit, pct } } at a new def.bandGen; a key that
+--- is not a resource of this spec is dropped. Every build re-maps them and moves the generation (buildDef).
+local bandSource = {}
+resolveBands = function()
+    local out = {}
+    for key, e in pairs(bandSource) do
+        local r = class.resources[key]
+        if r and type(r.type) == "number" then
+            out[r.type] = { points = e.points, deficit = e.deficit, pct = e.pct }
+        end
+    end
+    def.bandPoints, def.bandGen = out, (def.bandGen or 0) + 1
+end
+
+function ns.SetAplBands(records)
+    bandSource = records
+    resolveBands()
 end
 
 --- Rebuilds the belief's tracked set from the active spec (decision 8). Called at the end of

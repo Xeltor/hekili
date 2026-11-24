@@ -41,12 +41,12 @@ When a comparison asks a resource to reach a value, as in `energy.lo>=60` or `60
 <!-- /GENERATED -->
 
 > [!NOTE]
-> **On Forever:** The game hides target health, so every time-to-die value reads as unknown: 3600 seconds. In the Affliction line above, `fight_remains>60` always passes. A line that needs `fight_remains<8` never fires.
+> **On Forever:** The game hides target health, so the time to die is an estimate, and only for the current target. With several enemies, or while there is no estimate, `fight_remains` reads 3600 seconds, meaning unknown: in the Affliction line above, `fight_remains>60` then passes, and a line that needs `fight_remains<8` does not fire.
 
 ### Edge cases
 
 - `<resource>.time_to_<N>` with an N that is not a number reads 3600.
-- `health.pct` reads 100 in combat, where the game hides the player's health; a line that reads it gets a warning in **Warnings** when the priority loads.
+- `health.pct` reads in whole-percent steps, because the game hides the player's health; 100 if the game offers no reading.
 - The WoW client raises an error on division by zero, unlike standard Lua. A value that can be zero must not be used as a divisor.
 
 ## Buffs and debuffs
@@ -161,14 +161,14 @@ A talent key the class pack does not know reads as not taken and adds a warning 
 | `target.outside<N>` | boolean | The target is at least N yards away | Estimated, from range checks | `target.outside8` |
 | `target.range<A>to<B>` | boolean | The target is between A and B yards away | Estimated, from range checks | `target.range8to25` |
 | `target.distance` | yards | The middle of the estimated range | Estimated | `target.distance<10` |
-| `target.time_to_die` | seconds | See [Time to die](#time-to-die) | Always 3600 | `target.time_to_die>12` |
+| `target.time_to_die` | seconds | See [Time to die](#time-to-die) | An estimate; 3600 while there is none | `target.time_to_die>12` |
 | `target.is_boss` | boolean | The target is a boss | Read | `target.is_boss` |
 | `target.is_player` | boolean | The target is a player | Read | `!target.is_player` |
 | `target.is_targeting_player` | boolean | The target is targeting the player | Read; false when hidden | `!target.is_targeting_player` |
 | `target.creature_type` | text | The target's creature type in snake case, such as `beast` or `undead`; `unknown` when hidden | Read | `target.creature_type='undead'` |
 | `target.is_undead`, `target.is_demon` | boolean | The creature type is undead, or demon | Read | `target.is_undead` |
 | `target.moving` | boolean | The target is moving | Read out of combat; false in combat | `!target.moving` |
-| `target.health.pct` | percent | The target's health | 100 unless narrowed (see below) | `target.health.pct<20` |
+| `target.health.pct` | percent | The target's health | In whole-percent steps (see below) | `target.health.pct<20` |
 
 From Feral (wowsims.com), shortened:
 
@@ -180,7 +180,7 @@ actions+=/cat_form,if=!buff.cat_form.up&(toggle.movement&target.outside5|target.
 > **On Forever:** The game gives addons no distance to the target, only whether each spell is in range. Hekili Forever brackets the distance between the ranges of the abilities it tracks. While the bracket is unknown, `target.withinN`, `target.outsideN` and `target.rangeAtoB` are all true, so a range test never blocks a line on its own.
 
 > [!NOTE]
-> **On Forever:** The game hides target health. `target.health.pct` reads 100 until an ability that is usable only at low target health shows that the target is below that point; on a specialization without such an ability it always reads 100. A priority that reads target health gets a "target health is secret" warning in **Warnings** when it loads.
+> **On Forever:** The game hides target health, and Hekili Forever reads it in whole-percent steps: `target.health.pct` reads the middle of the step, such as 19.5 between 19 and 20 percent, and no lower than 2 while the target lives. The step can be a moment old, so an ability that is usable only at low target health takes priority over it: if the step reads 22 and an ability that needs 20 or less is usable, the value is 20. For a moment after a target change it reads 100. If the game offers no reading, it reads 100 until an ability that is usable only at low target health shows that the target is below that point.
 
 ## Toggles
 
@@ -233,7 +233,7 @@ actions+=/mind_flay,if=((action.inner_focus.known&prev.1.inner_focus)|(!action.i
 | `spell_targets.<key>` | number | Enemies counted for the ability; `active_enemies` unless the class pack limits it | Read | `spell_targets.swipe_bear>=3` |
 | `gcd.remains` | seconds | Time until the running GCD ends | Read | `gcd.remains<=0` |
 | `gcd.max` | seconds | The length of a GCD | Modelled | `gcd.max<1.5` |
-| `health.pct` | percent | The player's health | Read out of combat; 100 in combat (hidden) | `health.pct<=30` |
+| `health.pct` | percent | The player's health | Whole-percent steps (the game hides it); 100 if the game offers no reading | `health.pct<=30` |
 | `totem.<element>.up` | boolean | A totem of that element is placed | Read out of combat; estimated in combat | `!totem.fire.up` |
 | `totem.<element>.remains` | seconds | Time until it expires | Estimated | `totem.fire.remains<2` |
 | `main_hand.<kind>`, `off_hand.<kind>` | boolean | The weapon in that hand is of a kind, such as `dagger` or `two_handed` | Read | `main_hand.dagger` |

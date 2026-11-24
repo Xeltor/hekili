@@ -81,7 +81,7 @@ actions+=/whirlwind,if=warrior_field&warrior_attack_target&combat>0&arms_whirlwi
 actions+=/whirlwind,if=(!settings.wowsims_stance_dance&active_enemies>=2)&((!warrior_field|warrior_nearby_enemies>=4)&warrior_attack_target&(!warrior_field|(target.within8&!target.outside8)))
 actions+=/mortal_strike,if=!settings.wowsims_stance_dance&((!warrior_pvp_target|(target.within5&!target.outside5))&warrior_attack_target&(!warrior_field|(target.within5&!target.outside5)))
 actions+=/bloodrage,use_off_gcd=1,if=arms_pve_target&combat>0&(level<60|arms_open_world)&rage.lo<=15&arms_bloodrage_safe
-actions+=/reckless_swings,if=warrior_reckless_safe&(!action.bloodrage.known|(cooldown.bloodrage.remains>gcd&buff.bloodrage.down))
+actions+=/reckless_swings,if=warrior_reckless_safe&(!action.bloodrage.known|(cooldown.bloodrage.remains>gcd.max&buff.bloodrage.down))
 actions+=/rend,focus=2,if=warrior_field&warrior_attack_target&combat>0&target.within5&!target.outside5&(arms_open_world|(warrior_field&arms_short_pull&!boss&!target.is_boss))&!arms_skip_rend&!execute_phase&debuff.rend.down
 actions+=/spearing_strike,if=warrior_field&warrior_attack_target&combat>0&target.within5&!target.outside5&(target.creature_type='giant'|target.creature_type='dragonkin')
 actions+=/slam,if=(!action.mortal_strike.known|action.slam.cast<action.mortal_strike.gcd)&((!warrior_field|(!moving&(talent.improved_slam.enabled|(mainhand_speed>0&mainhand_remains>=mainhand_speed-0.3))))&warrior_attack_target&(!warrior_field|(target.within5&!target.outside5)))

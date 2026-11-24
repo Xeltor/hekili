@@ -596,7 +596,7 @@ describe("shared content", function()
 
     it("registers each shared key in one file only, every file Hekili_Shared.toc lists", function()
         load()
-        assert.are.same({ "Auras", "Control", "Consumables", "Items" }, SHARED)
+        assert.are.same({ "Auras", "Control", "Consumables", "Items", "TimeToDie" }, SHARED)
         for _, kind in ipairs({ "abilities", "auras" }) do
             local seen = {}
             for _, k in ipairs(all.keys[kind]) do

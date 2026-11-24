@@ -81,6 +81,7 @@ local function newState(class, race)
         class = class,
         race_token = race,
         timeToInterrupt = noop,
+        this_action = false,
         args = {},
         spec = {},
         settings = {},
@@ -311,7 +312,13 @@ function M.load(classToken, race)
             IsCurrentSpell = function()
                 return false
             end,
+            IsSpellUsable = function()
+                return true, false
+            end,
         },
+        CreateFrame = function()
+            return { SetScript = noop, RegisterEvent = noop }
+        end,
         C_SpellBook = {},
         C_UnitAuras = { GetDebuffDataByIndex = noop },
         AuraUtil = { UnpackAuraData = noop },
@@ -332,7 +339,15 @@ function M.load(classToken, race)
             return 0
         end,
         GetCVar = noop,
+        ObservedStat = ns.VirtualState.ObservedStat,
+        PlayerHealthMaximum = function()
+            return client.playerHealthMaximum
+        end,
+        PetAlive = function()
+            return client.exists.pet == true
+        end,
         TargetMemoryKey = noop,
+        TargetMemoryPlate = noop,
         TargetInPlayerCombat = noop,
         IsInInstance = function()
             return false, "none"

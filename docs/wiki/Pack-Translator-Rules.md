@@ -37,7 +37,8 @@ A rule that changes what a wowsims line does, because the Forever client forces 
 | 20 | Target swaps | A target change to the next target, when X is up here but not on every target, after a cast of X in the same list, gives no line of its own. Instead the cast's lines carry `cycle_targets=1` and are listed under `# Cycle:`. Any other target change is left out with its reason. |
 | 21 | Casts at a second target | A cast aimed at wowsims's second target carries `other_target=1`. With Recommend Target Swaps on, the first recommendation asks for another enemy. Selecting an eligible enemy lets the line show the spell. |
 | 22 | Mana under an amount | A test of the player's mana under an absolute amount N becomes a test of both the amount and its share of the mana pool, `mana.lo<N&mana.pct_lo<P`. P comes from the maximum mana in the exported log, rounded up. At the level the log was made for, the share never binds; a smaller pool at a lower level uses the share. |
-| 23 | The player's health | The game hides the player's health in combat, so an entry that reads it (`currentHealthPercent`, `currentHealth`), directly or through a variable, is omitted and listed in the header. |
+| 23 | The player's health | The game hides the player's health, in combat and out, so an entry that reads it (`currentHealthPercent`, `currentHealth`), directly or through a variable, is omitted and listed in the header. |
+| 24 | Channel cuts | A channel's `interruptIf` becomes its line's `interrupt_if=<condition>`, so the priority suggests cutting the channel where wowsims does. The condition is read at each tick but the last, when the GCD is ready or more than the spell queue window from ready, and at the GCD's end. Once a cut is due, it stays shown until you press or the channel ends; a target change decides it again, at once, for the new target. The Primary and AOE displays each decide their own cut. It never cuts to recast the same channel. Differences from wowsims remain. The line shown at the cut is chosen with the channel still running, so a line that waits for the channel to end is not shown in its place. A line above the channel that is ready within 0.2 s of a tick is shown with the cut, where wowsims recasts the channel and cuts at a later tick. In game, an update that comes after a tick reads that tick as the previous update forecast it, so a change between that update and the tick is missed there: the cut can come a tick late, or a cut forecast due stays shown though its condition turned false. With no forecast of that tick, such as at the channel's first update, the condition is read at the update's own time, so that cut can come between ticks. `spellChanneledTicks`, the running channel's ticks so far, is read only there. An `interruptIf` the addon cannot read drops only the cut, with a `# Deviation:` line, as does an `allowRecast`. |
 
 ## Direct values
 
@@ -59,7 +60,7 @@ Some wowsims values map one to one. A resource the game hides reads its low end 
 | `inputDelay` | `0` |
 
 > [!NOTE]
-> **On Forever:** The game hides target health, so `fight_remains` answers 3600 seconds ("unknown") in game. A wowsims line that tests the fight's remaining time reads a long fight.
+> **On Forever:** The game hides target health, so in game `fight_remains` is an estimate of the target's time to die. With several enemies, or while there is no estimate, it answers 3600 seconds ("unknown"), and a wowsims line that tests the fight's remaining time reads a long fight.
 
 ## One-line reads
 

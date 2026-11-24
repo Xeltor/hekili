@@ -244,7 +244,7 @@ return require("tools.wowsims.warrior_dps")({
         {
             before = "slam",
             line = "reckless_swings,if=warrior_reckless_safe&(!action.bloodrage.known|"
-                .. "(cooldown.bloodrage.remains>gcd&buff.bloodrage.down))",
+                .. "(cooldown.bloodrage.remains>gcd.max&buff.bloodrage.down))",
         },
         {
             before = "slam",

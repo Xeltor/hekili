@@ -152,9 +152,14 @@ describe("ns.Facade", function()
         ctl.friendly.target, ctl.threat.target, ctl.unitCombat.target = false, nil, fake.SECRET
         ctl.guid.target, ctl.unitIs.target = fake.SECRET, "nameplate1"
         ctl.unitCombat.nameplate1, ctl.inRaid.nameplate1target = true, 1
+        ctl.exists.nameplate1 = true
         ctl.Fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
         ctl.Fire("PLAYER_TARGET_CHANGED")
-        assert.are.equal(1, Facade.TargetMemoryKey())
+        local key = Facade.TargetMemoryKey()
+        assert.is_number(key)
+        assert.are.equal(I.plateID[1], key)
+        assert.are_not.equal(1, key, "a stable ID is distinct from this plate's token index")
+        assert.are.equal("nameplate1", Facade.TargetMemoryPlate(key))
         assert.is_true(engaged(), "matching active plate confirms the fight")
         ctl.unitIs.target = fake.SECRET
         assert.is_nil(engaged(), "no current plain match to that plate")

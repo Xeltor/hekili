@@ -24,7 +24,7 @@ A rising count is used at once. A falling count is held for a moment, so that th
 
 ### In dungeons and raids
 
-In dungeons and raids, the game hides which enemy each nameplate belongs to. Hekili Forever counts the nameplates there, and tells the enemies apart by their nameplates. With enemy nameplates or **Count Nameplates Near You** off, it counts one enemy.
+In dungeons and raids, the game hides which enemy each nameplate belongs to. Hekili Forever counts visible enemy nameplates there and uses the game's stable unit IDs to recognize enemies. With enemy nameplates or **Count Nameplates Near You** off, it counts one enemy.
 
 ## Damaged enemies
 
@@ -47,9 +47,9 @@ For Protection Warriors, **Allow Target Swaps** also covers threat recovery in o
 
 Protection Paladins use the same setting in outdoor groups, dungeons and on raid trash. If Consecration can safely reach a loose mob, you can keep your current target. Otherwise an arrow can direct you to the mob attacking your groupmate. If direct attacks fail to bring it back, Hekili can recommend Judgement with Seal of Fury active. This is the Paladin’s 10-yard taunt. When a mob is attacking a groupmate at 25% health or lower and Hekili can read that health, it can prioritize the switch and taunt immediately. Solo play uses the normal combat rotation, and raid boss handoffs stay manual.
 
-Target swaps need enemy nameplates: **Show Enemy Nameplates** and **Show All Nameplates** on, in the open world too. Hekili Forever remembers the debuffs placed on each enemy that was targeted. An enemy whose nameplate disappears is forgotten, so its debuff may be suggested again. On enemies other than the current target, the time left on a debuff is estimated, not read.
+Target swaps need enemy nameplates: **Show Enemy Nameplates** and **Show All Nameplates** on, in the open world too. Hekili Forever remembers the debuffs placed on each enemy that was targeted. In dungeons and raids, an enemy with no nameplate is forgotten once it is no longer the target, so its debuff may be suggested again. On enemies other than the current target, the time left on a debuff is estimated, not read.
 
-The original Hekili could skip enemies about to die. The game hides target health on Forever, so the time until an enemy dies is unknown, and the **Filter by Time-to-Die** option is hidden.
+The original Hekili could skip enemies about to die. On Forever only the current target's time to die is estimated, so the time until another enemy dies is unknown, and the **Filter by Time-to-Die** option is hidden.
 
 ## Minimum targets for area-of-effect
 

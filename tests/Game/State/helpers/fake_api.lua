@@ -215,6 +215,8 @@ function M.new()
         ranged = { 3.1, 30, 40, 0, 0, 1 }, -- UnitRangedDamage("player")
         damage = { 0, 0, 0, 0 }, -- UnitDamage's min and max main, min and max off (the harness's out-of-combat cache)
         classID = 0, -- UnitClass's third return
+        unitClass = {}, -- [unit] = UnitClass's token for a unit other than the player (unset: the player's class)
+        roles = {}, -- [unit] = UnitGroupRolesAssigned (unset: "NONE")
         specID = nil, -- C_SpecializationInfo.GetSpecializationInfo(1)'s ID (nil: no specialization)
         powerType = { 0, "MANA" }, -- UnitPowerType("player")
         role = "DAMAGER",
@@ -243,7 +245,8 @@ function M.new()
     local api = { ctl = ctl }
 
     -- The vendored LibStub and LibRangeCheck-3.0 loaded once, on first ask, into an environment over this client (a
-    -- headless instance has its own, loaded with the TOC, and never asks here).
+    -- headless instance has its own, loaded with the TOC, and never asks here). A library they lack comes from
+    -- `ctl.LibStub` when set: the real LibHiddenValues on its Testing/FakeClient.lua (Forever/bands_contract_spec.lua).
     local libs
     function api.LibStub(name, silent)
         if not libs then
@@ -265,6 +268,9 @@ function M.new()
             end
             libs = env.LibStub
             M.wrapRangeLib(libs("LibRangeCheck-3.0"), ctl)
+        end
+        if ctl.LibStub and not libs(name, true) then
+            return ctl.LibStub(name, silent)
         end
         return libs(name, silent)
     end
@@ -430,7 +436,7 @@ function M.new()
         if not c then
             return nil
         end
-        return "Channel", "", 0, c[1], c[2], nil, nil, c.spell -- `spell`: a spec's own channel ID (the drive sets none)
+        return "Channel", "", 0, c[1], c[2], nil, nil, c.spell -- the channel's spell ID (the drive's @channel third)
     end
     local stats = { 0, 0, 0, 0, 0, 0, 0 }
     local function zeros()
@@ -583,7 +589,13 @@ function M.new()
         end
         return id or nil -- false: a path the client lacks
     end
-    api.GetMacroSpell, api.GetMacroItem = none, none
+    function api.GetBindingAction()
+        return "" -- no effective binding
+    end
+    api.GetMacroSpell, api.GetMacroItem, api.GetMacroBody = none, none, none
+    function api.GetNumMacros()
+        return 0, 0 -- no account or character macros
+    end
     api.GetSpecializationInfoByID, api.GetStablePetInfo = none, none
     function api.GetInventoryItemID(_, slot)
         return ctl.inventory[slot]
@@ -599,8 +611,8 @@ function M.new()
     end
     api.HasOverrideActionBar, api.HasVehicleActionBar, api.SpellIsSelfBuff = no, no, no
     api.IsMounted, api.IsResting, api.UnitCanAssist = no, no, no
-    function api.IsInRaid()
-        return ctl.isInRaid
+    function api.IsInRaid() -- `ctl.raid` or `ctl.isInRaid`: the group is a raid
+        return ctl.raid == true or ctl.isInRaid == true
     end
     function api.IsInGroup() -- `ctl.inGroup` (the meter provider reads it at PLAYER_REGEN_DISABLED)
         return ctl.inGroup == true
@@ -621,9 +633,6 @@ function M.new()
     end
     function api.UnitInRaid(u) -- ctl.inRaid[u] (SECRET: a secret answer; default nothing)
         return ctl.inRaid[u]
-    end
-    function api.UnitGroupRolesAssigned(unit)
-        return ctl.groupRoles[unit] or "NONE"
     end
     function api.GetPartyAssignment(assignment, unit)
         return assignment == "MAINTANK" and ctl.mainTank[unit] or false
@@ -654,8 +663,15 @@ function M.new()
             return ctl.class, ctl.class, i
         end
     end
-    function api.UnitClass()
+    function api.UnitClass(u)
+        local c = u and ctl.unitClass[u]
+        if c then
+            return c, c, 0
+        end
         return ctl.class, ctl.class, ctl.classID
+    end
+    function api.UnitGroupRolesAssigned(unit)
+        return ctl.groupRoles[unit] or ctl.roles[unit] or "NONE"
     end
     function api.UnitRace() -- ctl.race: the race token (the second return), e.g. the harness character's
         return ctl.race or "Race", ctl.race or "Race", 1
@@ -859,7 +875,8 @@ function M.new()
     api.C_PetBattles = { IsInBattle = no }
     api.C_PvP = { IsWarModeDesired = no }
     -- the gamepad action bars: no storage slots on this client, so Hekili's gamepad keybind reader is a no-op
-    api.C_ActionBar = { HasBonusActionBar = no }
+    api.C_ActionBar = { HasBonusActionBar = no, GetActionText = none }
+    api.C_Macro = { GetMacroName = none }
     api.C_GamepadUI = {
         GetFirstGamepadActionStorageSlotIndex = none,
         GetFirstGamepadActionBarStorageSlotIndexForActiveStance = none,

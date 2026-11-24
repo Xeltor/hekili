@@ -55,6 +55,7 @@ M.UNMAPPED_SPELL = 0
 -- delayed shot is the exception), to the 10 ms.
 -- shortcut: the cast success only, no swingType 2 PLAYER_SWING (UNMEASURED on Forever; W.startRanged's default too).
 M.RANGED_AUTO = 4
+M.REFUND = 8 -- wowsims's OtherActionRefund: an avoided ability's resource given back (observer.gains)
 M.MOVE = 20 -- wowsims's OtherActionMove: the Movement aura (sim/core/movement.go), its stacks the distance in yards
 -- (max(int(d), 1): truncated, so the replay's position can be up to 1 yd short of wowsims's)
 
@@ -864,7 +865,7 @@ function M.new(text, H, o)
                     W.emit({ kind = "cast", src = us, dst = mob, spell = use })
                 end
             elseif e.kind == "completed" and e.other == M.RANGED_AUTO and R.rangedSpeed then -- R18: the ranged auto attack
-                W.emit({ kind = "cast", src = us, dst = mob, spell = R.shootSpell })
+                W.emit({ kind = "cast", src = us, dst = mob, spell = R.shootSpell, auto = true }) -- no press (loop.lua)
             elseif not key and e.kind == "completed" and e.item then -- an unmapped item's use: still our cast
                 W.emit({ kind = "cast", src = us, dst = mob, spell = M.UNMAPPED_SPELL })
             elseif key and e.kind == "casting" then -- a hard cast's start: its cast bar, the GCD from now
@@ -930,6 +931,7 @@ function M.new(text, H, o)
                             pt = pt ~= us.pt and pt or nil,
                             rage = delta > 0 and delta or nil,
                             cost = delta < 0 and -delta or nil,
+                            refund = e.other == M.REFUND or nil,
                         })
                     end
                 end

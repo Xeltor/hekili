@@ -60,10 +60,18 @@ values; `false, 0, 0, 0, 0` closed or unknown), a belief-only facade function li
 copy; the core's `state.reset` copies every registered window through it (`Engine/Sim/State.lua` `CopyWindows`);
 `WindowOp` is the only write back. The second is the debuff count (option D, owner decision 2, 2026-11-11):
 `ns.Facade.DebuffCount(spellID, now)` -> how many enemies the belief holds the aura up on (the target plus every
-remembered target slot, keyed by GUID in the open world and by nameplate under the Map restriction), or nil when unknown
-(the current target holds no memory slot, or the aura is untracked); `state.active_dot` reads it. Target navigation
-uses the same memory through `Facade.TargetMemoryKey` and `Facade.TargetMemoryGeneration`, and checks group
-engagement through `Facade.TargetInPlayerCombat` (see "Target swaps on Forever" below). `def` carries plain records (batch 4, the owner's
+remembered target slot, keyed by GUID in the open world and by stable ID under the Map restriction), or nil when unknown
+(no target, a target no plate answered for at its target change, until the next one even if its plate is added
+meanwhile, or the aura is untracked); `state.active_dot` reads it (§2, "Target swaps on Forever"). The third is the
+target's stable ID (ledger L1734, owner's A, 2026-11-22): `ns.Facade.TargetID()` -> an integer while the target's GUID
+is secret, 0 for a target read plain, nil with no target. It is never a GUID or a stand-in for one. Its one reader is
+`Engine/Sim/State.lua`'s swapped-cast compare (`landsElsewhere`, §2). `tools/check_border.sh` passes exactly two lines
+naming it there, both inside `landsElsewhere` and each exactly the cast's pin or the compare, so the ID never feeds a
+GUID field; it fails a read elsewhere in State.lua, a third read, a change to either line, and any other core file or
+pack that names `TargetID`. Target navigation uses the remembered slot through `Facade.TargetMemoryKey` and
+`Facade.TargetMemoryGeneration`. `Facade.TargetMemoryPlate` resolves a stable ID to an active nameplate for group
+engagement and recovery checks. Channel cuts also use the memory key to recheck their timing after a target swap
+under Map. `def` carries plain records (batch 4, the owner's
 design 2026-11-01): no metatable, never a live Hekili table. Each field is a value, a function the belief runs in its own
 `now` context (`Families/Casts.lua` `I.Eval`: a raise is counted in `I.nowErrors` and fails
 `tests/Forever/plain_records_spec.lua`), or absent; a function field may carry a static value the core computes under
@@ -147,13 +155,19 @@ with `other_target=1` remembers the enemy on which it requested a swap. After a 
 offer its spell on a different, identifiable, living hostile target in confirmed spell range that lacks the effect.
 The cast must still pass its class and priority checks. Casting it or replacing the recommendation ends that request.
 `active_dot` is the belief's count (`Facade.DebuffCount`, §1: the target plus every remembered target
-slot, by GUID in the open world and by nameplate under the Map restriction); unknown (the target holds no memory slot)
+slot, by GUID in the open world and by stable ID under the Map restriction). An unknown count
 is saturated, every enemy counted as carrying it, so no swap is suggested; the current target's own debuff floors it
 at 1. A swapped cast's handler runs with `state.cycle` set: its debuffs add to `active_dot` and leave the current
-target's alone. Time to die is never known on Forever, so `cycle_min` and the TTD filters exclude nobody (`FEED` is
-off); no pack may declare `min_ttd` or `max_ttd` (`tests/Forever/packs_spec.lua`), and the slider is hidden. Under the
-Map restriction, visible enemy nameplate tokens can supply the count. If the selected enemy cannot be associated
-with a remembered slot, the unknown DoT count suppresses a swap.
+target's alone. So does the cast in flight when the target changed after it was sent (ledger L1734). Its event comes
+from the real queue (`e.inflight`), and `landsElsewhere` tells the change by the event's GUID where it has one. Under
+the Map restriction the event has no GUID, so it compares the stable ID (`Facade.TargetID`) pinned when the compare
+first met the cast with the ID now. A pushback (UNIT_SPELLCAST_DELAYED) keeps that pin. A cast of another action pins
+anew, and so does one that starts at or after the pinned finish, one after the action's success (its `realCast`) or one
+after an update that found the pinned cast gone from the real queue. The belief lands such a cast's target auras on the
+mob it was sent at: the memory slot pinned at UNIT_SPELLCAST_SENT and kept through the cast's START, or nowhere once
+that slot is forgotten (the mob died, lost its plate or was evicted). The queue therefore does not change at the cast's
+success. A target change before the first update after the cast starts pins the new mob (a known limit). Only the selected enemy has a time-to-die estimate, so `cycle_min` and the TTD filters exclude nobody; no pack may declare `min_ttd` or `max_ttd` (`tests/Forever/packs_spec.lua`), and the slider is hidden. Under the Map restriction, visible enemy nameplate tokens can supply the count. If the
+selected enemy's debuff count is unknown, the engine suppresses a swap.
 
 A forecast records the target revision at its start. When the player changes targets, the display retires any swap
 or target-specific cast from the earlier forecast. During a multi-enemy fight, a visible first-slot Primary swap
@@ -308,7 +322,7 @@ read. A file's `state.knownRank` local is the facade's function, safe in a helpe
 steps?, loop?, on_deviation?, strict?, reset_on_target_change? })` (`Engine/Schema/Spec.lua`) crosses `Build(def)` as
 `def.windows` (plain records, `steps` as ability indexes). `steps` need an `evaluator` (a cast never opens a window,
 L773: RegisterWindow raises). `reset_on_target_change` (a boolean, default false): a target change (`Obs.TargetSwap`:
-a re-selection, a Map swap by plate index, clearing the target, and the belief's own swap at `Start` and every
+a re-selection, a Map swap by stable ID, clearing the target, and the belief's own swap at `Start` and every
 `Build` included) closes the window and forgets the evaluator's last value, so a
 still-true evaluator reopens it at step 1 in the same `Drain`. `duration` is seconds, `"combat"` or a function. A function is the forecast's: it
 runs under `state` at each forecast open and each counted refresh. Its per-layer twin `now_duration` (required with a
@@ -355,6 +369,16 @@ condition fails now is rechecked like any entry, so "true in t" opens the window
 `window.<name>` gets that time as a recheck (its countdown). The decreasing-clock `<`/`<=` direction works today; the
 weave's "the next Auto Shot fires" is the wrap of a decreasing clock (`ranged_remains>ranged_speed-x`), which only
 ruling R6's `>`/`>=` wrap branch (Task 8b, `Engine/Sim/Scripts.lua`) times.
+The active priority's resource thresholds (LibHiddenValues integration design §3) cross as `def.bandPoints`
+(`{ [powerType] = { points, deficit, pct } }`, sorted plain numbers) at a new `def.bandGen`: `Engine/Sim/AplThresholds.lua`
+scans each entry's texts for a resource token compared with a number literal (`script.Bands`), `scripts:PackBands`
+unions them, `ns.SetAplBands` (Tracked.lua) maps them to power types; sent at the end of `LoadScripts`, after one
+entry's load, before a Build (every Build moves the generation) and when the active priority changes. A `points` value
+is the bar "at least p"; a `deficit` n is the point max - n; a `pct` (fractional only) is the point ceil(N / 100 x max).
+A resource with more than `ns.APL_POINT_CAP` (8, the library's points per source) distinct values sends none, and the
+priority's editor warns on its Source tab. `Game/State/Sources/Bands.lua` resolves them at the belief's max and gives
+each power watch its set out of combat, at a new generation or max (never editing the stored lists); a point outside
+1..max is dropped and an unchanged set is not sent again (a new point primes the band again).
 `spec:RegisterReaction(name, { who = "player"|"target", outcome = "dodge"|"parry"|"block"|"miss"|"deflect"|"evade"|"crit"|"swing"|"land"|"kill", hand = "main"|"off", now = fn })`
 crosses as `def.reactions`: a `now` function the belief runs at a settled outcome's row time
 (`Game/State/Families/Now.lua`; incoming from victim-side `UNIT_COMBAT`, ours from `Game/Events/Rows.lua`'s settled
@@ -371,7 +395,9 @@ settled wound, or a swing that closed with no row at all, at the swing's own tim
 secret, so its row is background and only avoids are plain: a swing with no avoid seen is presumed landed; it is
 staged as `Obs.SwingSettled` with c = -1, which runs `land` only). A reaction is folded after its time, so its aura reads
 answer as of that time (`I.AuraAsOf`, `Families/Auras.lua`: an aura applied later reads down, the last one fallen
-later reads up as it was). The owner's order: an aura first, a usability flip
+later reads up as it was), and a resource a swing's reaction gains first covers a rung's lift (a usable answer,
+within `I.LIFT_WINDOW`) up to what the rungs since that swing lifted, less what its own steps covered (L1504: the rung
+already saw the pool with it); never a lift an earlier swing owes. The owner's order: an aura first, a usability flip
 where it works, a reaction only where only an outcome reveals the span.
 
 `RegisterAbility{ passive = true, id = <number> }` (`Engine/Schema/Spec/Abilities.lua`) is a spell the spellbook knows and the
@@ -395,6 +421,42 @@ type ("target's creature type not in usable_on") and never on `"unknown"`, so a 
 harness sets the type on a world's mob (`entities.new{ creatureType }`, a content `WORLD.creatureType`, a replay's
 request `mobType` through `tests/Forever/helpers/wowsims.lua` `creatureType`), and the client fake answers it
 (`ctl.creature[unit]`, default `"beast"`).
+
+**Time to die** (lane B8, owner L1676). `Engine/Sim/Targets.lua` calls LibTimeToDie directly (owner `"Hekili"`, the
+target by token, tracked on the first query): `Hekili:GetTTD("target")` and `GetTimeToPct("target", p)` (the estimate
+x (h - p) / h, h the facade's target health, 0 at or below p) answer its live estimate at any enemy count.
+`GetGreatestTTD` (`fight_remains`, `longest_ttd`: the longest among the enemies) and `GetLowestTTD` answer it with one
+enemy; with more they are unknown (only the target is tracked). One or several follows the enemy count's change after
+it held one update, read before the token plates' hold of a fall; it is the count `active_enemies` starts from, so
+with plates off or the others outside the radius it is one. Nothing is kept across a target change: the library
+answers `priming` only then (a re-prime of the same unit keeps answering), and after it nothing before 1.5 s of the
+new target's loss, so the last target's time would bridge to no answer and is no fact about this one (B8's 0.5 s keep
+went with vendor-libs, L1730).
+
+The library forgets the last target itself (LibTimeToDie minor 3): a new target reads unknown until it loses health,
+and from then the last target's rate can only lengthen the first answers (a threshold factor learned through
+`HintBelow` still carries to the next unit and can shorten them, by design). So a target change never releases the
+track, and the learned execute factor stays (`tests/Forever/ttd_chain_pull_spec.lua`).
+
+Minor 4 answers a new stream (a pull, a swap, a re-target) only once its loss spans 1.5 s, then a seed until the first
+fit: a big first hit is no rate (live, minor 2 read 3.63 s at 72%, then 52 s). The core still reads a live answer whose
+reason is `seed` as unknown (owner L1742; shortcut): a burst then a far slower fall seeds at about half the true time
+for 2 s (the fit after it reads 0.74), and with the rule removed the Fury swap set's flicker rose 0.35 -> 0.40/min
+(vendor-libs fight runs, L1736). The rule would also blank a seed after a fit (Fable I1, L1756); minor 4 gave none in
+the probes, and the unknown of about a second after a sudden speed-up is the library's own (its README: up to 1.5 s on
+fast trash). Pinned through the core in the same spec.
+
+Unknown is 3600: any other state, a seed, a target that is not plainly attackable (a secret answer included), several enemies,
+no library. A refused track is
+asked again at most once a second. `Hekili.bandOff` and disable release the track. Hints, numbers only: the
+highest execute line present goes to `HintBelow` (threshold only), out of combat at the spec's activation,
+`GROUP_ROSTER_UPDATE` and the combat's end. The player's own line comes from its pack: an ability's `healthGate` while
+known and an ability field `ttdBelow = { pct = n, talent = key }` while that talent has a rank; a pack declaring
+either replaces its class's default. Each group member (tanks out; a secret role is no tank) adds its class's default
+from shared content,
+`shared:RegisterTtdLines({ [class token] = pct })` (`Hekili_Shared/Shared/TimeToDie.lua`). The combat's end comes
+from the core's existing `PLAYER_REGEN_ENABLED` handler; `GROUP_ROSTER_UPDATE` is the one registration of its own
+(core has no other handler).
 
 **Pets.** `RegisterPets` names the pets (`{ id, spell, duration, cap }`; a `cap` makes a counted guardian). Both
 layers have the verbs `summonPet(key, duration)` and `dismissPet(key)`: the sim's (`Engine/Sim/State.lua`, Hekili's)
@@ -715,21 +777,51 @@ one (every wowsims list with no prepull actions, and make_pack writes none), `He
 default list from the forecast window `state.delayMax` as it would after an empty precombat pass
 (`tests/Forever/apl_entry_spec.lua`).
 
-**Time to die.** Target health is secret on Forever, so `Engine/Sim/Targets.lua`'s tracker is not fed and every time
-to die (`fight_remains`, `target.time_to_die`, `time_to_pct_N`, `longest_ttd`, ...) answers "unknown": `FOREVER`, 3600 s,
-a fight that never ends soon, a grey (trivial) target's too (wowsims's `remainingTime` has no trivial case), and
-`GetNumTTDsAfter` counts every enemy as after any time. The tracker's 0.5 s ticker is not started. A priority may read them without a load warning (`Engine/Sim/AplWarnings.lua` warns only
-on target and player health); wowsims's `remainingTime` maps to `fight_remains` with that deviation.
+**Time to die.** Target health is secret on Forever, so `Engine/Sim/Targets.lua` keeps no per-GUID tracker (upstream's,
+never fed here, was removed: L1703) and the target's estimate (§3, Time to die) is the only one: `fight_remains`,
+`longest_ttd`, `target.time_to_die` and `target.time_to_pct_N` answer from it as §3 says, or "unknown": `FOREVER`,
+3600 s, a fight that never ends soon, a grey (trivial) target's too (wowsims's `remainingTime` has no trivial case).
+Everything else stays unknown: another unit's time to die, a bare `time_to_pct_N`, and `GetNumTTDsAfter` counts every
+enemy as after any time. A priority may read them without a load warning (none is written for any
+token); wowsims's `remainingTime` maps to `fight_remains` with that deviation.
 
-**Player health.** In the PH1 capture on build 70862, the player's current health was secret before, during and
-after combat. Maximum health was readable (see [in-game measurements](ingame-ledger.md)). `health.pct`,
-`health.current` and `health.deficit` use a plain reading when available and assume full health while the answer
-is secret (`Game/State/Families/Player.lua`). With that fallback, `health.pct<50` is false and `health.pct>50` is true.
-Classic can still render health cues through the client's percentage curves. A player cue with a positive
+**Resource bands.** While a power's hidden-value band is live (`Game/State/Sources/Bands.lua`, channel r >= 1: the 1%
+cell in points, cut at the priority's points), `Game/State/Families/Resources.lua` (`applyBand`) takes it as a ceiling,
+a floor and the clamp of the estimate; one at most a point wide is an exact read, a disjoint one wins both ends, any
+ends the rest assumption, and none sets a cap mark. The drain's order is the precedence: events, the plain read (which
+wins its drain), the band, then the usability answers, which always win (owner L1675): the rungs stay on, an answer is a
+bound with no flip pin, and only the side it contradicts yields (a yes at c: hi is the
+higher of c and the band's top; a short answer at c: lo is the lower of c - EPS and the band's low end). An
+exact band counts as readable only in the swing forecast (`predict`, `VS.SwingPending`: there once it is stamped at
+or after the swing, or `I.bandShows[r]` has passed since it; until then the swing pends). An event of ours after the
+band's stamp (a spend or gain, a swing's step, a periodic tick) steps forward from it: the band is held until it
+moves or `I.bandShows[r]` has passed (`h:Latency()` plus `I.BAND_MARGIN`, the client's own delay; about 0.17 s at 60
+fps); a refund holds nothing. A spend also holds a newer band whose low end has not fallen (the display may trail the
+cast), and a gain the band already rose by within `I.BAND_MARGIN` holds nothing, adds nothing to lo and excuses no
+short answer (the display may lead the cast). A hit on us is no such event (owner L1723, which narrows L1673): its rage shows at the damage and a
+melee row trails that by 0.39-0.57 s, so while a band is live the row, and a reaction's gain at it, moves nothing and
+holds nothing (the taken rate's bin still counts a plain amount's), and rage per hit is not learned. Regen is measured
+between two true crossings (the low end rose to the last top) with no known change between (so never from percent
+bands, widened at both ends, nor from regen that passes more than a cell between two stamps, as 10 a second polled less
+often than every point; the flip pins that measured it are off while a band is live), the step scale from a band change
+covering exactly one landed swing (L1673): never with an event within `I.BAND_MARGIN` after a stamp at either end, nor
+with a wound row on us, or any row whose `taken` pays, up to `I.TAKEN_ROW_LAG` (0.6 s) past it. A power that reads
+plain in combat releases its watch when combat ends; where the library has no max the watch is a percent one, a point
+wider each side, logged only once the belief read that max plain. With no live band everything below runs as without
+the library.
+
+**Player health.** The client hides the player's own health (`UnitHealth`/`UnitHealthMax("player")` secret in combat, owner L1461,
+and out of it on live, L1710; the headless fake client still answers plain out of combat): `health.pct`,
+`health.current`, `health.deficit` read the plain value whenever the client answers one and, while the answer is secret, the hidden-value library's live 1% band
+(`Game/State/Sources/Bands.lua`, channel 0): its middle, so a whole-number threshold answers as the true value does
+(`Game/State/Families/Player.lua`; a plain read of the same drain is exact and wins). With no live band (the library
+absent, priming, unavailable, `Hekili.bandOff`) the secret answer reads full, never a stale read from before the pull,
+and the facade's row never hands the core a secret. A custom line reading it gets no load warning (FABLE-FOR-OWNER 7);
+the translator still omits every wowsims entry reading `currentHealthPercent` or `currentHealth` (its rule 23, owner
+L1462).
+Classic also renders health cues through the client's percentage curves. A player cue with a positive
 `displayPlayerFloor` uses a measured fraction for the forecast. A `display_below=100` line can display
-through full health, with WoW applying the ability's minimum in the frame. A custom line reading `health.pct` gets a load warning
-(`Engine/Sim/AplWarnings.lua`), and the translator omits every wowsims entry reading `currentHealthPercent` or
-`currentHealth` (its rule 23, owner L1462).
+through full health, with WoW applying the ability's minimum in the frame.
 
 **APL line options.** `make_pack.lua` and the in-game importer accept these on a line before `if=` (in the tool,
 an unknown option or a non-numeric value errors; `unparse` writes them in this order): `name=<list>` (for
@@ -934,10 +1026,8 @@ show in two slots when a held slot's icon is the next slot's new icon.
   test this path; see `docs/research/2026-10-17-content-addon-spike.md`);
   icons, minimap and compartment entries, the pack editor, `/hekili snapshot`, combat alpha, a spec swap, the minimap
   position surviving `/reload`, and a third class (neither Warrior nor Druid) seeing the "no Forever pack" notice.
-- **Time to die from the TargetHealth belief** (a follow-up design): once the belief has M (the damage per full
-  health) and a modelled sample, the target's time to die is its health fraction x M / the recent WOUND damage rate
-  (a ring of the last ~10 s of our and the group's damage on it), "unknown" before that; Targets.lua's `FEED` would read
-  that belief instead of the facade's health, and `fight_remains` the longest over tracked enemies.
+- **Time to die of more than the target** (§3, Time to die): track the other enemies once their tokens (plates, boss)
+  can be watched, so `fight_remains` is the longest over several enemies and the target-swap filters have times.
 - **ForeverProbe**: `Hekili.VirtualState` became `Hekili.Virtual.State`; update its calls.
 
 ## 9. Localization

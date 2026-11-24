@@ -7,6 +7,8 @@ codes = true
 
 exclude_files = {
     "src/Hekili/Libs/",
+    "src/LibHiddenValues/Libs/",
+    "src/LibTimeToDie/Libs/",
     ".claude/",
     ".lua/",
     ".release/",
@@ -180,3 +182,28 @@ end
 files["src/Hekili_Warlock/Warlock.lua"] = { globals = warlockEnv }
 files["src/Hekili_Shared/Races/"] = { globals = stateEnv }
 files["src/Hekili_Shared/Shared/"] = { globals = stateEnv }
+-- LibHiddenValues (a standalone library in src/LibHiddenValues, not part of the addon above): it reads the client
+-- directly, so its client globals are declared here; its tests run on its own fake client.
+files["src/LibHiddenValues/"] = {
+    not_globals = { "print" }, -- a pure API: no chat output (owner 2026-11-20)
+    read_globals = {
+        "CreateFrame", "C_CurveUtil", "UnitHealthPercent", "UnitPowerPercent", "UnitExists", "UnitIsDead", "GetTime",
+        "IsLoggedIn", "GetLocale", "UnitPowerMax", "C_Secrets", "C_CooldownViewer", "C_CVar", "hooksecurefunc",
+        "InCombatLockdown",
+    },
+}
+files["tests/LibHiddenValues/"] = {
+    std = "+busted",
+    read_globals = { "LibStub", "Enum", "GetTime" },
+}
+-- LibTimeToDie (a standalone library in src/LibTimeToDie): time to die from LibHiddenValues' health bands.
+files["src/LibTimeToDie/"] = {
+    not_globals = { "print" }, -- a pure API: no chat output
+    read_globals = {
+        "CreateFrame", "GetTime", "GetLocale", "geterrorhandler", "UnitCanAttack", "UnitExists", "issecretvalue",
+    },
+}
+files["tests/LibTimeToDie/"] = {
+    std = "+busted",
+    read_globals = { "LibStub", "GetTime" },
+}

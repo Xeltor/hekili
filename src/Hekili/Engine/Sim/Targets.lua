@@ -7,10 +7,10 @@ local C_AddOns, C_PlayerInfo, C_PvP = Facade.C_AddOns, Facade.C_PlayerInfo, Faca
 local GetActionInfo, GetCVar, GetHaste, GetNumGroupMembers = Facade.GetActionInfo, Facade.GetCVar, Facade.GetHaste, Facade.GetNumGroupMembers
 local GetTime, GetUnitSpeed, InCombatLockdown, IsActionInRange = Facade.GetTime, Facade.GetUnitSpeed, Facade.InCombatLockdown, Facade.IsActionInRange
 local IsInInstance, IsInRaid, UnitAffectingCombat, UnitCanAttack = Facade.IsInInstance, Facade.IsInRaid, Facade.UnitAffectingCombat, Facade.UnitCanAttack
-local UnitClassBase, UnitExists, UnitGUID, UnitGetTotalAbsorbs = Facade.UnitClassBase, Facade.UnitExists, Facade.UnitGUID, Facade.UnitGetTotalAbsorbs
+local UnitClassBase, UnitExists, UnitGUID = Facade.UnitClassBase, Facade.UnitExists, Facade.UnitGUID
 local UnitHealth, UnitHealthMax, UnitInParty, UnitInRaid = Facade.UnitHealth, Facade.UnitHealthMax, Facade.UnitInParty, Facade.UnitInRaid
 local UnitIsDead, UnitIsFriend, UnitIsPVP, UnitIsPlayer = Facade.UnitIsDead, Facade.UnitIsFriend, Facade.UnitIsPVP, Facade.UnitIsPlayer
-local UnitIsTrivial, UnitIsUnit, UnitLevel, UnitName = Facade.UnitIsTrivial, Facade.UnitIsUnit, Facade.UnitLevel, Facade.UnitName
+local UnitIsUnit, UnitName = Facade.UnitIsUnit, Facade.UnitName
 local UnitPhaseReason, UnitTokenFromGUID = Facade.UnitPhaseReason, Facade.UnitTokenFromGUID
 local issecretvalue = Facade.issecretvalue
 local Hekili = _G[addon]
@@ -38,7 +38,7 @@ local FeignEvent, RegisterEvent = ns.FeignEvent, ns.RegisterEvent
 local TargetDummies = ns.TargetDummies
 
 local format = string.format
-local insert, remove, wipe = table.insert, table.remove, table.wipe
+local wipe = table.wipe
 
 local unitIDs = { "target", "targettarget", "focus", "focustarget", "boss1", "boss2", "boss3", "boss4", "boss5", "arena1", "arena2", "arena3", "arena4", "arena5" }
 
@@ -330,6 +330,7 @@ local lastCount = 1
 local lastStationary = 1
 local heldLow = false -- the token count's fall held this update (T1)
 local unheldCount = 1 -- the count before the hold: what target swaps read (integ/dot I1)
+local several, sawSeveral = false, false -- time to die's one or several enemies (B8 I2), and the last update's
 
 
 -- War Mode
@@ -733,6 +734,9 @@ do
         -- T1, the owner's no-jitter rule: with token plates, a fall publishes on the next forced update if it holds
         -- (0.1-0.5 s later); a rise at once. The GUID and damage paths are untouched.
         unheldCount = count
+        -- B8 I2: one or several follows a change that held one update; unheld, so a fall held below waits no second one
+        if ( count > 1 ) == sawSeveral then several = sawSeveral end
+        sawSeveral = count > 1
         if tokenMode and count < lastCount and not heldLow then
             heldLow = true
             count, stationary = lastCount, lastStationary
@@ -1204,354 +1208,228 @@ function Hekili:DumpDotInfo( aura )
 end
 
 do
-    -- New TTD, hopefully more aggressive and accurate than old TTD.
-    Hekili.TTD = Hekili.TTD or {}
-    local db = Hekili.TTD
-
-    local recycle = {}
-
-    local function EliminateEnemy(guid)
-        local enemy = db[guid]
-        if not enemy then
-            return
-        end
-
-        db[guid] = nil
-        wipe(enemy)
-        insert( recycle, enemy )
-
-    end
-
-
-    -- These enemies die (or encounter ends) at a health percentage greater than 0.
-    -- In theory, one could also mark certain targets as dying at 1.0 and they'd be considered dead, but I don't know why I'd do that.
-    local deathPercent = {
-        [162099] = 0.5, -- General Kaal; Sanguine Depths
-        [166608] = 0.1, -- Mueh'zala; De Other Side
-        [164929] = 0.2, -- Tirnenn Villager; Mists of Tirna Scythe
-        [164804] = 0.2, -- Droman Oulfarran; Mists of Tirna Scythe
-    }
-
-    local DEFAULT_TTD = 30
-    -- Forever: target health is secret (the facade answers the TargetHealth belief), so the tracker is not fed and every
-    -- time to die answers this "unknown", far beyond any fight (State.lua's time_to_die treats 3600 as unknown too).
+    -- Forever: "unknown", far beyond any fight (State.lua's time_to_die treats 3600 as unknown too): the answer for a
+    -- time to die only the old GUID tracker could give (never fed on Forever: target health is secret; removed, L1703),
+    -- and for the target's while the library has none.
     local FOREVER = 3600
-    local TRIVIAL = 5
-    -- Forever: off. Fed the belief's health, it learnt a 0 rate (DEFAULT_TTD) before a pin and junk from the jump at one.
-    -- shortcut: no time-to-die estimate; feed a belief-derived one here when a TargetHealth-based mechanism exists.
-    local FEED = false
 
-    local function UpdateEnemy(guid, healthPct, unit, time)
-        local enemy = db[ guid ]
-        time = time or GetTime()
+    -- Forever (lane B8, owner L1676): the target's time to die from LibTimeToDie, called directly, and the execute-line
+    -- hints to it (docs/dev/architecture.md, "Time to die"). A missed LibStub lookup is repeated: the library may load late.
+    local TTD_MAJOR, TTD_OWNER = "LibTimeToDie-1.0", "Hekili"
+    local TTD_RETRY = 1 -- seconds: between refused Tracks (each allocates)
+    local ttdLib, ttdTrack -- the library once found; the target's handle
+    local ttdRetryAt = 0 -- no Track before this
 
-        if not enemy then
-            -- This is the first time we've seen the enemy.
-            enemy = remove(recycle, 1) or {}
-            db[guid] = enemy
-
-            enemy.firstSeen = time
-            enemy.firstHealth = healthPct
-            enemy.lastSeen = time
-            enemy.lastHealth = healthPct
-
-            enemy.unit = unit
-
-            enemy.rate = 0
-            enemy.n = 0
-
-            local npcid = guid:match( "(%d+)-%x-$" )
-            npcid = tonumber( npcid )
-
-            enemy.npcid = npcid
-            enemy.deathPercent = npcid and deathPercent[ npcid ] or 0
-            enemy.deathTime = ( UnitIsTrivial(unit) and UnitLevel(unit) > -1 ) and TRIVIAL or DEFAULT_TTD
-            enemy.excluded = enemyExclusions[ npcid ]
-            return
+    local function ttdRelease()
+        if ttdTrack then
+            ttdTrack:Release()
+            ttdTrack = nil
         end
+    end
 
-        local difference = enemy.lastHealth - healthPct
+    -- Hints: read out of combat only (UnitClass and roles on group tokens probed plain out of combat, L1658).
+    local UnitClass, UnitGroupRolesAssigned = Facade.UnitClass, Facade.UnitGroupRolesAssigned
+    local classLines = ns.ttdLines -- [class token] = pct (shared content; Engine/Schema/Shared.lua)
+    local hintsDirty = true -- the lines are to be sent at the next chance out of combat
+    local sentBelow -- the line sent (nil: none)
 
-        -- We don't recalculate the rate when enemies heal.
-        if difference > 0 then
-            local elapsed = time - enemy.lastSeen
-
-            -- If this is our first health difference, just store it.
-            if enemy.n == 0 then
-                enemy.rate = difference / elapsed
-                enemy.n = 1
-            else
-                local samples = min(enemy.n, 9)
-                local newRate = enemy.rate * samples + (difference / elapsed)
-                enemy.n = samples + 1
-                enemy.rate = newRate / enemy.n
+    -- The player's own line from its pack (nil: none active), and whether the pack declares any.
+    local function ownLine()
+        local best, declared = nil, false
+        for key, a in pairs( class.abilities ) do
+            if type( key ) == "string" and type( a ) == "table" then
+                local g, d = rawget( a, "healthGate" ), rawget( a, "ttdBelow" )
+                if type( g ) == "number" then
+                    declared = true
+                    local v = floor( 100 * g + 0.5 )
+                    if state:IsKnown( key ) and ( not best or v > best ) then best = v end
+                end
+                if type( d ) == "table" and type( d.pct ) == "number" then
+                    declared = true
+                    local t = d.talent and rawget( state.talent, d.talent )
+                    if ( not d.talent or t and ( t.rank or 0 ) > 0 ) and ( not best or d.pct > best ) then best = d.pct end
+                end
             end
-
-            enemy.deathTime = ( healthPct - enemy.deathPercent ) / enemy.rate
         end
-
-        enemy.unit = unit
-        enemy.lastHealth = healthPct
-        enemy.lastSeen = time
+        return best, declared
     end
 
-    local function CheckEnemyExclusion( guid )
-        local enemy = db[ guid ]
-
-        if not enemy or enemy.excluded == nil then return end
-
-        -- Player target is always counted.
-        if UnitIsUnit( enemy.unit, "target" ) then
-            return false
+    local function groupLine( best, token )
+        if UnitExists( token ) and UnitIsUnit( token, "player" ) ~= true and UnitGroupRolesAssigned( token ) ~= "TANK" then
+            local _, c = UnitClass( token )
+            local v = c and classLines[ c ]
+            if v and ( not best or v > best ) then return v end
         end
-
-        if type( enemy.excluded ) == "boolean" then
-            return enemy.excluded
-        end
-
-        if type( enemy.excluded ) == "number" then
-            return FindExclusionAuraByID( enemy.unit, enemy.excluded )
-        end
-
-        return false
+        return best
     end
 
+    local function sendHints()
+        if InCombatLockdown() then return end -- PLAYER_REGEN_ENABLED sends them
+        ttdLib = ttdLib or LibStub( TTD_MAJOR, true )
+        if not ttdLib then return end
+        hintsDirty = false
+        local best, declared = ownLine()
+        if not declared then
+            local _, c = UnitClass( "player" )
+            best = c and classLines[ c ]
+        end
+        if IsInRaid() then
+            for i = 1, 40 do best = groupLine( best, "raid" .. i ) end
+        elseif GetNumGroupMembers() > 0 then
+            for i = 1, 4 do best = groupLine( best, "party" .. i ) end
+        end
+        if best ~= sentBelow then
+            ttdLib:HintBelow( TTD_OWNER, best )
+            sentBelow = best
+        end
+    end
+
+    -- Activation.lua, after the talent ranks are read (login, a spec or talent change).
+    function ns.TtdHintsChanged()
+        hintsDirty = true
+        sendHints()
+    end
+
+    RegisterEvent( "GROUP_ROSTER_UPDATE", ns.TtdHintsChanged ) -- its own registration: core has no handler of it
+
+    -- Events.lua's PLAYER_REGEN_ENABLED handler.
+    function ns.TtdCombatEnded()
+        if hintsDirty then sendHints() end
+    end
+
+    -- The snapshot's time-to-die line (English only; Hekili:GetTTDInfo). Allocates.
+    local function ttdLine()
+        local est, lo, hi, s, why
+        if ttdTrack then est, lo, hi, s, why = ttdTrack:Get() end
+        return format( "time to die: %s %s est %s lo %s hi %s; hints: below %s", s or "not tracked", tostring( why ), tostring( est ), tostring( lo ), tostring( hi ), tostring( sentBelow or "none" ) ) -- l10n: verbatim
+    end
+
+    -- The target's live estimate in seconds or nil. Allocates nothing once tracked or refused.
+    local function targetTTD()
+        if Hekili.bandOff then
+            ttdRelease()
+            return nil
+        end
+        if not ttdTrack then
+            ttdLib = ttdLib or LibStub( TTD_MAJOR, true )
+            if not ttdLib then return nil end
+            local now = GetTime()
+            if now < ttdRetryAt then return nil end
+            ttdTrack = ttdLib:Track( TTD_OWNER, "target" )
+            if not ttdTrack then
+                ttdRetryAt = now + TTD_RETRY
+                return nil
+            end
+            if hintsDirty then sendHints() end
+        end
+        local est, _, _, s, why = ttdTrack:Get()
+        -- shortcut: a seed answer reads unknown (owner L1742). LibTimeToDie minor 4 seeds only after 1.5 s of loss, but a
+        -- burst then a far slower fall still seeds at about half the true time; vendor-libs kept the rule on its fight
+        -- runs (removing it raised the swap set's flicker, L1736). Drop it when a library minor or a re-run shows no cost.
+        return s == "live" and why ~= "seed" and est or nil
+    end
+
+    -- targetTTD's answer when the target is plainly attackable, else nil. The library first, so with none (or
+    -- Hekili.bandOff) no client call is made.
+    local function hostileTargetTTD()
+        local est = targetTTD()
+        if est and plain( UnitExists( "target" ) ) and plain( UnitCanAttack( "player", "target" ) ) then
+            return est
+        end
+    end
+
+    -- The longest (and the shortest) time to die among the enemies (owner L1694): the target's with one enemy, unknown
+    -- with several (only the target is tracked; no scan here: that scan calls GetTTD itself). Nothing is kept across a
+    -- target change: the library answers nothing for a new target before 1.5 s of its loss, so the last one's time
+    -- would bridge to no answer, and it is no fact about this one.
+    local function onlyEnemyTTD()
+        if several then return nil end
+        return hostileTargetTTD()
+    end
+
+    -- Forever: the getters below keep the answers of the old GUID tracker's empty table (L1703); only the target's time
+    -- is known, from the library.
     function Hekili:GetDeathClockByGUID( guid )
         if state.target.is_dummy then return 180 end
-
-        local time, validUnit = 0, false
-        local enemy = db[ guid ]
-
-        if enemy then
-            time = max( time, enemy.deathTime )
-            validUnit = true
-        end
-
-        if not validUnit then return FOREVER end
-
-        return time
+        return FOREVER
     end
 
     function Hekili:GetTTD( unit, isGUID )
         if state.target.is_dummy then return 180 end
 
-        -- Forever: unknown for every target, a grey one too, as fight_remains (wowsims's remainingTime has no trivial case)
-        local default = FEED and ( isGUID or UnitIsTrivial(unit) and UnitLevel(unit) > -1 ) and TRIVIAL or FOREVER
-        local guid = isGUID and unit or UnitExists(unit) and UnitCanAttack("player", unit) and UnitGUID(unit)
-
-        if not guid then
-            return default
+        if unit == "target" and not isGUID then
+            return hostileTargetTTD() or FOREVER
         end
 
-        local enemy = db [guid ]
-        if not enemy then
-            return default
-        end
-
-        -- Don't have enough data to predict yet.
-        if enemy.n < 3 or enemy.rate == 0 then
-            return default, enemy.n
-        end
-
-        local health, healthMax = UnitHealth(unit), UnitHealthMax(unit)
-        health = health + UnitGetTotalAbsorbs(unit)
-        local healthPct = health / healthMax
-
-        if healthPct == 0 then
-            return 1, enemy.n
-        end
-
-        return ceil(healthPct / enemy.rate), enemy.n
+        -- Forever: unknown for every other unit, a grey one too, as fight_remains (wowsims's remainingTime has no trivial case)
+        return FOREVER
     end
 
     function Hekili:GetTimeToPct( unit, percent )
-        local default = FEED and UnitIsTrivial( unit ) and TRIVIAL or FOREVER
-        local guid = UnitExists( unit ) and UnitCanAttack( "player", unit ) and UnitGUID( unit )
-
         if percent >= 1 then
             percent = percent / 100
         end
 
-        if not guid then return default end
-
-        local enemy = db[ guid ]
-        if not enemy then return default end
-
-        local health, healthMax = UnitHealth( unit ), UnitHealthMax( unit )
-        local healthPct = health / healthMax
-
-        if healthPct <= percent then return 0, enemy.n end
-
-        health = health + UnitGetTotalAbsorbs( unit )
-        healthPct = health / healthMax
-
-        if enemy.n < 3 or enemy.rate == 0 then
-            return default, enemy.n
+        if unit == "target" then
+            -- The library answers the time to 0 only: scaled by the share of the health left above the percent, h the
+            -- facade's target health (the belief's, 0-100), on the estimate's own rate.
+            local est = hostileTargetTTD()
+            if not est then return FOREVER end
+            local hm = UnitHealthMax( "target" )
+            local h = hm > 0 and 100 * UnitHealth( "target" ) / hm or 0
+            local p = 100 * percent
+            if h <= p then return 0 end
+            return est * ( h - p ) / h
         end
 
-        return ceil( ( healthPct - percent ) / enemy.rate ), enemy.n
+        return FOREVER
     end
 
+    -- Forever: no caller. shortcut: a GUID is secret in dungeons, so no GUID is matched to the tracked target; compare
+    -- with the target's GUID (plain only) if a caller appears.
     function Hekili:GetTimeToPctByGUID( guid, percent )
         if percent >= 1 then
             percent = percent / 100
         end
 
-        local default = percent * FOREVER
-
-        if not guid then return default end
-
-        local enemy = db[ guid ]
-        if not enemy then return default end
-
-        if enemy.n < 3 or enemy.rate == 0 then
-            return default, enemy.n
-        end
-
-        local healthPct = enemy.lastHealth
-        if healthPct <= percent then return FOREVER, enemy.n end
-
-        return ceil( ( healthPct - percent ) / enemy.rate ), enemy.n
+        return percent * FOREVER
     end
 
     function Hekili:GetGreatestTTD()
         if state.target.is_dummy then return 180 end
 
-        local time, validUnit, now = 0, false, GetTime()
-
-        for k, v in pairs( db ) do
-            if not CheckEnemyExclusion( k ) then
-                time = max( time, max( 0, v.deathTime ) )
-                validUnit = true
-            end
-        end
-
-        if not validUnit then return FOREVER end
-
-        return time
+        -- Forever: fight_remains (longest_ttd) is the only enemy's estimate.
+        -- shortcut: only the target is tracked, so with more than one enemy the longest is unknown (FOREVER); track
+        -- the others when LibTimeToDie proves their tokens (plates, boss: its version 2).
+        return onlyEnemyTTD() or FOREVER
     end
 
     function Hekili:GetGreatestTimeToPct( percent )
-        local time, validUnit, now = 0, false, GetTime()
-
-        if percent >= 1 then
-            percent = percent / 100
-        end
-
-        for k, v in pairs(db) do
-            if not CheckEnemyExclusion( k ) and v.lastHealth > percent then
-                local scale = ( percent - v.deathPercent ) / ( v.lastHealth - v.deathPercent )
-                time = max( time, max( 0, v.deathTime * scale ) )
-                validUnit = true
-            end
-        end
-
-        if not validUnit then return FOREVER end
-
-        return time
+        return FOREVER
     end
 
     function Hekili:GetLowestTTD()
         if state.target.is_dummy then return 180 end
 
-        local time, validUnit, now = 3600, false, GetTime()
-
-        for k, v in pairs(db) do
-            if not CheckEnemyExclusion( k ) then
-                time = min( time, max( 0, v.deathTime ) )
-                validUnit = true
-            end
-        end
-
-        if not validUnit then
-            return FOREVER
-        end
-
-        return time
+        return onlyEnemyTTD() or FOREVER -- Forever: the only enemy's estimate, as GetGreatestTTD
     end
 
     function Hekili:GetNumTTDsWithin( x )
-        local count, now = 0, GetTime()
-        local dummy_override = state.target.is_dummy
-
-        for k, v in pairs(db) do
-            if not dummy_override and not CheckEnemyExclusion( k ) and max( 0, v.deathTime ) <= x then
-                count = count + 1
-            end
-        end
-
-        return count
+        return 0
     end
     Hekili.GetNumTTDsBefore = Hekili.GetNumTTDsWithin
 
     function Hekili:GetNumTTDsAfter( x )
-        if not FEED then return state.active_enemies end -- Forever: every enemy's time to die is unknown, so after x
-
-        local count = 0
-        local dummy_override = state.target.is_dummy
-
-        for k, v in pairs(db) do
-            if dummy_override or CheckEnemyExclusion( k ) and max( 0, v.deathTime ) > x then
-                count = count + 1
-            end
-        end
-
-        return count
+        return state.active_enemies -- Forever: no enemy's time is known, so all count as after x
     end
 
     function Hekili:GetNumTargetsAboveHealthPct( amount, inclusive, minTTD )
-        local count, now = 0, GetTime()
-
-        amount = amount > 1 and ( amount / 100 ) or amount
-        inclusive = inclusive or false
-        minTTD = minTTD or 3
-
-        for k, v in pairs(db) do
-            if not CheckEnemyExclusion( k ) then
-                if inclusive then
-                    if v.lastHealth >= amount and max( 0, v.deathTime ) >= minTTD then
-                        count = count + 1
-                    end
-                else
-                    if v.lastHealth > amount and max( 0, v.deathTime ) >= minTTD then
-                        count = count + 1
-                    end
-                end
-            end
-        end
-
-        return count
+        return 0
     end
 
     function Hekili:GetNumTargetsBelowHealthPct( amount, inclusive, minTTD )
-        amount = amount > 1 and ( amount / 100 ) or amount
-        inclusive = inclusive or false
-        minTTD = minTTD or 3
-
-        local count, now = 0, GetTime()
-
-        amount = amount > 1 and ( amount / 100 ) or amount
-        inclusive = inclusive or false
-        minTTD = minTTD or 3
-
-        for k, v in pairs(db) do
-            if not CheckEnemyExclusion( k ) then
-                if inclusive then
-                    if v.lastHealth <= amount and max( 0, v.deathTime ) >= minTTD then
-                        count = count + 1
-                    end
-                else
-                    if v.lastHealth < amount and max( 0, v.deathTime ) >= minTTD then
-                        count = count + 1
-                    end
-                end
-            end
-        end
-
-        return count
+        return 0
     end
-
-    local bosses = {}
 
     function Hekili:GetAddWaveTTD()
         if state.target.is_dummy then return 180 end
@@ -1560,100 +1438,20 @@ do
             return self:GetGreatestTTD()
         end
 
-        wipe(bosses)
-
-        for i = 1, 5 do
-            local unit = "boss" .. i
-            local guid = UnitExists(unit) and UnitGUID(unit)
-            if guid then
-                bosses[ guid ] = true
-            end
-        end
-
-        local time = 0
-
-        for k, v in pairs(db) do
-            if not CheckEnemyExclusion( k ) and not bosses[ k ] then
-                time = max( time, v.deathTime )
-            end
-        end
-
-        return time
+        return 0 -- Forever: no add's time is known
     end
 
     function Hekili:GetTTDInfo()
-        local output = "targets:"
-        local found = false
+        local output = ttdLine() .. "\ntargets:"
 
         if state.target.is_dummy then
             output = output .. "    Target TTDs overridden; target is a training dummy"
         end
 
-        for k, v in pairs( db ) do
-            local unit = ( v.unit or "unknown" )
-            local excluded = CheckEnemyExclusion( k )
-
-            if v.n > 3 then
-                output = output .. format( "\n    %-11s: %4ds [%d] #%6s%s %s", unit, v.deathTime, v.n, v.npcid, excluded and "*" or "", UnitName( v.unit ) or "Unknown" )
-            else
-                output = output .. format( "\n    %-11s: TBD  [%d] #%6s%s %s", unit, v.n, v.npcid, excluded and "*" or "", UnitName(v.unit) or "Unknown" )
-            end
-            found = true
-        end
-
-        if not found then output = output .. "  none" end
-
-        return output
+        return output .. "  none"
     end
 
     function Hekili:ExpireTTDs( all )
-        local now = GetTime()
-
-        for k, v in pairs( db ) do
-            if all or now - v.lastSeen > 10 then
-                EliminateEnemy( k )
-            end
-        end
+        if all then ttdRelease() end -- Forever: the library's track (OnDisable); the next query tracks again
     end
-
-    local trackedUnits = { "target", "boss1", "boss2", "boss3", "boss4", "boss5", "focus", "arena1", "arena2", "arena3", "arena4", "arena5" }
-    local seen = {}
-
-    local UpdateTTDs = function()
-        if not InCombatLockdown() then return end
-
-        wipe(seen)
-
-        local now = GetTime()
-
-        for _, unit in ipairs( trackedUnits ) do
-            local guid = UnitGUID(unit)
-
-            if guid and not seen[guid] then
-                if db[ guid ] and ( not UnitExists(unit) or UnitIsDead(unit) or not UnitCanAttack("player", unit) or ( UnitHealth(unit) <= 1 and UnitHealthMax(unit) > 1 ) ) then
-                    EliminateEnemy( guid )
-                else
-                    local health, healthMax = UnitHealth(unit), UnitHealthMax(unit)
-                    health = health + UnitGetTotalAbsorbs(unit)
-                    healthMax = max( 1, healthMax )
-
-                    UpdateEnemy( guid, health / healthMax, unit, now )
-                end
-                seen[ guid ] = true
-            end
-        end
-
-        for unit, guid in pairs(npGUIDs) do
-            if db[guid] and (not UnitExists(unit) or UnitIsDead(unit) or not UnitCanAttack("player", unit)) then
-                EliminateEnemy(guid)
-            elseif not seen[guid] then
-                local health, healthMax = UnitHealth(unit), UnitHealthMax(unit)
-                UpdateEnemy(guid, health / healthMax, unit, now)
-            end
-            seen[ guid ] = true
-        end
-    end
-    Hekili:ProfileCPU( "UpdateTTDs", UpdateTTDs )
-
-    if FEED then C_Timer.NewTicker( 0.5, UpdateTTDs ) end
 end

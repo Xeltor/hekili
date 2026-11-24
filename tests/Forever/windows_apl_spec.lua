@@ -2856,6 +2856,22 @@ end)
 describe("member lines keyed on their position (windows design v6 §6; review I1)", function()
     local REPEAT = ":hamstring,if=test_fa:rend:hamstring,if=!test_fa"
 
+    local function castMember(id)
+        cast(id)
+        if id == HS then
+            -- Settle the tracked application before asking the window to recommend Hamstring again.
+            H.ctl.auras.target.HARMFUL[1] = {
+                name = "Hamstring",
+                spellId = HS,
+                expirationTime = t + 15,
+                duration = 15,
+                applications = 1,
+                sourceUnit = "player",
+            }
+            H.Fire("UNIT_AURA", "target")
+        end
+    end
+
     before_each(function()
         boot()
         flags.fa, flags.fb = false, false
@@ -2898,7 +2914,7 @@ describe("member lines keyed on their position (windows design v6 §6; review I1
                 recs, sent = tick()
                 all[#all + 1] = sent
                 assert.are.equal("hamstring", recs[1].actionName, mode .. " step 1 true")
-                cast(HS)
+                castMember(HS)
                 recs, sent = tick()
                 all[#all + 1] = sent
                 assert.are.same({ true, 2 }, { seqState("p") }, mode)
@@ -2913,7 +2929,7 @@ describe("member lines keyed on their position (windows design v6 §6; review I1
                 recs, sent = tick()
                 all[#all + 1] = sent
                 assert.are.equal("hamstring", recs[1].actionName, mode .. " step 3 true")
-                cast(HS)
+                castMember(HS)
                 tick()
                 assert.are.same({ true, 4 }, { seqState("p") }, mode) -- parked
                 S.delay = 0
@@ -2935,7 +2951,7 @@ describe("member lines keyed on their position (windows design v6 §6; review I1
             flags.fa = true
             local _, sent = tick()
             assert.are.same({ { key("s"), OPEN } }, sent)
-            cast(HS)
+            castMember(HS)
             tick()
             assert.are.same({ true, 2 }, { seqState("s") })
             cast(RD) -- step 3 (hamstring, if=!test_fa) with test_fa true; Rend's GCD runs
@@ -2971,7 +2987,7 @@ describe("member lines keyed on their position (windows design v6 §6; review I1
                 assert.are.same({}, sent, step)
                 assert.are.same({ true, step }, { seqState("h") }, step)
                 assert.are.equal(want, recs[1].actionName, step)
-                cast(want == "rend" and RD or HS)
+                castMember(want == "rend" and RD or HS)
             end
             recs = tick()
             assert.are.same({ true, 4 }, { seqState("h") })

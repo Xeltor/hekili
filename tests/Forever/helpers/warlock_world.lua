@@ -798,7 +798,6 @@ local function content(name)
     -- (hunter_world's reason: a kill ends the loop before the client sees it).
     -- The build's sacrificed demon's effect from the pull (wowsims sacrifices it before the fight).
     local function hooks(W, us)
-        us.health, us.healthMax = 1e9, 1e9
         us.demon = P.demon -- out from the start (wowsims: the summon option's demon, EnabledOnStart)
         if P.sacrificed then
             sacrificeOn(W, us, DEMON[P.sacrificed].sacrifice)
@@ -813,6 +812,7 @@ local function content(name)
         max = MAX,
         fsr = { [MANA] = P.fsr or FSR },
         power = MAX,
+        playerHealth = 1e9,
         mobHealth = 1e9,
         distance = 25, -- a caster's range: no melee swings of ours
         script = hooks,
@@ -829,8 +829,8 @@ local function content(name)
         stats = { [5] = P.spirit or SPIRIT }, -- UnitStat(5)'s Spirit, Life Tap's
     }
 
-    -- No other power read (mana is secret in combat).
-    C.OBSERVE = { powerTokens = { [MANA] = "MANA" } }
+    -- Keep the oracle on the same health budget as the world when evaluating Life Tap.
+    C.OBSERVE = { powerTokens = { [MANA] = "MANA" }, plainPlayerHealth = true }
 
     -- No power is swing-paid.
     function C.gain()

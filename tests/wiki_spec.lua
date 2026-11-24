@@ -381,9 +381,10 @@ describe("the options collector", function()
             assert.are.equal("In some cases", rows["Count Targets Near Your Pet"].shown)
             assert.are.equal("Yes", rows["Frame Budget"].shown)
             local editor = byLabel(options.rows(manifest["options-editor"]))
-            for _, field in ipairs({ "Use Off GCD", "Focus Tier", "Cycle Targets", "Variable Name" }) do
-                assert.are.equal("In some cases", editor[field] and editor[field].shown, field)
-            end
+            assert.are.equal("In some cases", editor["Cycle Targets"].shown)
+            assert.are.equal("In some cases", editor["Variable Name"].shown)
+            assert.are.equal("Yes", editor["Use Off GCD"].shown)
+            assert.are.equal("Yes", editor["Focus Tier"].shown)
             assert.are.equal("Yes", editor.Label.shown) -- the fork's default first entry is an ability
         end
     )

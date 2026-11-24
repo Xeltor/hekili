@@ -21,7 +21,6 @@ local Hekili = _G[ addon ]
 local class = Hekili.Class
 local state = Hekili.State
 local PTR = ns.PTR
-local TTD = ns.TTD
 
 local formatKey = ns.formatKey
 local StyleGroup = Hekili.Engine.StyleGroup -- the bound style's keybinding text settings, or classic's
@@ -322,7 +321,7 @@ Hekili.FeignEvent = ns.FeignEvent
 
 
 do
-    local isUnregistered = true
+    local isUnregistered = true -- nothing registers the event before the first wait
     local next = _G.next
 
     local requeued = {}
@@ -907,6 +906,7 @@ RegisterEvent( "PLAYER_REGEN_ENABLED", function ()
 
     state.combat = 0
     ns.ClearSecretTooltipMemo() -- spell tooltips are plain again: re-read the ones that were secret
+    ns.TtdCombatEnded() -- time-to-die hints held back in combat (Targets.lua)
 
     state.swings.mh_actual = 0
     state.swings.oh_actual = 0
@@ -1236,6 +1236,7 @@ local spell_names = setmetatable( {}, {
 local lastPower = {}
 
 local function UNIT_POWER_FREQUENT( event, unit, power )
+    if power == "COMBO_POINTS" then return Hekili:ForceUpdate( event, true ) end -- a point gained or spent
 
     if power == "FOCUS" and rawget( state, "focus" ) then
         local now = GetTime()
@@ -1262,7 +1263,10 @@ local function UNIT_POWER_FREQUENT( event, unit, power )
         end
     end
 
-    local est, lo = UnitPower( "player", Enum.PowerType[ power ] )
+    local id = power and ns.GetResourceID( power:lower() ) -- the token's own pool; unknown: never the displayed one
+    if not id then return end
+
+    local est, lo = UnitPower( "player", id )
     local newPower = math.floor( lo or est ) -- power is spent in whole points; the floor, as before the streams split
 
     if lastPower[ power ] and newPower < lastPower[ power ] then
@@ -1780,7 +1784,8 @@ local function CLEU_HANDLER( event, timestamp, subtype, hideCaster, sourceGUID, 
     end
 
     if state.role.tank and state.GUID == destGUID and subtype:sub(1,5) == 'SWING' and not IsActuallyFriend( sourceName ) then
-        ns.updateTarget( sourceGUID, time, true )
+        -- Forever (L1691 item 1): no known attacker is no enemy. Tested here, not above: the next branch is our own swing's.
+        if sourceGUID ~= "" then ns.updateTarget( sourceGUID, time, true ) end
 
     elseif subtype:sub( 1, 5 ) == 'SWING' and not multistrike then
         if subtype == 'SWING_MISSED' then offhand = spellName end

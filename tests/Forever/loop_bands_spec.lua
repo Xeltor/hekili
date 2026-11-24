@@ -1,0 +1,453 @@
+-- tests/Forever/loop_bands_spec.lua (LibHiddenValues integration design 5.4, 6.1 lanes B1-B2): the `bands` arm. The
+-- driver's belief watches through fake_lhv.lua (loop.lua), the observer pushing the world's truth. The target health
+-- family reads its band (lane B2); no priority of these packs reads target health (their low-health lines are the
+-- client's own usability gates), so on the bands-health arm (no power band) every output of a fight still equals the
+-- default arm's on the same seed. The resources read theirs (lane B4): on the bands arms the outputs move, and the
+-- believed floor is above the truth on no more polls than the default arm's (the L1525 ratchet, in each lead arm but
+-- bands-lead, which is a measurement: a live band is fact, L1671, so it gates nothing and prints both counts). The
+-- order arms (spend-first, spend-late, gain-first) get one extra cycle inside each delay (loop.midPolls), else the 0.2 s
+-- poll hands the belief both sides at once; the fight-free half proves each enters its branch. At every
+-- fold the truth lies inside the band the family applied, or the band lagged it (loop.bandCheck: containment, L1666 a),
+-- on each channel the world has; what the family made of it, clipped, holds the truth too, and its estimate lies
+-- within one band of the truth (`est`).
+local loop = require("Game.harness.loop")
+local util = require("luassert.util")
+local ab = require("Game.harness.ab")
+local ww = require("Forever.helpers.warrior_world")
+local dlw = require("Forever.helpers.druid_loop_world")
+local mw = require("Forever.helpers.mage_world")
+local pw = require("Forever.helpers.paladin_world")
+
+-- The outputs the gates read from a run (loop.run's record), and the bands arm's lines. gap, readyShort and heldReady
+-- need the oracle driver (L1733): `oracle` adds it as the gates run it (loop.fight's run A).
+local ROWS = { "ours", "pressed", "presses", "pressedBy", "refused", "gap", "readyShort", "heldReady", "loOver", "up" }
+
+-- The keys of ROWS on which runs a and b differ, all of them (an early difference hides none after it).
+local function moved(a, b)
+    local keys = {}
+    for _, key in ipairs(ROWS) do
+        if not util.deepcompare(a[key], b[key]) then
+            keys[#keys + 1] = key
+        end
+    end
+    return keys
+end
+
+local function fight(content, arm, seed, plant, duration, oracle)
+    local L, lines, check = loop.new(content), {}, ab.check
+    if plant then
+        plant(L.us.ns.VirtualStateInternal, L.us.ns.VirtualState.Obs)
+    end
+    ab.check = function(ok, label, line) -- the lines a record-only arm writes to .ab/<arm>.tsv
+        lines[#lines + 1] = label .. " " .. tostring(line)
+        if label == "bands" then
+            lines.ok = ok -- the row's verdict
+        end
+        if not plant then -- a planted family's run is read below, never asserted here
+            return check(ok, label, line, "default")
+        end
+    end
+    local drivers = { { H = L.us }, oracle and { H = L.oracle, plain = true } or nil }
+    local ok, run = pcall(loop.run, L, seed, { duration = duration or 30, arm = arm }, drivers)
+    ab.check = check
+    assert(ok, run)
+    assert.are.same({ 0, 0 }, { run.errors, run.raises })
+    assert.is_true(run.power.n > 0, "no power poll: each lo-over compare would pass on 0 against 0") -- re-review M1
+    return run, L.us, lines
+end
+
+describe("the bands arm #slow", function()
+    for _, case in ipairs({
+        -- case[4]: the seed-3 fight has a gap and a held-while-ready tick to compare (L1733); Feral's and Frost's 30 s
+        -- agree with the oracle on every tick, so theirs are 0 against 0 (compared, never able to fail there)
+        { "Arms (rage)", ww, { -1, 0, 1 }, true },
+        { "Feral (energy; mana and rage while not shown are paused)", dlw.Feral, { -1, 0 } },
+        { "Frost (mana)", mw.Frost, { -1, 0 } },
+    }) do
+        it(
+            case[1] .. ": the health bands alone leave the rows; each applied band holds the truth or lagged it",
+            function()
+                local base = fight(case[2], "default", 3, nil, nil, true)
+                local health = fight(case[2], "bands-health", 3, nil, nil, true)
+                assert.are.same({}, moved(base, health))
+                if case[4] then -- (L1733) the oracle's rows are measured: a gap at a disagreement, a held tick
+                    assert.is_true(#base.gap > 0 and base.heldReady > 0, "the oracle's rows are empty")
+                end
+                local run, H, lines = fight(case[2], "bands", 3)
+                assert.is_true(run.loOver <= base.loOver, ("lo over %d, default %d"):format(run.loOver, base.loOver))
+                local b = run.bands
+                assert.are.same({}, b.misses)
+                assert.are.equal(b.checked, b.held + b.lagged) -- held at the fold, or lagged: its own row (L1666 a)
+                local e = b.est -- the target's estimate within one band of the truth wherever its family applied one
+                assert.is_true(e.n > 20, tostring(e.n))
+                assert.are.same({}, e.offs)
+                assert.are.equal(0, e.off + e.outside)
+                assert.are.equal(e.n, e.within + e.lagged + e.floored)
+                for _, ch in ipairs(case[3]) do
+                    assert.is_true((b.live[ch] or 0) > 20, ch .. " " .. tostring(b.live[ch]))
+                end
+                local I = H.ns.VirtualStateInternal
+                local powers = 0
+                for ch, n in pairs(b.live) do
+                    powers = powers + (ch > 0 and n > 20 and 1 or 0)
+                    assert.is_number(I.bandDisagree[ch], ch)
+                end
+                assert.is_true(powers >= 1, "a power band") -- the class's own power, in points
+                assert.is_truthy(
+                    lines[#lines]:match("^bands seed 3 checked %d+ held %d+ lagged %d+ live .* est %d+ "),
+                    lines[#lines]
+                )
+            end
+        )
+
+        it(case[1] .. ", bands-lead: the floor over the truth, both counts printed, neither gated (L1671)", function()
+            local base, lead = fight(case[2], "default", 3), fight(case[2], "bands-lead", 3)
+            print(("bands-lead, %s: lo over %d, default %d"):format(case[1], lead.loOver, base.loOver))
+        end)
+
+        -- design 5.4's ratchet in each other lead arm, a case apiece so that one over it hides none of the others
+        for _, arm in ipairs({ "bands-lag", "bands-spend-first", "bands-spend-late", "bands-gain-first" }) do
+            it(
+                case[1] .. ", " .. arm .. ": the floor over the truth on no more polls than the default arm's",
+                function()
+                    local base, lead = fight(case[2], "default", 3), fight(case[2], arm, 3)
+                    assert.is_true(
+                        lead.loOver <= base.loOver,
+                        ("lo over %d, default %d"):format(lead.loOver, base.loOver)
+                    )
+                end
+            )
+        end
+    end
+
+    -- (review I4) whole fights, through the low-health part where the gate's answers meet the band and the resource runs
+    -- short: what the family made of the band after the clip
+    for _, case in ipairs({ { "Arms", ww, 5 }, { "Retribution", pw.Retribution, 1 } }) do
+        it(case[1] .. " to the kill: the clipped interval holds the truth, no estimate off", function()
+            local b = fight(case[2], "bands", case[3], nil, 180).bands
+            assert.are.same({}, b.est.offs)
+            assert.are.same({ 0, 0, 0 }, { b.missed, b.est.off, b.est.outside })
+        end)
+    end
+
+    -- The check reads what the family applied, not what the source logged: a planted family that records its band one
+    -- cell high fails it.
+    it("a family applying a band off the truth fails the containment check", function()
+        local run = fight(ww, "bands", 3, function(I, Obs)
+            I.On(Obs.Band, function(o) -- after the family's own handler (registered at load)
+                if o.a == -1 and o.b <= o.c then
+                    I.bandUsedLo[-1], I.bandUsedHi[-1] = o.b + 0.02, o.c + 0.02
+                end
+            end)
+        end)
+        assert.is_true(run.bands.missed > 20, tostring(run.bands.missed))
+        assert.is_truthy(run.bands.misses[1]:match("^%-1 at "), run.bands.misses[1])
+    end)
+
+    it("an estimate off the truth under bands that hold it fails the row", function()
+        local run, _, lines = fight(ww, "bands", 3, function(I, Obs)
+            I.On(Obs.Band, function(o)
+                if o.a == -1 and o.b <= o.c then
+                    I.th.est0, I.th.lo0, I.th.hi0 = 0, 0, 0
+                end
+            end)
+        end)
+        assert.are.same({ 0, true, false }, { run.bands.missed, run.bands.est.off > 20, lines.ok })
+    end)
+
+    -- The gate's path (loop.tally): three fights on one boot, run A with the oracle shadow, run B, the 30 s gap between
+    -- fights (the idle pause), the fake and its history carried into each new world, a kill's gone, the next prime.
+    local function tally(arm)
+        local L, lines, check = loop.new(ww), {}, ab.check
+        ab.check = function(ok, label, line)
+            lines[#lines + 1] = label == "bands" and line or nil
+            return true -- record-only: the rows are compared below
+        end
+        local ok, m = pcall(loop.tally, L, 3, { arm = arm })
+        ab.check = check
+        assert(ok, m)
+        return m, lines
+    end
+
+    it("three fights on one boot: health alone the default's tally, every fight's bands holding the truth", function()
+        local base = tally("default")
+        local m = tally("bands-health")
+        local bands, lines = tally("bands")
+        assert.is_true(bands.loOver <= base.loOver, ("lo over %d, default %d"):format(bands.loOver, base.loOver))
+        for _, key in ipairs({ "fights", "both", "agree", "conf", "react", "refused", "attempts", "episodes" }) do
+            assert.are.same(base[key], m[key], key)
+        end
+        for _, key in ipairs({ "readyShort", "heldReady", "loOver", "A", "B", "gap", "selfCheck", "pressedBy" }) do
+            assert.are.same(base[key], m[key], key)
+        end
+        assert.are.equal(3, #lines) -- run A's driver only: never the oracle, never run B
+        for f, line in ipairs(lines) do
+            local checked, held, lagged = line:match("checked (%d+) held (%d+) lagged (%d+)")
+            assert.are.equal(tonumber(checked), held + lagged, line)
+            assert.is_truthy(line:match(" off 0 outside 0 "), line)
+            for _, ch in ipairs({ "-1", "0", "1" }) do
+                local n = tonumber(line:match("[ ,]" .. ch .. ":(%d+)"))
+                assert.is_true((n or 0) > 100, f .. ": " .. line)
+            end
+        end
+    end)
+
+    it("bands-drop: the capability lost mid-fight, no floor more over, no band logged after it", function()
+        local base = fight(ww, "default", 5)
+        local run, H = fight(ww, "bands-drop", 5)
+        assert.is_true(run.loOver <= base.loOver, ("lo over %d, default %d"):format(run.loOver, base.loOver))
+        local I = H.ns.VirtualStateInternal
+        for _, live in pairs(I.bandLive) do
+            assert.is_false(live)
+        end
+        assert.are.equal(run.bands.checked, run.bands.held + run.bands.lagged)
+        assert.is_true(run.bands.checked > 0)
+    end)
+
+    -- L1666 d: the real library keeps an "error" loss for the session (design 5.2), so the next fights start without.
+    it("bands-drop over three fights: the capability lost with error stays lost, no band in fights 2 and 3", function()
+        local _, lines = tally("bands-drop")
+        assert.are.equal(3, #lines)
+        assert.is_truthy(lines[1]:match("checked [1-9]"), lines[1])
+        for f = 2, 3 do
+            assert.is_truthy(lines[f]:match("checked 0 "), lines[f])
+        end
+    end)
+end)
+
+-- (review I4, M4) loop.bandCheck on planted drains: the band and what the family made of it are checked apart.
+describe("the bands arm's containment check", function()
+    local LATENCY = 7 / 60 -- the fake library's h:Latency()
+    local NOW = 10
+
+    -- truth now, `was` until `left` seconds ago; the band `age` seconds old as applied; est and iv: the family's
+    local function check(o)
+        local lo, hi = o.band[1], o.band[2]
+        local VI = {
+            TARGET_HEALTH_FLOOR = 0.02,
+            bandLive = { [-1] = true },
+            bandUsed = { [-1] = o.used or 2 },
+            bandUsedLo = { [-1] = lo },
+            bandUsedHi = { [-1] = hi },
+            bandLo = { [-1] = lo },
+            bandHi = { [-1] = hi },
+            bandT = { [-1] = NOW - (o.age or 0) },
+        }
+        local iv = o.iv or o.band
+        local health = { est = o.est, lo = iv[1], hi = iv[2] }
+        local function Health()
+            return health
+        end
+        local H = { ns = { VirtualStateInternal = VI, VirtualState = { Health = Health } }, ctl = { now = NOW } }
+        local lhv = {}
+        function lhv.TruthAt(_, _, _, _, t)
+            return t >= NOW - (o.left or 0) and o.truth or o.was or o.truth, 1
+        end
+        local e = { n = 0, within = 0, lagged = 0, floored = 0, off = 0, outside = 0, worst = 0, offs = {} }
+        local b = { checked = 0, held = 0, lagged = 0, missed = 0, live = {}, misses = {}, used = {}, est = e }
+        b.used[-1] = o.before
+        loop.bandCheck({ bands = b }, H, lhv)
+        return { b.checked, b.held, b.lagged, b.missed, e.lagged, e.floored, e.off, e.outside }
+    end
+
+    it("a frozen band is missed; a still one whose truth left it within the Latency lags", function()
+        local o = { band = { 0.6, 0.61 }, est = 0.605, truth = 0.05, was = 0.605, age = 8, left = 5, before = 1 }
+        assert.are.same({ 1, 0, 0, 1, 0, 0, 1, 1 }, check(o))
+        o.left = LATENCY / 2 -- the same old stamp
+        assert.are.same({ 1, 0, 1, 0, 1, 0, 0, 0 }, check(o))
+    end)
+
+    it("an interval off the truth is seen though its band holds", function()
+        local o = { band = { 0.15, 0.16 }, iv = { 0.9, 1 }, est = 0.155, truth = 0.155, before = 1 }
+        assert.are.same({ 1, 1, 0, 0, 0, 0, 0, 1 }, check(o))
+    end)
+
+    it("a lagging band covers no error larger than its own", function()
+        local o = { band = { 0.11, 0.12 }, est = 0.21, truth = 0.1, was = 0.115, age = 0.1, left = 0.05, before = 1 }
+        o.iv = { 0.21, 0.21 }
+        assert.are.same({ 1, 0, 1, 0, 0, 0, 1, 1 }, check(o))
+        o.band, o.was, o.truth = { 0.25, 0.26 }, 0.255, 0.18
+        o.est, o.iv = 0.2, { 0.2, 0.2 } -- clipped toward the truth
+        assert.are.same({ 1, 0, 1, 0, 1, 0, 0, 0 }, check(o))
+    end)
+
+    it("floored is the floor, nothing else", function()
+        local o = { band = { 0, 0.01 }, iv = { 0.21, 0.21 }, est = 0.21, truth = 0.004, before = 1 }
+        assert.are.same({ 1, 1, 0, 0, 0, 0, 1, 1 }, check(o))
+        o.est, o.iv = 0.02, { 0, 0.02 }
+        assert.are.same({ 1, 1, 0, 0, 0, 1, 0, 0 }, check(o))
+    end)
+
+    it("a living target's band is checked though the family did not count it (review N3)", function()
+        local o = { band = { 0.18, 0.19 }, iv = { 0.21, 0.21 }, est = 0.21, truth = 0.184, used = 2, before = 2 }
+        assert.are.same({ 1, 1, 0, 0, 0, 0, 1, 1 }, check(o))
+    end)
+
+    it("a run's first applied band is checked", function()
+        local o = { band = { 0.6, 0.61 }, est = 0.605, truth = 0.605, used = 1 }
+        assert.are.same({ 1, 1, 0, 0, 0, 0, 0, 0 }, check(o))
+    end)
+end)
+
+-- (re-review H4) the record-only "power" row, on planted polls
+describe("the power row", function()
+    it("counts the floor over and the top under the truth, the error, the band live and applied", function()
+        local p
+        local VI = { bandLive = { [1] = true }, res = { slotOf = { [1] = 1 }, scale = { 1 }, regE = { 2.5 } } }
+        local function Power()
+            return p
+        end
+        local st = { lhv = {}, H = { ns = { VirtualStateInternal = VI, VirtualState = { Power = Power } } } }
+        local run = { loOver = 0, power = loop.newPower(), bands = loop.newBands() }
+        local function poll(lo, est, hi, applied, replay)
+            p, run.preTruth, run.bands.applied[1] = { lo = lo, est = est, hi = hi }, 50, applied
+            loop.powerPoll(run, st, 1, 10, replay)
+        end
+        poll(40, 50, 60, true)
+        poll(52, 54, 60, false) -- lo over, held
+        VI.res.scale[1] = 1.12
+        poll(40, 42, 44, true) -- hi under
+        poll(51, 52, 60, true, true) -- a replay's: in the row, never in the gate's count
+        assert.are.equal(1, run.loOver)
+        -- (round 3) the client and an exact band read whole points: the top at them is not under a truth between two
+        local under = run.power.under
+        for _, case in ipairs({ { 50.6, 50, under }, { 51, 50, under + 1 } }) do
+            local power, over = run.power, run.loOver
+            run.power = { n = 0, over = 0, under = under, err = 0, live = 0, applied = 0, moves = 0 }
+            p, run.preTruth = { lo = 49, est = 49, hi = case[2] }, case[1]
+            loop.powerPoll(run, st, 1, 10)
+            assert.are.equal(case[3], run.power.under, case[1])
+            run.power, run.loOver = power, over
+        end
+        assert.are.equal(
+            "polls 4 lo over 2 hi under 1 abs err 3.500 live 4 applied 3 scale 1.120 (1 moves) regE 2.500"
+                .. " held late 0 shown 0",
+            loop.powerLine(run)
+        )
+        st.lhv, run.power = nil, loop.newPower() -- an arm without bands: the same row
+        poll(51, 51, 51, true)
+        assert.are.equal(
+            "polls 1 lo over 1 hi under 0 abs err 1.000 live 0 applied 0 scale 1.120 (0 moves) regE 2.500"
+                .. " held late 0 shown 0",
+            loop.powerLine(run)
+        )
+    end)
+end)
+
+-- (re-review H3) No fight: a scripted world (one cast and one rise on an empty field), the observer, the fake library
+-- and the belief on the fake spec, cycled as the loop does. At the 0.2 s poll alone a delayed success and its band
+-- reach one drain and neither branch is entered; with the arm's extra cycle each is.
+describe("the order arms' extra cycle", function()
+    local drive = require("Game.harness.drive")
+    local world = require("Game.harness.world")
+    local entities = require("Game.harness.entities")
+    local observer = require("Game.harness.observer")
+    local fake_lhv = require("Game.harness.fake_lhv")
+    local fs = require("Game.State.helpers.fake_spec")
+    local TICK, CAST, EVEN, RAGE = 0.2, 2, 1e-9, fs.RAGE
+    local c
+
+    after_each(function()
+        drive.restore(c)
+    end)
+
+    -- our cast at the poll at 2 (`cost`, or a gain in its frame) and a rise of 2 at `rise`: the branches' counts
+    local function scene(name, cost, gains, rise, phased)
+        c = drive.boot({
+            max = 100,
+            boot = function(b)
+                local hekili = fs.new()
+                local a = hekili.Class.abilities.spender_a
+                a.spend = cost or 0
+                if gains then
+                    a.now = function() -- the plain record's field, as Engine/Schema/Tracked.lua leaves it
+                        gain(20, "rage") -- luacheck: ignore 113 (the `now` context's verb)
+                    end
+                end
+                local def = fs.def(hekili)
+                def.providers = ab.providers("default")
+                def.providers.bands = true
+                b.ctl.lhv = fake_lhv.new({
+                    now = function()
+                        return b.ctl.now
+                    end,
+                    history = true,
+                })
+                b.ctl.LibStub = function()
+                    return b.ctl.lhv
+                end
+                b.ctl.powerType = { RAGE, "RAGE" } -- the power shown: another's watch is paused
+                b.I.Build(def, 0.1)
+                b.VS.Start(b.api)
+            end,
+        })
+        local W = world.new(1)
+        local us = W.add(entities.new({ guid = "Player-1", weapons = entities.weapons(22) }))
+        us.power = 30
+        W.emit({ t = 0, kind = "prepull" })
+        W.at(0.5, function()
+            W.emit({ kind = "pull" })
+        end)
+        W.at(0.6, function()
+            W.emit({ kind = "gain", src = us, rage = 20 })
+        end)
+        local arm = ab.ARMS[name]
+        local knobs = { bands = true }
+        for key, v in pairs(arm.bandKnobs) do
+            knobs[key] = v
+        end
+        local k = setmetatable(knobs, { __index = observer.DEFAULTS })
+        local obs, sink = observer.new(W, k), {}
+        local H = { ctl = c.ctl, ns = c.ns, Fire = c.ctl.Fire }
+        local run = { bands = loop.newBands() }
+        local function step(t)
+            W.run(t + EVEN)
+            W.t = t
+            loop.feed(H, obs, t, 0, sink)
+            c.ctl.now = t
+            c.ctl.Tick(t)
+            fs.fold(c.ns, t) -- drive.lua's drain: the tick flushed, then the polls, the fold and the settle
+            loop.bandCheck(run, H, c.ctl.lhv)
+        end
+        local mid = phased and loop.newMidPolls(arm.midPoll, k, us)
+        for n = 1, 20 do
+            local t = n * TICK
+            if mid then
+                loop.midPolls(mid, W, t, step)
+            end
+            step(t)
+            if n == CAST / TICK then -- pressed after the poll's drain, as the loop's driver does
+                W.emit({ kind = "cast", src = us, spell = fs.SPENDER_A, cost = cost })
+                if gains then
+                    W.emit({ kind = "gain", src = us, rage = 20 })
+                end
+                if rise then
+                    W.at(rise, function()
+                        W.emit({ kind = "regen", src = us, rage = 2 })
+                    end)
+                end
+            end
+        end
+        assert.are.same({}, run.bands.misses)
+        assert.are.equal(0, c.I.nowErrors)
+        return { late = run.bands.late, shown = run.bands.shown }
+    end
+
+    for _, case in ipairs({
+        { "bands-spend-first", "late", cost = 10, rise = 2.07 }, -- a newer stamp after the double count
+        { "bands-spend-late", "late", cost = 10, rise = 2.01 }, -- a newer stamp that cannot show the spend
+        { "bands-gain-first", "shown", gain = true }, -- the band rose by the gain before its success
+    }) do
+        for _, phased in ipairs({ false, true }) do
+            local how = phased and " enters its branch with the extra cycle" or " never does at the 0.2 s poll alone"
+            it(case[1] .. how, function()
+                local n = scene(case[1], case.cost, case.gain, case.rise, phased)[case[2]]
+                if phased then
+                    assert.is_true(n > 0, n)
+                else
+                    assert.are.equal(0, n)
+                end
+            end)
+        end
+    end
+end)

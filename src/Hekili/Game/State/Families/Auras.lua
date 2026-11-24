@@ -1,7 +1,7 @@
 -- Game/State/Families/Auras.lua
 -- The auras family (spec §6.3): per unit and tracked aura, the believed expiry, stacks, applied time and an invented
 -- stable instance ID; plain walk reads (observed), our casts' handler writes (modelled, Families/Now.lua), expiry by time;
--- per-target memory by slot (TARGET_CAP; Sources/Target.lua keys a slot by GUID, under Map by plate index); the
+-- per-target memory by slot (TARGET_CAP; Sources/Target.lua keys a slot by GUID, under Map by stable ID); the
 -- pending-swap serial I.curSwapN; the index order for AuraAt; AuraGen; Count.WithAura; a player aura's
 -- stacks spent by hits on the player (its `consumedBy`, tank design §3).
 -- Ported from Taco Dog Forever, src/TacoDogForever/Model/Belief/Auras.lua and Belief/Targets.lua (Applier TargetSwap
@@ -372,7 +372,7 @@ function I.AuraModel(u, j, applied, expires, stacks, t, event, harmful, closes)
 end
 
 -- A pinned GUID can name an earlier target. Slot 0 has no reusable identity, so its writes are local to this swap.
-local function debuffSlot(guid)
+function I.DebuffSlot(guid)
     if not guid or guid == "" or I.targetKeys[I.curSlot] == guid then
         return I.curSlot
     end
@@ -399,23 +399,12 @@ local function debuffWas(s, j, t)
 end
 
 function I.DebuffObserved(j, guid, cast)
-    local s = debuffSlot(guid)
+    local s = I.DebuffSlot(guid)
     return s and undo[s][j].observed >= cast
 end
 
-function I.DebuffBefore(guid, j, t)
-    local s = debuffSlot(guid)
-    if s ~= nil then
-        return debuffWas(s, j, t)
-    end
-    return 0, 0, 0
-end
-
-function I.DebuffApply(guid, j, ability, cast, expires, stacks, t, applied)
-    local s = debuffSlot(guid)
-    if s == nil then
-        return
-    end
+-- A cast writes to its pinned slot; only the current target's auras have a live delta or CDM record.
+function I.DebuffApply(s, j, ability, cast, expires, stacks, t, applied)
     local entry = undo[s][j]
     local swap = s == 0 and I.curSwapN or 0
     local before, previous, count = debuffWas(s, j, t)
@@ -429,7 +418,7 @@ function I.DebuffApply(guid, j, ability, cast, expires, stacks, t, applied)
     else
         if expires == 0 then
             memInst[s][j] = 0
-        elseif memInst[s][j] == 0 then
+        elseif memExp[s][j] <= applied then
             I.nextInst = I.nextInst + 1
             memInst[s][j] = I.nextInst
         end
@@ -445,8 +434,13 @@ function I.DebuffApply(guid, j, ability, cast, expires, stacks, t, applied)
 end
 
 function I.DebuffUndo(guid, ability, cast, t)
-    local s = debuffSlot(guid)
-    if s == nil or U.n < 2 then
+    local s
+    if type(guid) == "string" and guid ~= "" then
+        s = I.DebuffSlot(guid)
+    else
+        s = I.CastSlot(ability, cast) or I.curSlot
+    end
+    if not s or s < 0 or U.n < 2 then
         return
     end
     for j = 1, U.nAura do
@@ -527,6 +521,16 @@ local function load(s)
     end
     D.full[2] = true -- the whole set changed: a full update, not a delta
     changed(2)
+end
+
+--- Read-only: the aura with spellID in memory slot s at t, as VS.Aura's answers: expiry (nil: down or unknown), stacks,
+--- applied. Our cast pinned to that mob reads it (Families/Now.lua). Allocates nothing.
+function I.AuraMemOf(s, spellID, t)
+    local j = U.bySpell[spellID]
+    if not j or not memExp[s] or memExp[s][j] <= t then
+        return nil
+    end
+    return memExp[s][j], memStacks[s][j], memApplied[s][j]
 end
 
 -- TargetSwap: a is the new target's memory slot (0: none). TargetGone: forget slot a.

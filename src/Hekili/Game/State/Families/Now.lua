@@ -89,11 +89,13 @@ I.nowErrors, I.nowError, I.nowRuns, I.castsRun = 0, nil, 0, 0
 -- The cast's belief time and ability while its effects run; `live` only then: a `now` called from anywhere else (Hekili
 -- keeps it in `ability.funcs`, where RunStressTest or an APL reading `action.x.now` can call it) writes nothing.
 local T, curA, live = 0, 0, false
-local castTarget, castTime
+local castSlot, castTime
 local flight = 0 -- the running cast's travel (s): its target aura writes start this long after T (`startsAtLanding`)
 -- True while a reaction runs: it is folded after its outcome's time T (a swing's row comes ~0.47 s after the swing, an
 -- avoid at its window's close), so its aura reads answer as of T (I.AuraAsOf), not the belief's latest.
 local asOf = false
+local reactHand = false -- while a swing's reaction runs: its hand (1 main, 2 off; I.ResourceShift)
+local onUs = false -- while a reaction to a hit on us runs: a live band holds what it gave (shift)
 
 -- Resource refunds still use the latest cast's payment.
 local undoA, undoT, paid = 0, -1, 0
@@ -155,13 +157,11 @@ local function readAura(unit, spell)
     if asOf then
         return I.AuraAsOf(unit, spell, T)
     end
-    if unit == "target" and castTarget and I.targetKeys[I.curSlot] ~= castTarget then
-        local j = I.auras.bySpell[spell]
-        if not j then
+    if unit == "target" and castSlot and castSlot ~= I.curSlot then
+        if castSlot < 0 then
             return nil
         end
-        local expires, applied, stacks = I.DebuffBefore(castTarget, j, T)
-        return expires > T and expires or nil, stacks, applied
+        return I.AuraMemOf(castSlot, spell, T)
     end
     local rec, stacks, applied = I.CastAura(unit, spell, T)
     return rec and rec.est, stacks, applied
@@ -361,10 +361,12 @@ local function shift(n, resource, spread)
     if type(n) ~= "number" or n == 0 then
         return
     end
-    if n > 0 and type(spread) == "number" and spread > 0 then
-        I.ResourceGainSpread(r, n, spread, T, CAST)
-    else
-        I.ResourceShift(r, n, T, CAST)
+    if not (onUs and I.res.bandOn[r]) then -- a hit's row on us trails what it gave: a live band has it (owner L1723)
+        if n > 0 and type(spread) == "number" and spread > 0 then
+            I.ResourceGainSpread(r, n, spread, T, CAST)
+        else
+            I.ResourceShift(r, n, T, CAST, asOf and reactHand) -- its swing may owe a rung's lift (L1504)
+        end
     end
     if n > 0 then
         I.Log.Energize(A.qid[curA] or 0, n, I.res.type[r], I.res.max[r], T) -- a reaction's: no ability (curA 0)
@@ -430,12 +432,15 @@ local function aura(u, key, duration, stacks)
         end
         after = (u == 2 and T + flight or T) + d
     end
-    if u == 2 and after > T and I.DebuffImmune(j, castTarget or I.targetKeys[I.curSlot], T) then
+    if u == 2 and after > T and I.DebuffImmune(j, I.targetKeys[castSlot or I.curSlot], T) then
         return
     end
     if u == 2 and castTime and journal then
+        if castSlot < 0 then
+            return
+        end
         local active
-        active, before = I.DebuffApply(castTarget, j, curA, castTime, after, stacks or 1, T, T + flight)
+        active, before = I.DebuffApply(castSlot, j, curA, castTime, after, stacks or 1, T, T + flight)
         if not active then
             return
         end
@@ -445,9 +450,10 @@ local function aura(u, key, duration, stacks)
         I.AuraModel(u, j, u == 2 and T + flight or T, after, stacks or 1, T, CAST, u == 2)
     end
     -- cdm-default rule 2.5.1: this application is ours (Sources/Auras.lua); a projectile's travel widens the
-    -- verdict's window (cdm-verdict §2.3; velocity > 0 only: the client raises on x/0)
-    local v = A.velocity[curA] or 0
-    I.AuraOurs(u, j, v > 0 and (A.rMax[curA] or 0) / v or 0)
+    -- verdict's window (cdm-verdict §2.3; velocity > 0 only: the client raises on x/0); with no range read, 40 yd
+    -- (every spell range, as Events/Tickets.lua's flight): a window too short would close a landed cast
+    local v, rm = A.velocity[curA] or 0, A.rMax[curA] or 0
+    I.AuraOurs(u, j, v > 0 and (rm > 0 and rm or 40) / v or 0)
     if u == 2 and journal then -- the cast's own write: what a verdict that it missed gives back (L1029)
         local r = curA > 0 and A.slot[curA] or 0
         -- a swap at or after the cast's success folded first (the success is staged): the cast was on the old
@@ -850,7 +856,7 @@ local function fire(w, o, t, hand)
     if not l or l.n == 0 then
         return
     end
-    journal, asOf = false, true
+    journal, asOf, reactHand, onUs = false, true, hand or false, w == WHO.player
     for k = 1, l.n do
         local hk = l.hand[k]
         if hk == 0 or hk == hand then
@@ -858,7 +864,7 @@ local function fire(w, o, t, hand)
             I.reactionsRun = I.reactionsRun + 1
         end
     end
-    journal, asOf = true, false
+    journal, asOf, reactHand, onUs = true, false, false, false
 end
 
 -- Ability a's travel to the target (s): the believed distance (the range bracket's middle, Families/Enemies.lua) over
@@ -889,7 +895,7 @@ local function run(o, t)
     if A.now[a] then
         rawset(NAMES, "cast_start", started)
         rawset(NAMES, "instant", started == 0)
-        castTarget, castTime = o.guid, o.t
+        castSlot, castTime = I.CastSlot(a, o.t) or I.DebuffSlot(o.guid) or -1, o.t
         rawset(NAMES, "cast_id", A.ids[a][o.c] or A.id[a] or 0) -- `c`: the cast ID's place (Sources/Casts.lua)
         flight = A.lands[a] and travel(a) or 0
         local r, R = A.refundNow[a] and A.slot[a] or 0, I.res
@@ -902,7 +908,7 @@ local function run(o, t)
             nowSp = R.spends[r]
         end
         flight = 0
-        castTarget, castTime = nil, nil
+        castSlot, castTime = nil, nil
         rawset(NAMES, "cast_start", 0)
         rawset(NAMES, "instant", false)
         rawset(NAMES, "cast_id", 0)

@@ -9,6 +9,9 @@
 - Rogues can enable Continuous Combat for Slice and Dice between ordinary pulls and choose poison reminders independently for each hand.
 - Rogue racial cues cover learned damage boosts, observed control breaks and cleanses, Stoneform against physical pressure, and safe out-of-combat recovery. Tactical detection, movement and corpse-dependent abilities remain manual when their use cannot be established from the API.
 
+- A priority that compares a resource with more than 8 different exact values now shows a warning on its Source tab: Hekili can watch only 8 of them exactly, so those conditions use the nearest 1% instead.
+
+
 ### Changed
 
 - Hekili waits for tracked debuff attempts to resolve before recommending the same effect on that enemy again. Attributed misses preserve earlier applications, and verified NPC immunities apply to later spawns.
@@ -19,6 +22,17 @@
 - Protection suggests a learned Reckless Swings only at low Rage, with readable health of at least 75%, an active autoattack and an elite or boss in melee range.
 - Rogue cleave cues require confirmed engaged enemies in melee range, and Evasion can recognize another enemy attacking while the selected target casts. Group Feint also covers taking full aggro.
 - Rogue stun suggestions use configurable spacing between your own attempts (30 seconds by default). Temporary stun immunity is retried after a bounded delay; this does not track other players' diminishing returns.
+
+- Arcane, Fire, Frost and Frostfire Mage, Shadow Priest and Affliction Warlock (wowsims.com): the priorities now suggest cutting a channel early where the reference rotation does, such as Evocation once your mana is nearly full, or Wrack once a damage-over-time effect needs reapplying.
+- Channel cut suggestions now come at the channel's tick and stay up until pressed; changing target decides the cut again for the new target.
+- Rogue and Feral/Guardian Druid: the recommendation refreshes the moment a combo point is gained or spent, so the finisher shows without waiting for the next poll.
+- Custom priorities: `target.health.pct` and the other target health values now follow the target's health in whole-percent steps, instead of reading 100 until an ability that needs a low-health target became usable. They read no lower than 2 while the target is alive, and 100 for a moment after you change target. If the game offers no reading, they work as before.
+- Custom priorities: a line that reads target health no longer adds a "target health is secret" warning when the priority loads.
+- Custom priorities: `health.pct` and the other player health values now follow your health in whole-percent steps, instead of reading 100. A line that reads them no longer adds a warning when the priority loads. If the game offers no reading, they read 100.
+- Arms and Fury Warrior, Rogue, Warlock, Balance and Feral Druid: Hekili Forever now estimates how long your target will live. When it counts one enemy, it can save some cooldowns for the end of the fight, skip bleeds and damage-over-time spells on a target about to die, and suggest finishing moves earlier. With several enemies, or before it has an estimate, it plans for a long fight as before; after a pull or a target change there is no estimate until the target has lost health for a few seconds (longer on a long fight), so one big hit is not taken for the target's pace. The estimate can be well off early in a fight and near its end.
+- Custom priorities: `fight_remains` follows that estimate with one enemy; `target.time_to_die` and `target.time_to_pct_<N>` follow it with any number of enemies. With no estimate they read as unknown (3600 seconds), as before.
+- Energy, rage and mana: where the game allows it, Hekili now reads the 1% step the amount is in and corrects its estimate with it, which also counts rage from hits you take. When the game says an ability is usable or not, that still wins.
+
 
 ### Fixed
 
@@ -36,8 +50,15 @@
 - Reckless Swings no longer assumes all 20 bonus Rage arrives immediately when cast. Its per-swing bonus remains unmodelled until the client reconciles the resource estimate.
 - Rogue forecasts include Initiative's guaranteed opener points. Ghostly Strike can lead into an eligible Ambush, and Shank can restore Energy at five combo points when it advances a finisher without wasting points.
 - Eureka now uses the learned spell ID for the player's class instead of the Warrior variant for every Gnome.
+- When the game hides enemy identities, as in dungeons, your debuffs on an enemy are still remembered when its nameplate appears late, or drops out and returns while you target it. With no nameplate, your target's low health is still read from an ability usable only below a health threshold, and range checks keep updating.
+- A stacking debuff (such as Sunder Armor) used on one enemy just before you change target now adds its stack to that enemy's own count, not the new target's, so its stack count is right when you target it again.
+- An enemy the game reports dead and then alive again while you still target it no longer reads 0 health until you change target.
+- Protection Warrior: when the game hides who attacked you (expected in dungeons), a dodge, parry or block now sets when the Revenge window ends, so Revenge is not recommended past it.
+- A `/reload` while you channel a spell no longer raises an "Unknown buff: cast" error, and the rest of that channel is predicted again.
 
 ### Known issues
+
+- When a channel cut is suggested, the ability shown is chosen as if the channel were still running, so an ability that waits for the channel to end is not suggested there. An ability that becomes ready just after a channel tick can be suggested as a cut where the reference rotation would recast the channel. Something that changes just before a channel tick can delay the cut suggestion to the next tick, or keep a cut shown after its reason has passed, and right after a channel starts a cut can be suggested between ticks.
 
 ### Upgrade notes
 

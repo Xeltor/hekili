@@ -15,8 +15,266 @@ local flicker = require("Game.harness.flicker")
 local timing = require("Game.harness.timing")
 local rng = require("Game.harness.rng")
 local edgestats = require("Game.harness.edgestats")
+local fake_lhv = require("Game.harness.fake_lhv")
+local ttd_rig = require("Game.harness.ttd_rig")
 
 local M = {}
+
+-- (ttd arms, lane B8) A fight's time-to-die row: of the in-combat polls, how many answered (not 3600: the library
+-- live), and against the kill's time (killAt, the world's clock; nil: no kill, no error) the absolute error of each
+-- answer in seconds and relative to the truth: median and p90, and the share of them short of the truth (an end-of-fight
+-- line fires early). A record-only line for .ab/ttd.tsv, the pack first (parallel files share the file).
+local UNKNOWN = 60 * 60 -- the core's unknown time to die (Targets.lua FOREVER)
+local function pct(t, q)
+    if #t == 0 then
+        return 0
+    end
+    table.sort(t)
+    return t[math.max(1, math.ceil(q * #t))]
+end
+function M.ttdRow(r, killAt, seed, pack)
+    local err, rel, short = r.err, r.rel, 0
+    for k = 1, r.polls do
+        local est, tc = r[k], r[-k]
+        if est < UNKNOWN then
+            r.live = r.live + 1
+            if killAt and killAt > tc then
+                local truth = killAt - tc
+                err[#err + 1] = math.abs(est - truth)
+                rel[#rel + 1] = math.abs(est - truth) / truth
+                short = short + (est < truth and 1 or 0)
+            end
+        end
+    end
+    return ("%s seed %d polls %d live %d scored %d err med %.2f p90 %.2f rel med %.2f p90 %.2f short %.2f"):format(
+        tostring(pack),
+        seed,
+        r.polls,
+        r.live,
+        #err,
+        pct(err, 0.5),
+        pct(err, 0.9),
+        pct(rel, 0.5),
+        pct(rel, 0.9),
+        #err > 0 and short / #err or 0
+    )
+end
+
+-- (bands arms) The containment check of one drain (LibHiddenValues integration design 5.4, L1666 a): at every fold the
+-- true value (the fake library's pushes, lhv:TruthAt) lies inside the band the family applied. A channel a family reads
+-- (Sources/Bands.lua's I.bandUsed rose since the last check; b.used starts at the run's start) is checked against what
+-- it applied (I.bandUsedLo/Hi); a channel no family has read since the build against the band the belief logged
+-- (I.bandLo/Hi) while live, as a living target's live band is (the count is the family's own: it excuses no drain); any
+-- other channel a family reads that applied nothing this drain (a corpse's band, ignored) is not checked.
+-- run.bands: checked = held (the truth at the fold, the poll's clock, inside) + lagged (outside at the fold,
+-- inside no longer ago than the library's Latency: at that age, or at the band's own stamp I.bandT if newer; the stamp
+-- alone is no age, a still value's is old until it changes) + missed (neither: a wrong channel, unit, stamp or applied
+-- band, a frozen one, or a band logged while not live; the first five in misses); live (checks by channel).
+-- est: what the target's family made of its band (VS.Health("target"), clipped), checked apart from the band at each
+-- drain it applied one or the living target had one live. outside: its interval excludes the truth, unless the band
+-- lagged and the interval lies no farther from the truth than that band. Its estimate (what a `target.health.pct` line
+-- reads): n = within (one cell, 0.01, of the truth at the fold: every threshold line reads as the truth does unless the
+-- truth lies within one band of it) + lagged (beyond, the band lagged and the estimate no farther than its middle) +
+-- floored (the truth under the family's live-target floor, the estimate that floor) + off; offs: the first five off or
+-- outside; worst.
+-- On a power also (re-review H3, H4): applied, whether this drain applied it, and the branches the order arms are for:
+-- late, the drains a spend's paid low end alone held the band back (a stamp newer than our change that cannot show the
+-- spend: review I3); shown, the gains the band had risen by before they were heard (review I4: the rise consumed).
+local BAND_EPS, CELL = 1e-9, 0.01
+local LATENCY = fake_lhv.DEFAULTS.latency * fake_lhv.DEFAULTS.frame
+local function away(x, lo, hi) -- how far x lies outside [lo, hi]
+    return math.max(lo - x, x - hi, 0)
+end
+function M.bandCheck(run, H, lhv)
+    local VI, b = H.ns.VirtualStateInternal, run.bands
+    local now = H.ctl.now
+    for ch, on in pairs(VI.bandLive) do
+        local used = VI.bandUsed[ch] or 0
+        local applied = used > 0 and used ~= (b.used[ch] or 0)
+        b.used[ch] = used
+        if ch > 0 then
+            local res = VI.res
+            b.applied[ch] = applied
+            local at, by = res.bandAt[ch], res.roseBy[ch]
+            if on and res.bandOn[ch] and not applied and at > res.shiftT[ch] and at >= res.stepT[ch] then
+                b.late = b.late + 1
+            end
+            if by == 0 and (b.rose[ch] or 0) > 0 then
+                b.shown = b.shown + 1
+            end
+            b.rose[ch] = by
+        end
+        local alive = ch < 0 and on and (lhv:TruthAt("health", "target", nil, now) or 0) > 0
+        if applied or alive or (on and used == 0) then
+            local kind, unit, pt = "health", ch < 0 and "target" or "player", nil
+            if ch > 0 then
+                kind, pt = "power", VI.res.type[ch]
+            end
+            local lo, hi = VI.bandLo[ch], VI.bandHi[ch]
+            if applied then
+                lo, hi = VI.bandUsedLo[ch], VI.bandUsedHi[ch]
+            end
+            local function value(v, m)
+                return v and (kind == "health" and v / m or v) -- nonzero: a health push carries its max
+            end
+            local function inside(x)
+                return x and x >= lo - BAND_EPS and x <= hi + BAND_EPS
+            end
+            local truth = value(lhv:TruthAt(kind, unit, pt, now))
+            b.checked, b.live[ch] = b.checked + 1, (b.live[ch] or 0) + 1
+            local atFold, lagged = inside(truth), false
+            if atFold then
+                b.held = b.held + 1
+            elseif inside(value(lhv:TruthAt(kind, unit, pt, math.max(VI.bandT[ch], now - LATENCY)))) then
+                b.lagged, lagged = b.lagged + 1, true
+            else
+                b.missed = b.missed + 1
+                if #b.misses < 5 then
+                    b.misses[#b.misses + 1] = ("%s at %.3f: band %s-%s, truth %s"):format(
+                        ch,
+                        now,
+                        lo,
+                        hi,
+                        tostring(truth)
+                    )
+                end
+            end
+            if (applied or alive) and ch < 0 and truth then
+                local e, h = b.est, H.ns.VirtualState.Health("target", now)
+                local est, floor = h.est, VI.TARGET_HEALTH_FLOOR
+                local d, out = math.abs(est - truth), away(truth, h.lo, h.hi)
+                local bad = out > BAND_EPS and not (lagged and out <= away(truth, lo, hi) + BAND_EPS)
+                e.n, e.worst = e.n + 1, math.max(e.worst, d)
+                if bad then
+                    e.outside = e.outside + 1
+                end
+                if d <= CELL + BAND_EPS then
+                    e.within = e.within + 1
+                elseif lagged and d <= math.abs((lo + hi) / 2 - truth) + BAND_EPS then
+                    e.lagged = e.lagged + 1
+                elseif truth < floor and math.abs(est - floor) <= BAND_EPS then
+                    e.floored = e.floored + 1
+                else
+                    e.off, bad = e.off + 1, true
+                end
+                if bad and #e.offs < 5 then
+                    e.offs[#e.offs + 1] = ("%.3f: est %.4f [%.4f, %.4f] truth %.4f band %s-%s"):format(
+                        now,
+                        est,
+                        h.lo,
+                        h.hi,
+                        truth,
+                        lo,
+                        hi
+                    )
+                end
+            end
+        end
+    end
+end
+
+--- A run's M.bandCheck counts, empty.
+function M.newBands()
+    return {
+        checked = 0,
+        held = 0,
+        lagged = 0,
+        missed = 0,
+        live = {},
+        misses = {},
+        used = {},
+        applied = {},
+        rose = {},
+        late = 0,
+        shown = 0,
+        est = { n = 0, within = 0, lagged = 0, floored = 0, off = 0, outside = 0, worst = 0, offs = {} },
+    }
+end
+
+--- A run's "power" row, empty (re-review H4: M.powerPoll, M.powerLine).
+function M.newPower()
+    return { n = 0, over = 0, under = 0, err = 0, live = 0, applied = 0, moves = 0, scale = nil, regE = 0 }
+end
+
+--- One in-combat poll of driver `st`'s belief of power `pt` against the truth before this poll's press (run.preTruth):
+--- the floor over it and the top under its whole points (by M.LO_EPS: the client and an exact band read whole points,
+--- the world keeps fractions), the error, the band live and applied, the step scale and the regen. `replay`: a replay's
+--- poll, which the gate's run.loOver never counts.
+function M.powerPoll(run, st, pt, now, replay)
+    local VI = st.H.ns.VirtualStateInternal
+    local res = VI and VI.res
+    local r = res and res.slotOf and res.slotOf[pt]
+    if not r then
+        return
+    end
+    local p, v, truth = run.power, st.H.ns.VirtualState.Power(pt, now), run.preTruth
+    p.n, p.err = p.n + 1, p.err + math.abs(v.est - truth)
+    if v.lo > truth + M.LO_EPS then
+        p.over = p.over + 1
+        if not replay then
+            run.loOver = run.loOver + 1
+        end
+    end
+    if v.hi < math.floor(truth) - M.LO_EPS then
+        p.under = p.under + 1
+    end
+    if st.lhv and VI.bandLive[r] then
+        p.live = p.live + 1
+        p.applied = p.applied + (run.bands.applied[r] and 1 or 0)
+    end
+    if p.scale and res.scale[r] ~= p.scale then
+        p.moves = p.moves + 1
+    end
+    p.scale, p.regE = res.scale[r], res.regE[r]
+end
+
+--- The "power" row of a run (written in every arm, ab.record): M.powerPoll's counts, then M.bandCheck's branches.
+function M.powerLine(run)
+    local p, b = run.power, run.bands
+    local line = "polls %d lo over %d hi under %d abs err %.3f live %d applied %d scale %.3f (%d moves) regE %.3f"
+    return (line .. " held late %d shown %d"):format(
+        p.n,
+        p.over,
+        p.under,
+        p.err / math.max(1, p.n),
+        p.live,
+        p.applied,
+        p.scale or 0,
+        p.moves,
+        p.regE,
+        b.late,
+        b.shown
+    )
+end
+
+--- An order arm's extra cycles (ab.lua `midPoll`, re-review H3): `after` s into each delay knobs k make (observer.delays).
+function M.newMidPolls(after, k, us)
+    return { after = after, k = k, us = us, seen = 0, at = {} }
+end
+
+--- Before the poll at T: runs the world up to it event by event, and `step`s every instance at each extra cycle due on
+--- the way. A cast is found when the world makes it, at a press or between two polls (a hard cast's end, a strike's
+--- swing).
+function M.midPolls(mid, W, T, step)
+    local at = mid.at
+    while true do
+        while mid.seen < #W.truth do
+            mid.seen = mid.seen + 1
+            if observer.delays(mid.k, mid.us, W.truth, mid.seen) then
+                at[#at + 1] = W.truth[mid.seen].t + mid.after
+            end
+        end
+        local nextT = W.q[1] and W.q[1].t
+        if nextT and nextT < T and not (at[1] and at[1] < nextT) then
+            W.run(nextT)
+        elseif at[1] and at[1] < T then
+            step(table.remove(at, 1))
+        else
+            return
+        end
+    end
+end
+
 M.VERDICT_ARM = {} -- the verdict arms (ab.VERDICT; a -novd twin by its base name): their layout line adds `wrong`
 for _, name in ipairs(ab.VERDICT) do
     M.VERDICT_ARM[name] = true
@@ -115,6 +373,11 @@ function M.heldReady(q, q2, react, pre)
     local key = q.name[1]
     return key and q.time[1] > react and not M.unmatched(key, q2, react) and (q2.cost[1] or 0) <= pre or false
 end
+--- The floor above the truth (L1504, the danger mirror of readyShort): run A's believed floor `lo` over the world's
+--- power at the same poll, before that poll's press (the frames' truth reads after it), by more than M.LO_EPS. A run
+--- of our driver alone counts it too (run.loOver: tests/Forever/loop_bands_spec.lua's ratchets), run B and a replay
+--- never (M.powerPoll).
+M.LO_EPS = 0.05
 M.PULL = 3 -- the world starts this long before the pull, the target selected (precombat presses)
 M.GAP = 30 -- out of combat between two fights on one boot (consecutive pulls)
 -- The display-side hold experiment (flicker.hold) on our instance's shown queue: o.hold, else this switch (off)
@@ -238,22 +501,42 @@ local function events(W, us, from, e)
         local k = ev.kind
         if ev.src == us then
             -- a hard cast's start and a channel's end are ours too (fix 22: the client sees them at the press)
-            e.cast = e.cast
-                or k == "cast"
+            local cast = k == "cast"
                 or k == "castStart"
                 or k == "castStop"
                 or k == "channelStop"
                 or k == "strike"
                 or k == "queue"
                 or k == "unqueue"
-            e.spend = e.spend or ((k == "cast" or k == "strike" or k == "gain") and (ev.cost or 0) > 0)
-            e.avoid = e.avoid or (ev.act ~= nil and ev.act ~= "WOUND" and k ~= "tick")
+            local spend = (k == "cast" or k == "strike" or k == "gain") and (ev.cost or 0) > 0
+            local avoid = ev.act ~= nil and ev.act ~= "WOUND" and k ~= "tick"
+            e.cast, e.spend, e.avoid = e.cast or cast, e.spend or spend, e.avoid or avoid
+            -- the gated flicker's press and avoid facts (L1762 round 2): a ranged auto shot's cast and outcome (`auto`:
+            -- world.lua W.startRanged, replay.lua) are no press of ours; the ledger's classes above keep them
+            e.press = e.press or ((cast or spend) and not ev.auto)
+            e.outcome = e.outcome or (avoid and not ev.auto)
             e.swing = e.swing or k == "swing"
             e.aura = e.aura or k == "cdreset"
+            -- the jitter rule's late fact (L1762): an avoid row of our press, not of a white swing nor a ranged auto
+            -- shot (world.lua W.startRanged's `auto`); a wand's shot is its Shoot press's channel, so it stays
+            e.miss = e.miss or (avoid and (k == "spell" or k == "strike") and not ev.auto)
         end
         e.aura = e.aura or k == "form" or (k == "aura" and (ev.dst == us or (us.target ~= nil and ev.dst == us.target)))
+        e.target = e.target or k == "target" or (k == "kill" and ev.dst == ev.ourTarget) -- a retarget, our target's death
     end
     return #truth + 1
+end
+M.events = events -- loop_spec pins the flags (the jitter rule's facts, L1762)
+
+-- The power band of type `pt` the belief last applied (Sources/Bands.lua I.bandUsedLo/Hi of its resource slot), or
+-- false, false: none applied yet.
+local function band(VI, pt)
+    for r, d in ipairs(VI.def and VI.def.resources or {}) do
+        if d.type == pt and (VI.bandUsed[r] or 0) > 0 then
+            return VI.bandUsedLo[r], VI.bandUsedHi[r]
+        end
+    end
+    return false, false
 end
 
 -- The believed cooldown remaining of ability `x` of instance `H` into `cd` (false: untracked), once a tick.
@@ -380,6 +663,10 @@ function M.run(L, seed, o, drivers)
         selfCheck = {},
         readyShort = 0,
         heldReady = 0,
+        loOver = 0,
+        bands = M.newBands(), -- a bands arm's M.bandCheck
+        power = M.newPower(), -- every arm's "power" row (M.powerPoll)
+        ttd = { polls = 0, live = 0, err = {}, rel = {} }, -- a ttd arm's fight_remains against the kill (M.ttdRow)
     }
     -- the metrics' per-tick record (§5.1): in-combat ticks only, both queues' first icons, the truth
     run.combat, run.full, run.idle, run.attempts, run.episodes, run.up = 0, 0, 0, 0, 0, {}
@@ -420,6 +707,7 @@ function M.run(L, seed, o, drivers)
                 end
             or nil
     end
+    local mid = nil -- an order arm's extra cycles
     for i, d in ipairs(drivers) do
         local out = d.H.ns.Output -- the steady icons (no player setting): this instance's measurement arm
         out.steady = (steady and not d.plain) and true or false -- the oracle shadow never holds
@@ -434,6 +722,32 @@ function M.run(L, seed, o, drivers)
         local first = cdm and ctl.viewer.layout == nil -- this call builds the instance's frames (scenarios.viewerLayout)
         local layout = cdm and M.viewerLayout(d.H, arm.layout, seed, wo) or nil
         d.H.Hekili.cdmOff = not cdm
+        -- a bands arm's driver (ab.lua): the fake library in this instance's LibStub, once (the belief keeps the
+        -- library it found), on the instance's clock, with its pushed truth (M.bandCheck); the switch is the debug
+        -- session flag Hekili.bandOff, as cdmOff (with no library in the default arm it changes nothing)
+        local bands = arm.bands and not d.plain or false
+        if bands and not ctl.lhv then
+            ctl.lhv = fake_lhv.new({
+                now = function()
+                    return ctl.now
+                end,
+                history = true,
+            })
+            local major, minor = ctl.lhv:GetVersion()
+            local stub = rawget(d.H.env, "LibStub")
+            stub.libs[major], stub.minors[major] = ctl.lhv, minor
+        end
+        -- a capability lost in the last fight comes back, but "error" (the bands-drop arm's) is kept for the session, as
+        -- the real library keeps it (design 5.2; L1666 d)
+        if ctl.lhv and select(3, ctl.lhv:IsAvailable("health", "player")) ~= "error" then
+            ctl.lhv:SetAvailable("ready")
+        end
+        -- a ttd arm's driver (lane B8): the real LibTimeToDie over the fake library (ttd_rig.lua), once, so the core's
+        -- time to die (Targets.lua) answers from it
+        if bands and arm.ttd and not ctl.ttdRig then
+            ctl.ttdRig = ttd_rig.install(d.H, ctl.lhv)
+        end
+        d.H.Hekili.bandOff = not bands
         d.H.Hekili:ProvidersChanged()
         local VI = d.H.ns.VirtualStateInternal
         if VI and VI.def then -- (loop_spec's fake drivers have no belief)
@@ -494,6 +808,10 @@ function M.run(L, seed, o, drivers)
             __index = observer.DEFAULTS,
         })
         k.meter, k.viewer = arm.outcomes == "meter", cdm -- the arm's shapes (none in the default arm)
+        k.bands = bands
+        for key, v in pairs(bands and arm.bandKnobs or {}) do -- a lead arm's (ab.lua): the run's arm, HEKILI_AB's or its own
+            k[key] = v
+        end
         ab.observe(k) -- and its other knobs (the meter arm's taken lead, as the gates' streams)
         for key, v in pairs(content.OBSERVE or {}) do -- the content's client knobs (other powers' reads, forms)
             k[key] = v
@@ -504,6 +822,14 @@ function M.run(L, seed, o, drivers)
         end
         if d.plain then
             k.plain, k.usableDelay = true, 0
+        end
+        if i == 1 and bands and arm.midPoll and not R then -- an order arm's driver (M.midPolls)
+            mid = M.newMidPolls(arm.midPoll, k, us)
+        end
+        if bands and VI then -- M.bandCheck counts from here: the run's first applied band is checked too
+            for ch, n in pairs(VI.bandUsed) do
+                run.bands.used[ch] = n
+            end
         end
         local base = d.H.ctl.now + M.GAP -- this instance's clock continues from its last fight
         -- the fresh world holds none of our buffs, cooldowns or totems and starts in the content's form: the client says
@@ -537,6 +863,9 @@ function M.run(L, seed, o, drivers)
             edge = (arm.world or arm.edge) and layout and VI and VI.presence and edgestats.start(d.H, VI) or nil, -- a stress arm's record
             -- (L972, L1009) a later fight's map rebuilt just before the pull, out of combat, as live's pre-pull form shift
             rebuild = layout ~= nil and arm.rebuild and not first or false,
+            lhv = bands and ctl.lhv or nil, -- a bands arm's driver: its fake library (M.bandCheck)
+            dropAt = bands and arm.bandDrop and wo.pull + arm.bandDrop or nil, -- bands-drop: the capability lost then
+            ttd = bands and arm.ttd and ctl.ttdRig or nil, -- a ttd arm's driver: the library's rig (ttd_rig.poll)
         }
     end
     local errors0 = {}
@@ -587,8 +916,8 @@ function M.run(L, seed, o, drivers)
         end
     end
     -- R42, a replay-world assumption: wowsims knows its fight's length, so a replay answers `fight_remains` (the
-    -- engine's GetGreatestTTD) as the time to the log's end on each instance's clock; loops and live keep the game's
-    -- unknown (3600 s, gap AN). Restored with the trace hooks at the run's end.
+    -- engine's GetGreatestTTD) as the time to the log's end on each instance's clock; loops outside a ttd arm keep
+    -- the unknown (3600 s, gap AN). Restored with the trace hooks at the run's end.
     local ttd = {}
     for i, st in ipairs(R and steps or {}) do
         local hk, ctl, endAt = st.H.Hekili, st.H.ctl, st.base + R.pull + R.duration
@@ -623,6 +952,13 @@ function M.run(L, seed, o, drivers)
                 end
             end
             feed(st.H, st.obs, tc, st.base, st.sink)
+            if st.dropAt and tc >= st.dropAt then -- bands-drop (ab.lua): the capability lost mid-fight
+                st.lhv:SetAvailable("unavailable", "error")
+                st.dropAt = nil
+            end
+            if st.ttd then -- the library's sinks and driver, outside the cycle's time and its sampled bytes
+                ttd_rig.poll(st.ttd)
+            end
             st.H.Hekili.ActiveDebug = o.trace or false
             local counted = i == 1 and not o.trace -- the traced fight's debug pass is not runtime cost
             -- the seed turns the phase: a fight's first cycle, the most expensive, must not be every fight's first sample
@@ -647,6 +983,15 @@ function M.run(L, seed, o, drivers)
             st.H.Hekili.ActiveDebug = false
             if not ok then
                 run.raises = run.raises + 1
+            end
+            if st.lhv then -- outside the cycle's time and its sampled bytes
+                M.bandCheck(run, st.H, st.lhv)
+            end
+            if st.ttd and tc >= wo.pull then -- fight_remains as the core answers it this poll (the kill is known later)
+                local r = run.ttd
+                r.polls = r.polls + 1
+                r[r.polls] = st.H.Hekili:GetGreatestTTD()
+                r[-r.polls] = tc
             end
             queue(st.H, st.q, 3, res)
             if st.edge then
@@ -685,6 +1030,9 @@ function M.run(L, seed, o, drivers)
                 end
                 tickPolled = false
             end
+        end
+        if mid then
+            M.midPolls(mid, W, (polls + 1) * tick, step)
         end
         polls = polls + 1
         t = polls * tick
@@ -744,6 +1092,7 @@ function M.run(L, seed, o, drivers)
                 end
             end
         end
+        run.preTruth = W.res(us, L.power.type) -- before this tick's press (M.LO_EPS)
         -- the press policy (§2.2 step 6): the driver's first icon, once it has shown as ready for `o.reaction` s
         local q = steps[1].q
         local key = q.name[1]
@@ -790,6 +1139,10 @@ function M.run(L, seed, o, drivers)
         if press then
             truth.Hekili.State.reset("Primary", true) -- Update leaves its last prediction (a predicted buff, query_time ahead of now)
             local p = content.resolve(key, truth, us) -- the world's us: its auras price the press (L1233)
+            -- the driver's shown press of another spell during our channel cuts it, as a player's press does in game
+            -- (the engine moved off the channel: a pack's interrupt_if, CheckChannel); W.press keeps the GCD and the
+            -- queue's reach. A verdict arm's forced recast is not the engine's pick: refused "casting", as before.
+            p.clip = not forced and us.channel ~= nil and us.channel.spell ~= p.spell
             local pre = W.res(us, p.pt)
             local n0 = #W.truth
             local ok, why = W.press(us, key, p)
@@ -853,6 +1206,9 @@ function M.run(L, seed, o, drivers)
                 local sq = steps[2] and steps[2].q
                 run.shadowPress[n] = sq and sq.name[1] and sq.time[1] <= (o.react or M.REACT) and sq.name[1] or false
             end
+            if not steps[1].plain then -- our belief's power: run A's, a lone driver's of ours and a replay's
+                M.powerPoll(run, steps[1], L.power.type, steps[1].base + t, R ~= nil)
+            end
             for k = 1, #run.frames do -- the ledger's frame (flicker.frame)
                 local st = steps[k]
                 local f, sq = run.frames[k], st.q
@@ -867,6 +1223,8 @@ function M.run(L, seed, o, drivers)
                 local p = VS.Power(L.power.type, now)
                 f.lo[n], f.est[n], f.hi[n], f.truth[n] = p.lo, p.est, p.hi, us.power
                 f.pend[n] = VS.SwingPending(1) > 0 or VS.SwingPending(2) > 0
+                -- the power band the belief applied (the jitter rule's band fact, L1762 round 2): its slot's last
+                f.bLo[n], f.bHi[n] = band(st.H.ns.VirtualStateInternal, L.power.type)
                 f.cd[n], f.gcd[n], f.t[n], f.n = cd, math.max(0, us.gcdUntil - t), t, n
             end
             for _, key in ipairs(ledger and flicker.EVENTS or {}) do
@@ -900,6 +1258,47 @@ function M.run(L, seed, o, drivers)
         end
         if vt and i == 1 then -- a close in the gap's drain (after a kill) is checked too
             M.verdictTruth(vt, run, us, tEnd)
+        end
+        if st.lhv then -- a bands arm's containment row (record-only arms write it to .ab/<arm>.tsv)
+            M.bandCheck(run, st.H, st.lhv)
+            local b, live = run.bands, {}
+            for ch, n in pairs(b.live) do
+                live[#live + 1] = ch .. ":" .. n
+            end
+            table.sort(live)
+            local e = b.est
+            ab.check(
+                b.missed == 0 and e.off == 0 and e.outside == 0,
+                "bands",
+                ("seed %d checked %d held %d lagged %d live %s%s%s"):format(
+                    seed,
+                    b.checked,
+                    b.held,
+                    b.lagged,
+                    table.concat(live, ","),
+                    e.n > 0
+                            and (" est %d within %d lagged %d floored %d off %d outside %d worst %.3f"):format(
+                                e.n,
+                                e.within,
+                                e.lagged,
+                                e.floored,
+                                e.off,
+                                e.outside,
+                                e.worst
+                            )
+                        or "",
+                    (b.misses[1] and (" misses " .. table.concat(b.misses, "; ")) or "")
+                        .. (e.offs[1] and (" offs " .. table.concat(e.offs, "; ")) or "")
+                )
+            )
+        end
+        if st.ttd then
+            ab.check(true, "ttd", M.ttdRow(run.ttd, W.killAt, seed, content.PACK))
+        end
+        if i == 1 and run.power.n > 0 then -- the record-only "power" row: every arm's, a replay's too (re-review H4)
+            local who = tostring(st.H.ctl.class) .. " " .. tostring(st.H.Hekili.State.spec.key)
+            local row = R and "%s arm %s seed %d replay %s" or "%s arm %s seed %d %s"
+            ab.record("power", row:format(who, armName, seed, M.powerLine(run)))
         end
         if traced[i] then
             st.H.Hekili.Debug, st.H.Hekili.SaveDebugSnapshot = traced[i][1], traced[i][2]
@@ -1025,7 +1424,10 @@ end
 -- the next (`press[i]`: the key it pressed at in-combat tick i, false none; a replay's: the set of keys wowsims cast
 -- in [t_i, t_i+1), B excused only if cast before the tick after it showed; nil: no presses). Owner rule
 -- 2026-10-26: a show-then-press within one tick is not jitter (a proc at a hard cast's landing, pressed at once).
-local function flips(seq, n, press)
+-- The jitter rule (L1762 round 2): `why` (flicker.changes: by tick, the fact a first-icon change follows, "stale" or
+-- false; nil: presses only) also excuses a flip whose change to B follows a fact, unless that tick or the return's is
+-- stale; `by` (optional) counts the excused ones by fact.
+local function flips(seq, n, press, why, by)
     local f = 0
     for i = 1, n - 2 do
         local b = seq[i + 1]
@@ -1037,7 +1439,14 @@ local function flips(seq, n, press)
             pressed = press and (p == b or press[i + 2] == b)
         end
         if seq[i] ~= b and seq[i + 2] == seq[i] and not pressed then
-            f = f + 1
+            local w = why and why[i + 1]
+            if w and w ~= "stale" and why[i + 2] ~= "stale" then
+                if by then
+                    by[w] = (by[w] or 0) + 1
+                end
+            else
+                f = f + 1
+            end
         end
     end
     return f
@@ -1076,12 +1485,15 @@ local function blank()
         episodes = 0,
         readyShort = 0,
         heldReady = 0,
+        loOver = 0,
     }
     m.unmatched = {} -- run A's refusals the oracle shadow would not have made (M.unmatched)
     m.refusedB, m.attemptsB = {}, 0 -- the oracle's own, driving run B (the projection's share: §5.2 as built)
-    m.A = { combat = 0, full = 0, idle = 0, up = {}, damage = 0, time = 0, flicker = 0 }
-    m.B = { combat = 0, full = 0, idle = 0, up = {}, damage = 0, time = 0, flicker = 0 }
+    m.A = { combat = 0, full = 0, idle = 0, up = {}, damage = 0, time = 0, flicker = 0, flickerOld = 0 }
+    m.B = { combat = 0, full = 0, idle = 0, up = {}, damage = 0, time = 0, flicker = 0, flickerOld = 0 }
     m.oracleFlicker, m.errors, m.raises, m.misses, m.secrets, m.selfCheck = 0, 0, 0, {}, {}, 0
+    -- the flips the jitter rule excused (L1762 round 2), ours by fact; the press-only count (the old rule): the oracle's
+    m.excused, m.oracleOld = {}, 0
     m.cpu, m.gap, m.focus, m.pressedBy = {}, {}, 0, {}
     m.ratio, m.cal = {}, {} -- per counted tick its cpu over its window's calibration (M.ratios); per counted run their mean
     m.bytes, m.sampled = 0, 0 -- allocated over the sampled ticks (M.BYTES_EVERY)
@@ -1097,6 +1509,8 @@ function M.tally(L, n, o)
     o = o or {}
     local m = blank()
     local lo = { tick = 1 / (o.hz or 5), react = o.react or M.REACT }
+    -- our ledger's late facts (L1762) where the arm's viewer is on, as loop.run turns it on: the driver only
+    local lv = { tick = lo.tick, react = lo.react, viewer = ab.ARMS[o.arm or ab.arm()].viewer }
     if o.hold == nil then
         m.hold = M.HOLD
     else
@@ -1136,6 +1550,7 @@ function M.tally(L, n, o)
         m.attempts, m.episodes = m.attempts + a.attempts, m.episodes + a.episodes
         m.readyShort = m.readyShort + a.readyShort
         m.heldReady = m.heldReady + a.heldReady
+        m.loOver = m.loOver + a.loOver
         m.focus = m.focus + a.focus
         for key, k in pairs(a.pressedBy) do
             m.pressedBy[key] = (m.pressedBy[key] or 0) + k
@@ -1144,14 +1559,18 @@ function M.tally(L, n, o)
             m.refusedB[why] = (m.refusedB[why] or 0) + k
         end
         m.attemptsB = m.attemptsB + b.attempts
-        m.oracleFlicker = m.oracleFlicker + flips(a.theirs, a.combat, a.shadowPress)
-        m.led.ours = flicker.merge(m.led.ours, flicker.ledger(a.frames[1], lo))
+        -- the shadow takes the world's facts (its frame: the shared events), never the viewer's late ones nor a band
+        m.oracleFlicker = m.oracleFlicker + flips(a.theirs, a.combat, a.shadowPress, flicker.changes(a.frames[2], lo))
+        m.oracleOld = m.oracleOld + flips(a.theirs, a.combat, a.shadowPress)
+        m.led.ours = flicker.merge(m.led.ours, flicker.ledger(a.frames[1], lv))
         m.led.oracle = flicker.merge(m.led.oracle, flicker.ledger(a.frames[2], lo))
         for side, r in pairs({ A = a, B = b }) do
             local s = m[side]
             s.combat, s.full, s.idle = s.combat + r.combat, s.full + r.full, s.idle + r.idle
             s.damage, s.time = s.damage + r.damage, s.time + r.combat / (o.hz or 5)
-            s.flicker = s.flicker + flips(r.ours, r.combat, r.pressed)
+            local why = side == "A" and flicker.changes(a.frames[1], lv) or nil -- run B has no frames: presses only
+            s.flicker = s.flicker + flips(r.ours, r.combat, r.pressed, why, side == "A" and m.excused or nil)
+            s.flickerOld = s.flickerOld + flips(r.ours, r.combat, r.pressed)
             for key, k in pairs(r.up) do
                 s.up[key] = (s.up[key] or 0) + k
             end
@@ -1206,7 +1625,11 @@ function M.replay(L, R, o)
     reactions(a.ours, a.theirs, a.combat, m.react)
     local s = m.A
     s.combat, s.full, s.idle, s.damage, s.time = a.combat, a.full, a.idle, a.damage, a.combat / (o and o.hz or 5)
-    s.flicker = flips(a.ours, a.combat, a.pressed)
+    local tick = 1 / (o and o.hz or 5)
+    local viewer = ab.ARMS[o and o.arm or ab.arm()].viewer -- our ledger's late facts (L1762)
+    s.flicker =
+        flips(a.ours, a.combat, a.pressed, flicker.changes(a.frames[1], { tick = tick, viewer = viewer }), m.excused)
+    s.flickerOld = flips(a.ours, a.combat, a.pressed)
     m.B = s -- one side: a replay has no oracle run (the line's A/B fields read 1)
     m.errors, m.raises, m.cpu = a.errors, a.raises, a.cpu
     m.cal[1], m.bytes, m.sampled = a.cal, a.bytes, a.sampled
@@ -1214,8 +1637,7 @@ function M.replay(L, R, o)
     for _, name in ipairs(a.misses) do
         m.misses[name] = true
     end
-    local tick = 1 / (o and o.hz or 5)
-    m.led.ours = flicker.ledger(a.frames[1], { tick = tick, react = o and o.react or M.REACT })
+    m.led.ours = flicker.ledger(a.frames[1], { tick = tick, react = o and o.react or M.REACT, viewer = viewer })
     -- the decision points' flips (loop.run) and our unjustified retracted readies that wowsims's own cast of that
     -- ability within a tick confirms as wrong
     m.dec = { both = 0, agree = 0, conf = {}, flips = a.dec.flips, confirmed = 0 }
@@ -1231,7 +1653,7 @@ function M.replay(L, R, o)
         m.steady = false
     end
     for _, e in ipairs(m.led.ours.entries) do
-        if e.kind == "retracted" and not e.justified then
+        if e.kind == "retracted" and e.slot == 1 and not e.justified then -- the now slot (the jitter rule, L1762)
             local te = a.frames[1].t[e.tick]
             for _, d in ipairs(R.decisions) do
                 if d.key == e.from and math.abs(d.t - te) <= tick + 1e-9 then
@@ -1268,6 +1690,7 @@ end
 --- the tally's focus and run A's presses by key (pressedBy) (neither in M.line).
 function M.summary(m)
     local r = { focus = m.focus, pressedBy = m.pressedBy, readyShort = m.readyShort or 0, heldReady = m.heldReady or 0 }
+    r.loOver = m.loOver or 0
     r.agreement = m.agree / math.max(1, m.both)
     local reacted, never = {}, 0
     for _, d in ipairs(m.react) do
@@ -1299,8 +1722,11 @@ function M.summary(m)
         end
     end
     r.flicker, r.oracleFlicker = m.A.flicker / math.max(1e-9, minutes), m.oracleFlicker / math.max(1e-9, minutes)
+    -- the press-only count (the rule before L1762 round 2) beside it, and the flips the jitter rule excused, by fact
+    r.flickerOld, r.oracleFlickerOld = m.A.flickerOld / math.max(1e-9, minutes), m.oracleOld / math.max(1e-9, minutes)
+    r.excused = m.excused
     r.led, r.ledO = flicker.summary(m.led.ours, minutes), flicker.summary(m.led.oracle, minutes)
-    r.retracted, r.retractedO = r.led.retracted, r.ledO.retracted
+    r.retracted, r.retractedO = r.led.now.retracted, r.ledO.now.retracted -- the gated now slot (L1762)
     local sum = 0
     for _, ms in ipairs(m.cpu) do
         sum = sum + ms
@@ -1417,6 +1843,18 @@ function M.line(m)
                 m.dec.confirmed
             )
     end
+    local x = r.excused
+    line = line
+        .. ("; flicker press-only %.2f (oracle %.2f) excused [press %d; avoid %d; aura %d; target %d; band %d; verdict %d]"):format(
+            r.flickerOld,
+            r.oracleFlickerOld,
+            x.press or 0,
+            x.avoid or 0,
+            x.aura or 0,
+            x.target or 0,
+            x.band or 0,
+            x.verdict or 0
+        )
     line = line .. "; " .. flicker.line(r.led, r.ledO) -- the flicker ledger's fields, last (layout.md's columns)
     if m.hold then
         line = line .. "; hold on"

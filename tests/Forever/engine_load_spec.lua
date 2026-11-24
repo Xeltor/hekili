@@ -120,7 +120,10 @@ describe("Forever content through the real Engine/Schema/Spec.lua", function()
 
                 it("runs every function-valued ability field under state", function()
                     local failed = {}
+                    local state = env.state
+                    local previous = state.this_action
                     for _, a in ipairs(abilities(env)) do
+                        state.this_action = a.key
                         local keys = {}
                         for k in pairs(a.funcs) do
                             keys[#keys + 1] = k
@@ -142,6 +145,7 @@ describe("Forever content through the real Engine/Schema/Spec.lua", function()
                             end
                         end
                     end
+                    state.this_action = previous
                     table.sort(failed)
                     assert.are.same({}, failed)
                 end)

@@ -193,19 +193,10 @@ function Hekili:NewTankRecovery(spec, config)
         end
     end
 
-    local function matchedPlate(key)
-        if type(key) == "number" then
-            local token = "nameplate" .. key
-            if Facade.UnitIsUnit("target", token) == true and plain(Facade.UnitExists(token)) == true then
-                return token
-            end
-        end
-    end
-
     -- Used for tank rotations on a mob already attacking us, including a boss. This never initiates a handoff.
     local function holdingTarget()
         local key = Facade.TargetMemoryKey()
-        local plate = matchedPlate(key)
+        local plate = Facade.TargetMemoryPlate(key)
         if
             not key
             or (type(key) == "number" and not plate)
@@ -241,7 +232,7 @@ function Hekili:NewTankRecovery(spec, config)
         if raid == nil then
             return false
         end
-        local member = currentMember(raid, matchedPlate(Facade.TargetMemoryKey()))
+        local member = currentMember(raid, Facade.TargetMemoryPlate(Facade.TargetMemoryKey()))
         return member and member ~= "player" and Facade.GroupRole(member) == "TANK" or false
     end
 
@@ -249,7 +240,7 @@ function Hekili:NewTankRecovery(spec, config)
         if raid == nil or not key or not spell then
             return
         end
-        local plate = matchedPlate(key)
+        local plate = Facade.TargetMemoryPlate(key)
         if type(key) == "number" and not plate then
             return
         end

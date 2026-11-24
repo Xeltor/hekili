@@ -1005,7 +1005,6 @@ hybrid("UnitCreatureFamily", nothing, "SecretWhenUnitIdentityRestricted (API doc
 -- A secret identity is unknown, so the core gets nil: never a secret key, compare or truth test.
 local IDENTITY = "plain in combat [W PR14; gate spike]; secret under the Map restriction (FR-1 2026-11-05)"
 hybrid("UnitGUID", nothing, IDENTITY .. "; nothing")
-hybrid("UnitGroupRolesAssigned", nothing, "role of the roster unit; unknown while identity is restricted")
 hybrid("C_InstanceEncounter.IsEncounterInProgress", nothing, "Forever encounter state; unknown when unavailable")
 hybrid("UnitIsUnit", function(a, b)
     if a == b then -- a token is itself (the aura scans' caster "player" or "pet"); any other pair is unknown
@@ -1013,6 +1012,7 @@ hybrid("UnitIsUnit", function(a, b)
     end
 end, IDENTITY .. "; true for a token and itself, else nothing")
 hybrid("UnitName", nothing, IDENTITY .. "; nothing")
+hybrid("UnitGroupRolesAssigned", nothing, "plain out of combat under the forced Map restriction (L1658); nothing")
 -- T1 (plate count plan v2 §3): the plate count's phase test (Targets.lua UnitInPhase) on a plate stored while its GUID
 -- was plain; a secret reason (a restriction turned on since) is unknown: nothing, in phase.
 hybrid("UnitPhaseReason", nothing, "plain [W sweep 2026-10-16]; unprobed under the Map restriction; nothing")
@@ -1512,14 +1512,26 @@ end
 
 --- (option D, owner decision 2, 2026-11-11) How many enemies the belief holds aura `spellID` (any of its ranks) up on
 --- at `now`: the target and every remembered target slot (Families/Auras.lua VS.Count.WithAura; slots keyed by GUID,
---- under Map by plate: Sources/Target.lua). nil when unknown: the current target holds no memory slot (no target, Map
---- with no plate answering, plates off) or the belief does not track the aura. Belief-only, like Window: the core's
---- second belief read (`active_dot`). Allocates nothing.
+--- under Map by stable ID: Sources/Target.lua). nil when unknown: no target, a target no plate answered for at its
+--- target change (Map, plates off or late: the others' cannot be known; a plate added later leaves it nil until the
+--- next change, no flicker) or an aura the belief does not track.
+--- Belief-only, like Window: the core's second belief read (`active_dot`). Allocates nothing.
 function Facade.DebuffCount(spellID, now)
-    if I.curSlot == 0 or I.auras.bySpell[spellID] == nil or I.auras.n < 2 then
+    if I.curSlot == 0 or I.targetNoPlate or I.auras.bySpell[spellID] == nil or I.auras.n < 2 then
         return nil
     end
     return VS.Count.WithAura(spellID, now)
+end
+
+--- (ledger L1734, owner's A, 2026-11-22) The target's stable ID (Sources/Target.lua, unit-registry spec §2.8): an
+--- integer while the GUID is secret (the Map restriction), 0 for a target read plain, nil with no target. Never a
+--- GUID and never one's stand-in. Belief-only, like DebuffCount: the core's third belief read, by the swapped-cast
+--- compare alone (Engine/Sim/State.lua HandleEvent, its in-flight cast's pin). Allocates nothing.
+function Facade.TargetID()
+    if I.targetSlot == 0 then
+        return nil
+    end
+    return I.targetID
 end
 
 -- Stable across tabbing away and back, including under Map when the belief can identify the target by its plate.
@@ -1528,7 +1540,23 @@ function Facade.TargetMemoryKey()
     return key ~= "" and key or nil
 end
 
--- A plate number becomes a different identity when its occupant leaves or the identity mode changes.
+-- Find the active plate that still answers for the selected target's remembered identity.
+function Facade.TargetMemoryPlate(key)
+    if type(key) ~= "number" then
+        return nil
+    end
+    local plates = I.Plates
+    for index, id in ipairs(I.plateID) do
+        if id == key and plates.active[index] then
+            local unit = plates.token[index]
+            if Facade.UnitIsUnit("target", unit) == true and plainAll(Facade.UnitExists(unit)) == true then
+                return unit
+            end
+        end
+    end
+end
+
+-- The generation changes when a slot is reassigned or its active target loses the last matching plate.
 function Facade.TargetMemoryGeneration(key)
     if not key or key == "" then
         return nil
@@ -1686,16 +1714,14 @@ function Facade.TargetInPlayerCombat()
         return true
     end
     -- Under Map a target's GUID can be secret while its matching plate supplies a plain combat or victim read.
-    if type(key) == "number" and I.Plates.active[key] then
-        local plate = I.Plates.token[key]
-        if Facade.UnitIsUnit("target", plate) == true then
-            local plateCombat = plainAll(Facade.UnitAffectingCombat(plate))
-            if plateCombat == true and fightingGroup(plate, plate .. "target") then
-                return true
-            end
-            if combat == nil and plateCombat == false then
-                return false
-            end
+    local plate = Facade.TargetMemoryPlate(key)
+    if plate then
+        local plateCombat = plainAll(Facade.UnitAffectingCombat(plate))
+        if plateCombat == true and fightingGroup(plate, plate .. "target") then
+            return true
+        end
+        if combat == nil and plateCombat == false then
+            return false
         end
     end
 end

@@ -203,7 +203,11 @@ describe("Protection's optional target spreading", function()
             local H = threatPull()
             H.ctl.guid.nameplate1, H.ctl.guid.nameplate2 = SECRET, SECRET
             selectPlate(H, "nameplate2", true)
-            assert.are.equal(2, H.ns.Facade.TargetMemoryKey(), "the selected enemy is identified by its plate")
+            assert.are.equal(
+                H.ns.VirtualStateInternal.plateID[2],
+                H.ns.Facade.TargetMemoryKey(),
+                "the selected enemy is identified by the plate's stable ID"
+            )
             assert.are.same({ "recover_threat", "cycle" }, { first(H) })
             local display = H.env.HekiliDisplayPrimary
             display:UpdateAlpha()

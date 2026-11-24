@@ -10,8 +10,8 @@
 -- Bane of Doom only on 2+ targets (one target never casts it); the Cooldowns call always on one target; Amplify Curse
 -- and Bane of Agony no longer wait on Doom; Eureka! and Blood Fury wait on the Amp Agony variables (Agony up with
 -- Amplify Curse used within its duration + 1.5 s, or waiting would cost a use over the fight left); the Cooldowns
--- Wrack line is gone (Life Tap moves up). In game `fight_remains` reads 3600 (API-forced), so every "Waiting Costs"
--- term is false there and the racials fire on Amp Agony Up (or 2+ targets); the replay answers it from the log.
+-- Wrack line is gone (Life Tap moves up). When the client has no single-target time-to-die estimate,
+-- `fight_remains` is 3600 and the "Waiting Costs" terms are false. The replay answers from the log.
 -- (At ab0f00e4fc the Major Mana Potion line is back, from the log's autocast of item 13444.) The e4ef929e54 APL drank
 -- Major Spellblasting Potion 250937 (cooldowns #2, at 4.41 and 124.41) on the shared potion cooldown, and
 -- 250937 has no key in our data (the pack omits its line); the
@@ -97,6 +97,8 @@ return require("tools.wowsims.warlock_pve")({
         curse_of_recklessness = 2,
         curse_of_weakness = 2,
     },
+    -- The two-tick WoWSims clip applies when the sustained priority is active. Field Wrack has its own upkeep.
+    channelGuard = { wrack = "warlock_sustained" },
     extra = { { before = "life_tap", last = true, line = "shadow_bolt" } }, -- the filler (header)
     guard = {
         ["default #12"] = { expect = "life_tap", cond = "!action.shadow_bolt.known|mana.lo<action.shadow_bolt.cost" },

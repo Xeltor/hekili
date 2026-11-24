@@ -95,7 +95,8 @@ pinned in `mise.toml`. Nothing is installed system-wide. A new git worktree has 
 
 ### What the full check covers
 
-Run `make check` before every commit. CI runs the same steps on every push, except the type check.
+`make check` is the full check of an integration branch; a lane runs the fast checks (section 4, Review and merge).
+CI runs the same steps on every push, except the type check.
 
 - Lint (luacheck), formatting (StyLua; upstream Hekili files keep their own style), the type check
   (lua-language-server) and a syntax check of every Lua file.
@@ -108,7 +109,7 @@ Run `make check` before every commit. CI runs the same steps on every push, exce
 check in this worktree (tracked and untracked files, the index, the toolchain, the env vars the tests read), or when
 only docs no test reads changed (not README.md, CHANGELOG.md, docs/publishing/ or any doc under src/, tests/, tools/).
 `make check FULL=1` runs it all; so does any other command-line override (`TEST_EXCLUDE=`, `BUSTED=`) or `-i`/`-e`,
-and those leave no stamp. Pre-merge checks (the final reviewer's) use `FULL=1`. The stamp has a residual risk: a file
+and those leave no stamp. Before a merge, `make gate` on the integration branch is the full check; it never skips. The stamp has a residual risk: a file
 edited and then reverted while a green run was in progress, or a hand edit under `.lua/share` or to the `lua` binary
 on PATH (the stamp keys neither), can leave a stamp that no longer matches what was tested. When in doubt, `FULL=1`.
 
@@ -131,9 +132,9 @@ For a fast edit loop, `make test-fast` skips the long harness gates. To run one 
 
 ### Link the addons into the game client
 
-Each addon in `src/` gets its own directory link in the client's `_forever_\Interface\AddOns` folder. There are
-nine: `Hekili` (the core), `Hekili_Shared`, and one per class: `Hekili_Druid`, `Hekili_Hunter`, `Hekili_Mage`,
-`Hekili_Paladin`, `Hekili_Rogue`, `Hekili_Shaman` and `Hekili_Warrior`.
+Link every `src/<Addon>` directory that contains `<Addon>.toc` into the client's `_forever_\Interface\AddOns`
+folder. Include `Hekili`, `Hekili_Shared`, all class packs, `LibHiddenValues` and `LibTimeToDie`. The core
+loads both libraries as optional dependencies in the linked checkout. The release package embeds them in Hekili.
 
 With the clone in WSL, the script `scripts/Link-Addons.ps1` makes every link in one go from an elevated Windows
 PowerShell (pass the client folder or its AddOns folder):
@@ -174,6 +175,7 @@ shared addon holds the content every class uses. Nothing dev-only ships. Details
 | `tests/Game/` | Tests of the core, and the combat harness: the simulated client the gates fight in |
 | `tests/Forever/` | Tests of the engine, the packs and the displays, the class worlds and the gate specs |
 | `tests/Forever/wowsims/` | Each spec's exported wowsims request and fight log, checked in |
+| `src/LibHiddenValues/`, `src/LibTimeToDie/` | The two embedded libraries: copies of their own repositories' release tags, never edited here |
 | `tools/` | Pack generation, the API and boundary checks, the release tools |
 | `docs/` | References, specs, plans and research |
 
@@ -215,13 +217,19 @@ difference; `shadowHits` counts the hits. Run the loops with it on when touching
 
 ### Review and merge
 
-Work happens on a branch from `forever`.
+Work happens on a lane branch. It reaches `forever` only through an integration branch (`integ/<batch>`), also
+when the batch holds one lane.
 
-1. Keep `make check` green on every commit.
-2. Run `make gate` before asking for a merge. It runs the full check, then every class's 20-fight loops.
-   `make gate` never skips (it runs `make check-full`); neither do `gate-ab`, `accuracy`, the rig or packaging.
-3. Have the change reviewed against the rules above and the gate's output.
-4. Merge into `forever`. Never force-push it.
+1. On a lane, run the fast checks: lint, formatting, the type check, the syntax and API checks, the specs you touched
+   and, for a change that can move a decision, its 20-fight comparison against the base. The full check and the gate
+   are not run there.
+2. Have the lane reviewed against the rules above. A small lane may leave this to the integration review.
+3. Merge the reviewed lanes into the integration branch and run `make gate` on its tip. It runs the full check, then
+   every class's 20-fight loops. `make gate` never skips (it runs `make check-full`); neither do `gate-ab`,
+   `accuracy`, the rig or packaging.
+4. Have the whole integration branch reviewed on that exact tip, with the gate's output. This review is always the
+   last step before the merge. A commit after the gate or the review means both again.
+5. Fast-forward `forever` to the reviewed tip. Never force-push it.
 
 A change that moves a gate line says why in its commit.
 
@@ -296,6 +304,26 @@ keeps every improvement and makes any regression visible.
 Jittery recommendations are a defect, so flicker is judged beside agreement. A change that raises a pack's flicker
 needs a reason, and flicker has floors of its own. Between two equally good fixes, prefer the one that keeps the
 display still.
+
+**The jitter rule.** Jitter is a recommendation that flip-flops without a new fact. What matters most is the "now" icon
+(slot 1) and the now and next icons swapping places.
+
+- **A change after a fact is a correction.** A fact is a press, an avoid (a lost combo point and an energy or rage
+  refund arrive with it), an aura edge, a death or a retarget. Where the Cooldown Manager is on, two late facts also
+  count: an aura edge one poll late (its light), and a miss of our own press found late by the Cooldown Manager
+  verdict (a ranged auto shot's miss is not a press). Where the belief reads a power band, a crossing of that band is
+  a fact too. Corrections are never held back and never counted against a lane.
+- **A stale answer is not a fact.** If the band crosses and the belief stays outside it, the belief is following an
+  answer older than the band. That poll excuses nothing except our own press.
+- **Only slot 1 is gated.** The gated flicker counts first-icon flips (A, B, A within three polls). A flip is
+  excused when B was pressed (the show-then-press rule) or when the change to B follows a fact at its own poll and
+  neither that poll nor the return's is stale. The line prints the old press-only count and the excused flips by
+  fact beside it. The flicker ledger's gated number, retracted readies, reads slot 1 only, and a now/next swap is
+  tagged on its slot-1 entry.
+- **Slots 2-3 and the focus slot are reported, not gated.**
+- **Resource accuracy still comes first.** A correct icon is never hidden to lower a number.
+
+The ledger also keeps its old all-slot numbers on every line, so older lines stay comparable.
 
 A pack change is merged like a core change (section 4). Its review also checks that the pack still mirrors wowsims,
 that every addition uses one of the recipe keys above, and that no floor fell.
@@ -382,6 +410,9 @@ An in-game answer that differs from the model is a gap. Record it in [docs/dev/g
   raises flicker says why.
 - **Versioning.** Releases are tagged `vMAJOR.MINOR.PATCH`. A pre-release adds a suffix such as `-rc.1` and ships as
   a beta. Every addon in the zip carries the same version.
+- **Embedded libraries.** `python3 -I tools/vendor_libs.py --update --only <Name> --tag vX.Y.Z` replaces a library's
+  folder with that tag and records it in `vendor.lock`; `make api-check` fails when a folder differs from the lock.
+  Before a release tag, `python3 -I tools/vendor_libs.py --latest` on the release commit confirms each is the newest tag.
 - **Releasing.** Push the tag, read the draft release the workflow builds, then publish it to upload it to
   CurseForge. The procedure is in [docs/publishing/README.md](docs/publishing/README.md).
 

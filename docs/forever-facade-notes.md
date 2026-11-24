@@ -225,7 +225,7 @@ Line ranges are as of the post-cleanup sweep (Task 20).
 | `UNIT_AURA` handler | `Events.lua` 1254-1324 | `AuraUtil.ForEachAura`, `C_UnitAuras.GetAuraDataByAuraInstanceID` |
 | combat-log handler | `Events.lua` 1460-1767 (`CLEU_HANDLER` and its registration on 1767) | `CombatLogGetCurrentEventInfo`, `UnitAttackSpeed` |
 | target counting | `Targets.lua` 395-667 (`ns.getNumberTargets`) | `UnitHealth`, `UnitGUID`, `GetUnitSpeed`, `GetHaste` |
-| time to die | `Targets.lua` 1164-1605 (`EliminateEnemy`, `UpdateEnemy`, `GetTTD`, `GetTimeToPct`, `UpdateTTDs`) | `UnitHealth`, `UnitHealthMax`, `UnitGetTotalAbsorbs` |
+| time to die | `Targets.lua` (`GetTTD`, `GetTimeToPct`, `GetGreatestTTD`; architecture §3) | `UnitExists`, `UnitCanAttack` (a secret answer is unknown), `UnitHealth`, `UnitHealthMax` (the belief's target health); the estimate itself is the time-to-die library's. Every other unit's time is unknown: the GUID tracker, never fed, was removed (L1703) |
 | UI cooldown arithmetic | `UI.lua` 1107-1663 (`d:OnUpdate`) and 1693-1740 (`d:RefreshCooldowns`) | `C_Spell.GetSpellCooldown`, `UnitCastingInfo`, `UnitChannelInfo` |
 | spec detection | `Classes.lua` 3077-3362 (`Hekili:SpecializationChanged`) | `C_SpecializationInfo.*` |
 
@@ -248,11 +248,9 @@ Every stub site in the retained files that throws or yields a wrong value. Sites
 | `GetTotemInfo` -> `false, "", 0, 0, 0` | `State.lua` 2389 (totem pets), 4093 (`mt_default_totem.expires`), 4128-4149 (`mt_totem` fire/earth/water/air), 6261 (`summonPet` from totems) | wrong value: `spellID` and `modRate` are nil (`class.abilities[ nil ]` reads nil, no throw), every totem and totem-backed pet is down |
 | `UnitCastingInfo` / `UnitChannelInfo` ("target") -> nil | `Classes.lua` 1646 and 1677, the `casting` aura generator for `unit == "target"` | wrong value: `debuff.casting` is never up on the target, so interrupt recommendations never fire. Player casts pass through |
 | `UnitHealth` / `UnitHealthMax` -> 0 | `Targets.lua` 434 and 511 enemy scan `UnitHealth( unit ) > 1` | wrong value: every nameplate is filtered out unless it is a training dummy, so `active_enemies` stays at 1 |
-| `UnitHealth` / `UnitHealthMax` -> 0 | `Targets.lua` 1600 `UpdateEnemy( guid, health / healthMax, ... )` (1583-1587 clamps `healthMax` to 1, 1600 does not) | wrong value: `0 / 0` is NaN, NaN comparisons are false, `rate` stays 0, and TTD stays at its default |
-| `UnitHealth` / `UnitHealthMax` -> 0 | `Targets.lua` 1304-1312 (`GetTTD`) and 1328-1340 (`GetTimeToPct`) | wrong value: NaN `healthPct`; the `enemy.n < 3` early return hides it, so callers get the default |
 | `UnitHealth` / `UnitHealthMax` -> 0 | `State.lua` 2860-2866 `mt_target_health` | wrong value: `target.health.pct` is 100 (the `t.max ~= 0` guard), so execute-phase conditions never pass |
-| `UnitHealth( "target" )` -> the TargetHealth belief x 100 | `State.lua` 2860-2866 `mt_target_health` | follows VirtualState's target health (Families/TargetHealth.lua: a pin at a health gate, then a plain WOUND slope); 100 until a pin |
-| `UnitHealth( "player" )` -> the player health belief x the maximum | `State.lua` `state.health` (`health.pct`, `health.current`, `health.deficit`) | the plain value whenever the client answers one (Sources/Player.lua's poll 1.5: out of combat, or in combat if it is ever plain); full while the answer is secret (Families/Player.lua), never the last plain read from before the pull. The same deviation as time to die's "unknown" (3600 s, unwarned): a defensive `health.pct<50` never fires on an unknown, a `health.pct>50` gate passes, and neither is warned at load (`Game/State/AplWarnings.lua` warns on target health only); wowsims's `currentHealthPercent` maps to `health.pct` with it |
+| `UnitHealth( "target" )` -> the TargetHealth belief x 100 | `State.lua` 2860-2866 `mt_target_health` | follows VirtualState's target health (Families/TargetHealth.lua): the hidden-value library's band, its middle, clipped by a health gate's usable answer of the same drain, never under 2% on a live target, 0 at a death. With no band: a pin at a health gate, then a plain WOUND slope, 100 until a pin |
+| `UnitHealth( "player" )` -> the player health belief x the maximum | `State.lua` `state.health` (`health.pct`, `health.current`, `health.deficit`) | the plain value whenever the client answers one (Sources/Player.lua's poll 1.5; on live it answers secret out of combat too, so the plain path is idle); while the answer is secret the hidden-value library's band, its middle (Families/Player.lua), full with no band, never the last plain read from before the pull. The same deviation as an unknown time to die (3600 s, unwarned): with no band a defensive `health.pct<50` never fires on an unknown, a `health.pct>50` gate passes, and neither is warned at load; wowsims's `currentHealthPercent` maps to `health.pct` with it |
 | `UnitHealth` / `UnitHealthMax` -> 0 | `State.lua` 1866-1893 `group_health`, `at_risk`; 2562 pet `health_pct`; `Utils.lua` 416-462 | wrong value: `0 / 0` NaN percentages, every `<` test false |
 | `UnitHealth` -> 0 | `State.lua` 2424, 2556 pet alive checks `UnitHealth( "pet" ) > 0` | wrong value: the pet always reads dead |
 | `UnitHealth` -> 0 | `State.lua` 6351-6352 `state.health` | wrong value: player health 0 of max 1 |
@@ -272,7 +270,7 @@ Every stub site in the retained files that throws or yields a wrong value. Sites
   the stock clause, the typical 1 s GCD in energy. VirtualState's belief prices each GCD by the same kinds
   (`Families/Casts.lua`, `I.GcdLen`; GCD kinds design §1.2). Revert: restore the one `if` line.
 - The enemy-scan health comparison: `Targets.lua` 434 and 511.
-- TTD: `Targets.lua` 1164-1605 needs another source of health deltas.
+- TTD: the target's comes from the time-to-die library (architecture §3); the GUID tracker has no source of health deltas, so no other enemy has one.
 - Spec identity (pseudo-spec 1491): `Classes.lua` 3077-3362 `SpecializationChanged`. `NewSpecialization` now takes
   identity from the `ns.Specializations[ 1491 ].forever` row (Task 11b); what remains:
   - `Classes.lua` 3135-3138: Forever returns id `0` (truthy) for spec slots 2 and 3, so the loop does not break and
@@ -315,8 +313,8 @@ core checkpoints). When a capture comes back, world, forecast and belief are mad
 | UNIT_POWER_FREQUENT fires for mana while UnitPower is secret (a tick-phase source for a secret pool) | UNMEASURED | mana's one-tick padding (`tick_rate` 0.1, phase unknown; GAP AB) | M1: `/vslog` a mana user in combat: UNIT_POWER_FREQUENT "MANA" rows and their spacing |
 | The mana tick phase (0.1 s ticks, wowsims's `manaTickDuration`) | UNMEASURED | `TimeToResource` pads one tick; the exact "last tick" rule was tried and rejected (one side lost regen) | M1 (same capture: round up to the observed tick instead of a whole tick) |
 | Mana is secret in combat and out | MEASURED on the Druid (gate spike, 2026-10-11); per class unprobed | the mana belief | P7, S10, H7 (per class) |
-| The player's own health is secret in combat | UNMEASURED ("player unprobed" in the inventory) | `Families/Player.lua`: plain when answered, full while secret | PH1: `/run VSCopy(issecretvalue(UnitHealth("player")), issecretvalue(UnitHealthMax("player")))` in and out of combat |
-| The target's health is secret always | MEASURED (W PR14) | TargetHealth belief; time to die unknown (API-forced) | done |
+| The player's own health is secret in combat and out | MEASURED (owner read on live, n=1: one character, nothing forced, `health S power S` out of combat) | `Families/Player.lua`: plain when answered, else the live band's middle, else full | PH1: `/run VSCopy(issecretvalue(UnitHealth("player")), issecretvalue(UnitHealthMax("player")))` in and out of combat |
+| The target's health is secret always | MEASURED (W PR14) | TargetHealth belief; time to die estimated for the target, unknown for any other enemy (API-forced) | done |
 | Combo points read plain in combat | MEASURED (2026-10-18) | combo point reads | done |
 | `C_Spell.IsSpellInRange` is plain in combat | MEASURED (probe W PR7) | `action.<key>.in_range` (the target bracket is LibRangeCheck's since range plan R2) | done |
 | The energy tick orders before a press at the same instant | UNMEASURED (the loop world ticks after the press; GAP Y) | loop world, `TimeToResource` | E1: `/vslog` UNIT_POWER_FREQUENT "ENERGY" spacing against our casts |

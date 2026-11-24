@@ -112,8 +112,9 @@ How the layers and the engine port fit together: `docs/dev/architecture.md`.
 ## Checks
 
 `make bootstrap` once (Lua 5.1 + busted/luacheck/luacov into `.lua/`; StyLua and LuaLS from `mise.toml`), then
-`make check` before every commit. A new worktree has no `.lua/`: copy or symlink `.lua/` from another worktree, or
-run `make bootstrap`. One spec: `.lua/bin/busted tests/Game/State/resources_spec.lua`.
+the fast checks on a lane and `make gate` on the integration branch (DEVELOPMENT.md, Review and merge). A new
+worktree has no `.lua/`: copy or symlink `.lua/` from another worktree, or run `make bootstrap`. One spec:
+`.lua/bin/busted tests/Game/State/resources_spec.lua`.
 StyLua formats only our files (`.styluaignore` lists upstream Hekili, which keeps
 its own style). If `fmt-check` still fails after `make fmt`, run `make fmt` again: StyLua 2.5.2 takes two passes on a
 call whose argument is a long single-line table.
@@ -179,14 +180,26 @@ flicker 1.71/min, oracle 0.56; L24 0.908, 3.31/min, oracle 2.16), and Protection
 0.74/min, oracle 0.42; about 3 min a file, under the gate's slowest).
 
 The flicker columns (the flicker ledger, `tests/Game/harness/flicker.lua`; what counts and the cause classes: the
-headless loop design §5.1). `flicker X/min (oracle Y)` stays where it was (the first icon's A->B->A within 3 ticks,
-unchanged); the ledger's fields come last on every line (after a replay's decision fields, before `; hold on`), for
+headless loop design §5.1). `flicker X/min (oracle Y)` stays where it was: the first icon's A->B->A within 3 ticks,
+excused when B was pressed or, under the jitter rule (L1762 round 2), when the change to B follows a fact at its poll
+(`flicker.changes`: the ledger's facts below, plus a crossing of the belief's power band that the belief follows) and
+neither that poll nor the return's is stale (the band crossed and the belief lies outside it). The oracle's takes the
+world's facts only. Before the ledger's fields comes `flicker press-only X (oracle Y) excused [press n; avoid n; aura
+n; target n; band n; verdict n]`: the count under the old press-only rule, and our flips the facts excused. The
+ledger's fields come last on every line (after a replay's decision fields, before `; hold on`), for
 run A over every displayed slot (queue positions 1-3 and the focus entry): `dips` and `flashes` per minute (our
 presses' left out), `top [cause n; cause n]` over them, `p90 length` (ticks), `retracted R/min (oracle R')` (ready, then
 waiting again within 1 s, no justifying event) with its top `ability:cause/reason`, `justified` (those with an event),
 `waits W/min (oracle W')` with its top `ability:cause`, `floor jitter` (lo crossing a slot's cost while est stays above
-it) and `at cost lo-truth m/p90 est-truth m/p90 (n)` (the band's gap at cost-gated decisions). The 20-fight Arms
-line's tail (forever-flicker):
+it) and `at cost lo-truth m/p90 est-truth m/p90 (n)` (the band's gap at cost-gated decisions). Those are the all-slot
+numbers, unchanged since the jitter rule (L1762, DEVELOPMENT.md "Flicker is an acceptance metric"). The rule's fields
+follow them, unjustified only: `now dips D flashes F swaps S retracted R/min (oracle R') waits W`. That is slot 1, and
+`swaps` counts the now/next swaps among its dips and flashes. `pack_gate`'s retracted-ready floor reads this R. Then
+come `facts [target n; aura n; verdict n]`, the slot-1 changes those facts excused. A fact here is a death or
+retarget, an aura edge the earlier cause classes shadowed, and in an arm with the viewer on two late facts: an aura
+edge one poll before the change (a Cooldown Manager light), and the first change within 1.5 s of a miss of our press
+(the CDM verdict; a ranged auto shot's miss is not one). A band crossing the belief follows is a fact too. Last come `next D/F/R/W` (slots 2-3) and `focus D/F/R/W`, both reported only. The
+20-fight Arms line's tail (forever-flicker, before the rule):
 
 ```
 ... dips 11.28 flashes 2.59; top [swing 381; unknown 225]; p90 length 3 ticks; retracted 0.02/min (oracle 0.05) [sunder_armor:unknown/cost 1] justified 8.95; waits 15.97/min (oracle 7.00) [sunder_armor:swing 225; rend:swing 114]; floor jitter 0; at cost lo-truth -0.6/16.9 est-truth 1.1/15.1 (2426)
@@ -196,8 +209,8 @@ line's tail (forever-flicker):
 Heroic Strike report's snap-back (a countdown at most 0.3 s from done jumping up at least 0.4 s): Fury L24's focus-slot
 Heroic Strike reads 5.7/min here against that report's 0.97/min; the two are not comparable. A replay line adds
 `decision flips N (per 100)` (our first on-GCD icon changed between the tick's poll and wowsims's decision, with no
-cast, spend, avoid or aura change of ours between) and `retracted confirmed by wowsims` (a retraction of an ability
-wowsims cast within a tick). `pack_gate.FLICKER` floors each gated 20-fight loop's flicker and retracted readies (the
+cast, spend, avoid or aura change of ours between) and `retracted confirmed by wowsims` (a slot-1 retraction of an
+ability wowsims cast within a tick). `pack_gate.FLICKER` floors each gated 20-fight loop's flicker and slot-1 retracted readies (the
 measured value rounded up to the next 0.1, 0 where it measured 0; only ever down) and bars flicker <= oracle +
 `FLICKER_K` (0.5): redundant with the floors today, it tightens the bar when a change lowers the oracle's own flicker.
 `HEKILI_LOOP_HOLD=1 make test-<tag>` runs the display-side hold experiment (`; hold on`, floors not applied); as
@@ -475,7 +488,7 @@ and Fire (wowsims.com) (Task 12 of the wowsims packs plan), Frostfire (wowsims.c
 talents 29 Fire points to 22 Frost) and Frost (wowsims.com) (new packs, 2026-11-12: the Frost Incin build, 31 Frost
 points, pool 6348), their replay and leveling gates `tests/Forever/wowsims_mage_spec.lua`.
 The worlds (`tests/Forever/helpers/mage_world.lua`) cast at 25 yd with cast bars and channels (Arcane Missiles,
-Evocation: any press at 99% mana clips it); the character is trainer-taught (no book ranks, as wowsims's), its pool and
+Evocation, cut at 99% mana by the pack's `interrupt_if` through the loop's driver); the character is trainer-taught (no book ranks, as wowsims's), its pool and
 regen are the logs' (Arcane 6678, Fire 6168; 29.13 a second outside the five-second rule, all of it while casting for
 Arcane, half for Fire and Frostfire; Evocation's mana is that regen's aura entry, spirit x 16 and all of it while
 casting, 466 a second as wowsims's logs, its channel ticks gaining nothing). Flicker floors (pack_gate `FLICKER`): Arcane 1.7 (1.66, oracle 1.46; 1.5 since the
@@ -661,9 +674,10 @@ beside the number (DEVELOPMENT.md).
 | Destruction (wowsims.com) | 0.95 | 0.00, 0 |
 
 Recorded deviations (each one's reason in the named file):
-- Every pack (API-forced, `tools/wowsims/apl.lua` rules 10, 11, 13): `fight_remains` answers unknown (target health
-  is secret), distance is a bracket from range checks, an off-GCD automatic cooldown shows as soon as it is ready; the
-  sim does not predict avoidance (wowsims rolls it); our own health reads full while secret; mana is a bounded belief
+- Every pack (API-forced, `tools/wowsims/apl.lua` rules 10, 11, 13): `fight_remains` is the target's estimated
+  time to die in game, unknown (3600 s) with several enemies or no estimate (target health is secret), distance is a
+  bracket from range checks, an off-GCD automatic cooldown shows as soon as it is ready; the
+  sim does not predict avoidance (wowsims rolls it); our own health reads the middle of its 1% band while secret, full with no band; mana is a bounded belief
   where the client keeps it secret.
 - Warrior (`tools/wowsims/specs/warrior_*.lua`): Stance Dance and Recklessness keep wowsims's defaults (off); the
   Protection replay's top disagreements are replay limits (the decision instant at a cooldown's end, an exact tie at
@@ -683,14 +697,15 @@ Recorded deviations (each one's reason in the named file):
   log over the DB2's 2.5 s and 8 s (ruling M9; the charges' price floor(fraction x 1213), wowsims's 181 x (1 + 1.75 n));
   Read Ley Line a High Order Skyborne racial (unknown for the exports' Human); Master of Elements' refunds unbelieved
   (crits unseen, mana secret); the worlds' Mage is trainer-taught (no book ranks), as wowsims's; wowsims clips
-  Evocation at >= 99% mana (interruptIf), the translator drops channelSpell.interruptIf (shared gap, reported), the
-  world clips by wowsims's rule. Frostfire: Fingers of Frost's grant (a Chill's 15% roll) is unseen, so the sim spends
+  Evocation at >= 99% mana (interruptIf), the pack's lines carry it as `interrupt_if` (translator rule 24), the
+  loop's driver clips the channel when the engine moves off it. Frostfire: Fingers of Frost's grant (a Chill's 15% roll) is unseen, so the sim spends
   a charge on every damage cast (wowsims: none on the cast that granted them); the worlds' crits ignore Shatter (the
   harness's one crit rate); the world grants Fingers of Frost at Frostfire Bolt's cast end, wowsims at its hit about
   0.8 s later (the harness has no travel time: a shared limit); `includeReactionTime` on the Fingers of Frost read
   ignored (rule 5).
-- Warlock (`warlock_*.lua`, `Warlock.lua`, `warlock_world.lua`): `fight_remains` reads 3600 s, so the end-of-fight
-  Bane of Agony and Amplify Curse lines never fire and Bane of Doom goes up whenever it is down (API-forced, rule 10;
+- Warlock (`warlock_*.lua`, `Warlock.lua`, `warlock_world.lua`): while `fight_remains` is unknown (3600 s: several
+  enemies, no estimate, the default loops) the end-of-fight Bane of Agony and Amplify Curse lines do not fire and Bane
+  of Doom goes up whenever it is down (API-forced, rule 10;
   wowsims switches in a fight's last minute: most of SM Ruin's, Demonology's, Shadow Brand's and Destruction's replay
   disagreements); the target's Shadow Vulnerability and Demonic Brand charges are unreadable (the brand kept its full
   10 s; Shadow Bolt's `onCrit` models Shadow Vulnerability, but the bolt's outcome lands about 1 s after its success,
@@ -701,7 +716,7 @@ Recorded deviations (each one's reason in the named file):
 - Priest (`priest_*.lua`, `Priest.lua`, `priest_world.lua`): Devouring Plague 24 s and Shadow Word: Death 18 s from
   wowsims's data and log over the DB2's 60 s and 15 s (ruling M9's precedent); Smite's down-ranked Holy Fire and Smite
   (rank 5 below 20% mana) at the top rank (rule 5 ignores `rank`: shared gap, owner ruling); Mind Flay's interruptIf
-  dropped (its third tick is the channel's end); the wand's Shoot one shot a wand speed long; Shadow's ready times sit
+  is its line's `interrupt_if` (its third tick is the channel's end); the wand's Shoot one shot a wand speed long; Shadow's ready times sit
   1.5 s early after each Mind Flay (the next icon ready at the GCD's end inside the channel).
 
 CPU and memory, release to release (`r.cpuMean`/p99 of the 3- and 20-fight lines, process CPU ms per Update; `make

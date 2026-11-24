@@ -14,7 +14,7 @@ actions.precombat+=/righteous_fury,if=combat=0&buff.righteous_fury.down&prot_pal
 actions.precombat+=/retribution_aura,if=combat=0&prot_pal_field&prot_pal_aura_missing
 actions.precombat+=/devotion_aura,if=combat=0&prot_pal_field&prot_pal_aura_missing&!action.retribution_aura.known
 actions.precombat+=/seal_of_fury,if=combat=0&prot_pal_field&prot_pal_tanking&buff.seal_of_fury.down
-actions.precombat+=/seal_of_righteousness,if=combat=0&prot_pal_field&((!prot_pal_tanking|!action.seal_of_fury.known)&(!seal_up|buff.seal_of_fury.up))
+actions.precombat+=/seal_of_righteousness,if=combat=0&prot_pal_field&((!prot_pal_tanking|!action.seal_of_fury.known)&(!seal_up|(action.seal_of_fury.known&buff.seal_of_fury.up)))
 actions.precombat+=/auto_attack,use_off_gcd=1,if=combat=0&prot_pal_start_attack
 actions.precombat+=/retribution_aura,if=!buff.retribution_aura.up&((prot_pal_sustained|combat=0&prot_pal_raid_prep)&prot_pal_aura_missing)
 actions.precombat+=/seal_of_the_crusader,if=!buff.seal_of_the_crusader.up&((prot_pal_sustained|combat=0&prot_pal_raid_prep)&prot_pal_tanking&!seal_up)
@@ -25,7 +25,7 @@ actions+=/righteous_fury,if=combat=0&buff.righteous_fury.down&prot_pal_maintain_
 actions+=/retribution_aura,if=combat=0&prot_pal_field&prot_pal_aura_missing
 actions+=/devotion_aura,if=combat=0&prot_pal_field&prot_pal_aura_missing&!action.retribution_aura.known
 actions+=/seal_of_fury,focus=2,if=combat=0&prot_pal_field&prot_pal_tanking&buff.seal_of_fury.down
-actions+=/seal_of_righteousness,if=combat=0&prot_pal_field&((!prot_pal_tanking|!action.seal_of_fury.known)&(!seal_up|buff.seal_of_fury.up))
+actions+=/seal_of_righteousness,if=combat=0&prot_pal_field&((!prot_pal_tanking|!action.seal_of_fury.known)&(!seal_up|(action.seal_of_fury.known&buff.seal_of_fury.up)))
 actions+=/auto_attack,use_off_gcd=1,if=combat=0&prot_pal_start_attack
 actions+=/stoneform,if=(buff.dispellable_poison.up|buff.dispellable_disease.up)
 actions+=/templars_bulwark,use_off_gcd=1,display_below=65,if=toggle.defensives&prot_pal_heavy_pressure&buff.templars_bulwark.down
@@ -38,8 +38,8 @@ actions+=/divine_shield,display_below=20,if=toggle.defensives&prot_pal_solo_immu
 actions+=/divine_protection,display_below=20,if=toggle.defensives&prot_pal_solo_immunity
 actions+=/hammer_of_justice,if=prot_pal_attack_target&combat>0&toggle.interrupts&debuff.casting.up&!boss&!target.is_boss&target.within10&!target.outside10&debuff.hammer_of_justice.down
 actions+=/seal_of_fury,focus=2,if=prot_paladin_prepare_taunt
-actions+=/judgement,use_off_gcd=1,if=prot_paladin_last_resort&buff.seal_of_fury.up&prot_paladin_judgement_allowed
-actions+=/swift_judgement,use_off_gcd=1,if=prot_paladin_last_resort&buff.seal_of_fury.up&prot_paladin_judgement_allowed
+actions+=/judgement,use_off_gcd=1,if=prot_paladin_fury_taunt_ready
+actions+=/swift_judgement,use_off_gcd=1,if=prot_paladin_fury_taunt_ready
 actions+=/consecration,if=prot_paladin_ground_pickup&prot_pal_can_consecrate&!prot_paladin_urgent_pickup
 actions+=/recover_threat,use_off_gcd=1,if=prot_paladin_recovery_pack
 actions+=/holy_strike,if=prot_paladin_loose_melee&weapon.size>0
@@ -54,11 +54,11 @@ actions+=/holy_light,display_below=25,if=combat>0&toggle.defensives&prot_pal_des
 actions+=/blessing_of_freedom,if=prot_pal_combat_defense&toggle.defensives&paladin_movement_control&!paladin_incapacitated&prot_pal_attack_target&target.outside5&prot_pal_self_utility&buff.blessing_of_freedom.down
 actions+=/cleanse,if=toggle.defensives&prot_pal_solo_dispel&(buff.dispellable_magic.up|buff.dispellable_poison.up|buff.dispellable_disease.up)
 actions+=/purify,if=toggle.defensives&prot_pal_solo_dispel&(buff.dispellable_poison.up|buff.dispellable_disease.up)
-actions+=/holy_strike,if=toggle.defensives&prot_pal_heavy_pressure&prot_pal_attack_target&weapon.size>0&target.within5&!target.outside5&talent.iron_creed.enabled&buff.righteous_fury.up&buff.iron_creed.remains<=gcd.max
+actions+=/holy_strike,if=toggle.defensives&prot_pal_heavy_pressure&prot_pal_attack_target&weapon.size>0&target.within5&!target.outside5&prot_pal_iron_creed_due
 actions+=/righteous_fury,if=combat>0&buff.righteous_fury.down&prot_pal_maintain_fury
 actions+=/auto_attack,use_off_gcd=1,if=combat>0&prot_pal_start_attack
 actions+=/seal_of_fury,focus=2,if=prot_pal_field&prot_pal_attack_target&combat>0&prot_pal_tanking&buff.seal_of_fury.down&!prot_paladin_last_resort
-actions+=/seal_of_righteousness,if=prot_pal_attack_target&((!prot_pal_tanking|!action.seal_of_fury.known)&(!seal_up|buff.seal_of_fury.up))
+actions+=/seal_of_righteousness,if=prot_pal_attack_target&((!prot_pal_tanking|!action.seal_of_fury.known)&(!seal_up|(action.seal_of_fury.known&buff.seal_of_fury.up)))
 actions+=/holy_shield,focus=2,if=prot_pal_field&prot_pal_combat_defense&toggle.defensives&prot_pal_shield_pressure&buff.holy_shield.down
 actions+=/consecration,if=prot_pal_field&prot_pal_attack_target&combat>0&prot_pal_pack&prot_pal_can_consecrate&target.within8&!target.outside8
 actions+=/holy_strike,if=prot_pal_field&prot_pal_attack_target&target.within5&!target.outside5&weapon.size>0

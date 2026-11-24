@@ -25,6 +25,77 @@ describe("the A/B harness", function()
         assert.is_nil(ab.ARMS.viewer) -- the layout-less arm is viewer-none now
     end)
 
+    it("the band lead arms (integration design 5.4, lane B4): each its knob, bands on, never the default", function()
+        local want = {
+            ["bands-lead"] = { bandLead = 1 },
+            ["bands-lag"] = { bandLead = -1 },
+            ["bands-spend-first"] = { spendFirst = 0.05 },
+            ["bands-spend-late"] = { spendFirst = -0.05 },
+            ["bands-gain-first"] = { gainFirst = 0.05 },
+            ["bands-health"] = { bandPower = false },
+        }
+        local mid = { -- (re-review H3) the order arms' extra cycle, inside the delay: no other arm has one
+            ["bands-spend-first"] = 0.04,
+            ["bands-spend-late"] = 0.08,
+            ["bands-gain-first"] = 0.04,
+        }
+        for name, knobs in pairs(want) do
+            assert.are.same({
+                outcomes = "default",
+                presence = "router",
+                viewer = false,
+                bands = true,
+                bandKnobs = knobs,
+                midPoll = mid[name],
+            }, ab.ARMS[name])
+        end
+        for name, arm in pairs(ab.ARMS) do
+            assert.are.equal(mid[name], arm.midPoll, name)
+        end
+        assert.is_nil(ab.ARMS.default.bands)
+    end)
+
+    -- (lane B4 re-review H4) a row no arm asserts: the default arm writes it too
+    it("a recorded row is written in every arm, the default's too, and asserts nothing", function()
+        -- luacheck: ignore 122 (io.open stands in: the default arm's file is every suite's, not this spec's to write)
+        local arm, open = ab.arm, io.open
+        local paths, wrote = {}, {}
+        local fh = {}
+        function fh.write(_, ...)
+            wrote[#wrote + 1] = table.concat({ ... })
+        end
+        function fh.close() end
+        finally(function()
+            ab.arm, io.open = arm, open
+        end)
+        io.open = function(path)
+            paths[#paths + 1] = path
+            return fh
+        end
+        for _, name in ipairs({ "default", "bands" }) do
+            ab.arm = function()
+                return name
+            end
+            ab.record("power", "polls 1")
+        end
+        io.open = open
+        assert.are.same({ ".ab/default.tsv", ".ab/bands.tsv" }, paths)
+        assert.are.same({ "power\tok\tpolls 1\n", "power\tok\tpolls 1\n" }, wrote)
+    end)
+
+    -- (lane B4 re-review H1) the ruled arm: live's secret amounts and the row's lag, on both instances alike
+    it("bands-taken-lag and lagged-secret: one world, secret amounts, they differ by the bands alone", function()
+        local observe = { takenLag = 0.48, secretAmount = true }
+        local twin = { outcomes = "default", presence = "router", viewer = false, observe = observe }
+        assert.are.same(twin, ab.ARMS["lagged-secret"])
+        local banded = { bands = true }
+        for k, v in pairs(twin) do
+            banded[k] = v
+        end
+        assert.are.same(banded, ab.ARMS["bands-taken-lag"])
+        assert.are.same({ takenLag = 0.48 }, ab.ARMS.lagged.observe)
+    end)
+
     it("the live-auras arms (aura audit C1): our auras hidden in combat, the CDM's only, never the default", function()
         for name, layout in pairs({ ["live-auras"] = "fixture", ["live-auras-none"] = "none" }) do
             local a = ab.ARMS[name]
@@ -85,6 +156,48 @@ describe("the A/B harness", function()
         o.observe.plain = true
         assert.is_false(scenarios.stream(o, 7).secretAmount)
         assert.is_false(scenarios.stream({ duration = 10 }, 7).secretAmount)
+    end)
+
+    it("the bands arms (LibHiddenValues lane B1): the providers the default's, bandDrop on bands-drop only", function()
+        assert.are.same({ outcomes = "default", presence = "router", viewer = false, bands = true }, ab.ARMS.bands)
+        assert.are.same(ab.providers("default"), ab.providers("bands"))
+        assert.are.same(ab.providers("default"), ab.providers("bands-drop"))
+        assert.are.equal(20, ab.ARMS["bands-drop"].bandDrop)
+        assert.is_true(ab.ARMS["bands-drop"].bands)
+        assert.is_nil(ab.ARMS.default.bands)
+    end)
+
+    it("the observer's bands firings are added events only: the rest of the stream is today's", function()
+        local base = scenarios.stream({ duration = 30 }, 7)
+        local with = scenarios.stream({ duration = 30, observe = { bands = true } }, 7)
+        local j, firings = 0, 0
+        for i = 1, with.n do
+            if with.ev[i]:match("^@lhv") then
+                firings = firings + 1
+            else
+                j = j + 1
+                assert.are.same({ base.t[j], base.ev[j], base.a1[j] }, { with.t[i], with.ev[i], with.a1[i] })
+            end
+        end
+        assert.are.equal(base.n, j)
+        assert.is_true(firings > 10, firings)
+    end)
+
+    it("the world's `heals` knob heals us from the pull, so our health band rises (lane B3, L1666 b)", function()
+        local s = scenarios.stream({ duration = 30, heals = { 5, 60 }, observe = { bands = true } }, 7)
+        local last, rises, heals = nil, {}, {}
+        for i = 1, s.n do
+            if s.ev[i] == "@lhv" and s.a1[i] == "health" and s.a2[i] == "player" then
+                if last and s.a4[i] > last then
+                    rises[#rises + 1] = s.t[i]
+                end
+                last = s.a4[i]
+            elseif s.ev[i] == "UNIT_COMBAT" and s.a1[i] == "player" and s.a2[i] == "HEAL" then
+                heals[#heals + 1] = s.t[i]
+            end
+        end
+        assert.are.same({ 6, 11, 16, 21, 26 }, heals) -- every 5 s from the pull at 1, before the stop at 31
+        assert.are.same(heals, rises) -- each a rise of our band, and nothing else raises it
     end)
 
     local function count(s, ev)

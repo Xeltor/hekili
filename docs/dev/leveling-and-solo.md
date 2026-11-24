@@ -150,6 +150,6 @@ If a pull touches a rotation we've extended, keep upstream's updated max-level d
 
 ## Testing in WoW Forever
 
-Link each `src/<Addon>` directory containing `<Addon>.toc` as a separate entry under the client's `Interface/AddOns`. This includes `Hekili`, `Hekili_Shared`, and every class pack. On Linux use directory symlinks. For Windows and WSL see the [upstream setup instructions](../../DEVELOPMENT.md#link-the-addons-into-the-game-client).
+Link each `src/<Addon>` directory containing `<Addon>.toc` as a separate entry under the client's `Interface/AddOns`. Link `Hekili`, `Hekili_Shared`, every class pack, `LibHiddenValues` and `LibTimeToDie`. On Linux use directory symlinks. For Windows and WSL see the [upstream setup instructions](../../DEVELOPMENT.md#link-the-addons-into-the-game-client).
 
 When using Bottles via Flatpak, grant Bottles read-only access to the checkout's `src/` so it can follow the links. Restart Bottles after granting access and fully restart WoW when adding addon folders. For subsequent edits to existing Lua files, type `/reload` and use `/hekili` to check the addon. If editing an APL or recipe, regenerate its runtime pack before reloading. Keep the linked Hekili addons out of the addon manager's update cycle so it does not replace the links.

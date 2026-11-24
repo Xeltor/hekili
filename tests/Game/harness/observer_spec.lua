@@ -183,6 +183,134 @@ describe("the observer", function()
         assert.are.equal(4, #got)
     end)
 
+    it("(bands) pushes our health to the library after a heal on us, as after a wound (L1666 b)", function()
+        setup()
+        W.emit({ t = 4, kind = "swing", src = mob, dst = us, hand = 1, act = "WOUND", amount = 300 })
+        W.emit({ t = 6, kind = "spell", src = us, dst = us, act = "HEAL", amount = 120 })
+        W.emit({ t = 7, kind = "spell", src = us, dst = us, act = "HEAL", amount = 500 })
+        local got = {}
+        for _, e in ipairs(events(observer.observe(W, setmetatable({ bands = true }, { __index = observer.DEFAULTS })))) do
+            if e[2] == "@lhv" and e[4] == "player" then
+                got[#got + 1] = table.concat({ e[1], e[3], tostring(e[5]), e[6], e[7] }, " ")
+            end
+        end
+        assert.are.same({ "4 health nil 700 1000", "6 health nil 820 1000", "7 health nil 1000 1000" }, got)
+    end)
+
+    -- (review M3; lane B2 depends on it) the observer reads the world after it ran: a mob's push at a retarget before
+    -- its first wound carries its prepull health (world.lua's snapshot), not its health at the fight's end
+    it("(bands) a retarget to a mob not yet hit pushes its prepull health, then each wound's", function()
+        setup()
+        local mob2 = W.add(entities.new({ guid = "Creature-2", kind = "mob", weapons = { { 10, 14, 2 } } }))
+        W.emit({ t = 1, kind = "prepull" })
+        W.emit({ t = 2, kind = "spell", src = us, dst = mob, act = "WOUND", amount = 300 })
+        us.target = mob2
+        W.emit({ t = 5, kind = "target" })
+        W.emit({ t = 8, kind = "spell", src = us, dst = mob2, act = "WOUND", amount = 400 })
+        assert.are.equal(600, mob2.health) -- the world's end
+        local got = {}
+        for _, e in ipairs(events(observer.observe(W, setmetatable({ bands = true }, { __index = observer.DEFAULTS })))) do
+            if e[2] == "@lhvPrime" or (e[2] == "@lhv" and e[4] == "target") then
+                got[#got + 1] = table.concat({ e[1], e[2], tostring(e[6]) }, " ")
+            end
+        end
+        assert.are.same({
+            "1.1 @lhvPrime nil",
+            "1.1 @lhv 1000",
+            "2 @lhv 700",
+            "5 @lhvPrime nil",
+            "5 @lhv 1000",
+            "8 @lhv 600",
+        }, got)
+    end)
+
+    -- (integration design 5.4, lane B4) the unmeasured knobs: the displayed power ahead of or behind the pool by one
+    -- regen tick; the display shows a spend before or after its cast event; off, the stream is today's
+    it("(bands) bandLead moves the shown power a tick, spendFirst a spend against its cast event", function()
+        setup()
+        us.power = 50
+        W.emit({ t = 1, kind = "prepull" })
+        W.emit({ t = 2, kind = "regen", src = us, pt = us.pt, rage = 10 })
+        W.emit({ t = 3, kind = "cast", src = us, spell = "INSTANT", cost = 20 })
+        W.emit({ t = 5, kind = "regen", src = us, pt = us.pt, rage = 10 })
+        local function stream(knobs)
+            knobs.bands = true
+            local o = observer.observe(W, setmetatable(knobs, { __index = observer.DEFAULTS }))
+            local power, done = {}, nil
+            for _, e in ipairs(events(o, 2)) do
+                if e[2] == "@lhv" and e[3] == "power" then
+                    power[#power + 1] = ("%g:%g"):format(e[1], e[6])
+                elseif e[2] == "UNIT_SPELLCAST_SUCCEEDED" and e[3] == "player" then
+                    done = ("%g"):format(e[1])
+                end
+            end
+            return table.concat(power, " ") .. " cast " .. done
+        end
+        assert.are.equal("2:60 3:40 5:50 cast 3", stream({}))
+        assert.are.equal("2:70 3:50 5:60 cast 3", stream({ bandLead = 1 }))
+        assert.are.equal("2:50 3:30 5:40 cast 3", stream({ bandLead = -1 }))
+        assert.are.equal("2:60 3:40 5:50 cast 3.05", stream({ spendFirst = 0.05 }))
+        assert.are.equal("2:60 3:60 3.05:40 5:50 cast 3", stream({ spendFirst = -0.05 }))
+        assert.are.equal(" cast 3", stream({ bandPower = false }))
+    end)
+
+    -- (lane B4 review I4) unmeasured: the display ahead of the success of a cast that gains
+    it("(bands) gainFirst puts a gaining cast's success after the shown gain; no other cast moves", function()
+        setup()
+        us.power = 5
+        W.emit({ t = 2, kind = "cast", src = us, spell = "INSTANT" })
+        W.emit({ t = 2, kind = "gain", src = us, rage = 40 })
+        W.emit({ t = 4, kind = "cast", src = us, spell = "INSTANT" })
+        local function stream(knobs)
+            local o = observer.observe(W, setmetatable(knobs, { __index = observer.DEFAULTS }))
+            local rows = {}
+            for _, e in ipairs(events(o, 1)) do
+                if e[2] == "@lhv" and e[3] == "power" then
+                    rows[#rows + 1] = ("%g:%g"):format(e[1], e[6])
+                elseif e[2] == "UNIT_SPELLCAST_SUCCEEDED" and e[3] == "player" then
+                    rows[#rows + 1] = ("cast %g"):format(e[1])
+                end
+            end
+            return table.concat(rows, " ")
+        end
+        assert.are.equal("cast 2 2:45 cast 4", stream({ bands = true }))
+        assert.are.equal("2:45 cast 2.05 cast 4", stream({ bands = true, gainFirst = 0.05 }))
+        assert.are.equal("cast 2 cast 4", stream({ gainFirst = 0.05 })) -- only with bands
+    end)
+
+    -- (lane B4 re-review H2) what the bars do not show, and what the cast only gives back, leads no success
+    it("(bands) gainFirst leaves a cast whose gain is a point or its refund", function()
+        local function success(gains)
+            setup()
+            W.emit({ t = 2, kind = "cast", src = us, spell = "INSTANT" })
+            for _, g in ipairs(gains) do
+                g.t, g.kind, g.src = 2, "gain", us
+                W.emit(g)
+            end
+            local k = setmetatable({ bands = true, gainFirst = 0.05 }, { __index = observer.DEFAULTS })
+            for _, e in ipairs(events(observer.observe(W, k), 1)) do
+                if e[2] == "UNIT_SPELLCAST_SUCCEEDED" and e[3] == "player" then
+                    return ("%g"):format(e[1])
+                end
+            end
+        end
+        assert.are.equal("2", success({ { pt = 4, rage = 1 } }))
+        assert.are.equal("2", success({ { rage = 8, refund = true } }))
+        assert.are.equal("2.05", success({ { pt = 4, rage = 1 }, { pt = 3, rage = 25 } }))
+        assert.are.equal("2.05", success({ { pt = 0, rage = 80 } }))
+    end)
+
+    it("(bands) the world marks an avoided press's refund", function()
+        setup()
+        us.pressing = { refund = 0.8, cost = 10 }
+        W.rollOutcome = function()
+            return "MISS", ""
+        end
+        W.hit(us, mob, 5, 1)
+        local g = W.truth[#W.truth - 1]
+        assert.are.same({ "gain", 8, true }, { g.kind, g.rage, g.refund })
+    end)
+
     it("fires the on-swing proc as a school-32 wound on the target and a heal on us, same ms", function()
         setup()
         W.emit({ t = 7.002, kind = "proc", src = us, dst = mob, act = "WOUND", amount = 36, school = 32 })
@@ -1318,9 +1446,10 @@ describe("the world", function()
             assert.are.equal(460, us.health)
             assert.are.equal(500, mob.health)
             W.emit({ kind = "land", src = us, dst = mob, hand = 1, act = "WOUND", amount = 30 })
-            W.emit({ kind = "spell", src = mob, dst = us, act = "HEAL", amount = 100 })
+            local heal = W.emit({ kind = "spell", src = mob, dst = us, act = "HEAL", amount = 100 })
             assert.are.equal(470, mob.health)
             assert.are.equal(500, us.health)
+            assert.are.equal(500, heal.health) -- the heal's snapshot, capped at the max, as a wound's (L1666 b)
         end
     )
 

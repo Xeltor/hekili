@@ -398,8 +398,8 @@ describe("zero allocation", function()
             ctl.Fire("UNIT_AURA", "target")
             local REND, k = 2, I.AURA_UNIT + 2
             local t, maxDark, cycle, maxSince = 10, 0, 0, 0
-            -- a 12-poll cycle at 0.25 s: our cast (dark: dodged), the verdict at +1.0 (its close names the application,
-            -- counted at the fold), and every second cycle a late light at +1.5 (a strike) and dark again at +2.0 (rule 1
+            -- a 12-poll cycle at 0.25 s: our cast (dark: dodged), the verdict at +0.5 (its close names the application,
+            -- counted at the fold), and every second cycle a light at +1.75 (past LATE: a strike) and dark again at +2.0 (rule 1
             -- closes the CDM open). The cycle without a light leaves a silent verdict, so the next one's verdict suspends
             -- the proof and its light re-proves it (review M3); the strikes reset each cycle so the item is never retired
             local ok, bytes = pcall(alloc.bytes, function(i)
@@ -411,7 +411,7 @@ describe("zero allocation", function()
                     Q.strikes[502] = 0
                     I.AuraModel(2, REND, t, t + 15, 1, t, ns.VirtualState.Obs.CastSuccess, true)
                     I.AuraOurs(2, REND, 0)
-                elseif p == 6 and cycle % 2 == 0 then
+                elseif p == 7 and cycle % 2 == 0 then
                     hold(item, true, "target")
                 elseif p == 8 then
                     hold(item, false)
@@ -529,12 +529,21 @@ describe("zero allocation", function()
                 ctl.now = ctl.now + 0.1
                 -- now and then a plain hostile GUID: a flip to the GUID key space, and back at the next step (review m3)
                 ctl.guid.target = i % 10 == 3 and "Creature-1" or fake.SECRET
-                ctl.unitIs.target = TOK[i % 20 + 1] -- 20 mobs in turn: slots taken, kept and evicted
+                -- 20 mobs in turn: slots taken, kept and evicted; every 4th has no plate (a new ID, spec §2.8)
+                ctl.unitIs.target = i % 4 ~= 1 and TOK[i % 20 + 1] or nil
                 ctl.Fire("PLAYER_TARGET_CHANGED")
+                ctl.Fire("PLAYER_TARGET_CHANGED") -- twice a swap (L1696)
                 -- every 5th step the edge is the new target's own plate, before the fold: an orphan (review m3)
                 local edge = i % 5 == 0 and TOK[i % 20 + 1] or TOK[(i + 7) % 40 + 1]
                 ctl.Fire("NAME_PLATE_UNIT_REMOVED", edge)
+                if i % 15 == 0 then
+                    ctl.unitIs.target = nil -- another mob takes the number: the target's ID stays with no plate
+                end
                 ctl.Fire("NAME_PLATE_UNIT_ADDED", edge)
+                if i % 12 == 6 then -- an adoption the same frame's target change undoes
+                    ctl.Fire("NAME_PLATE_UNIT_ADDED", edge)
+                    ctl.Fire("PLAYER_TARGET_CHANGED")
+                end
                 if i % 10 == 7 then
                     ctl.Fire("PLAYER_ENTERING_WORLD") -- a world entry: every plate key forgotten
                 end

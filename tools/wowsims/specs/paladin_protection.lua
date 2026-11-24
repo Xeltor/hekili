@@ -53,7 +53,8 @@ local field = "prot_pal_field&prot_pal_attack_target"
 local fight = field .. "&combat>0"
 local melee = "&target.within5&!target.outside5"
 local judgement = "&target.within10&!target.outside10&prot_paladin_judgement_allowed"
-local damageSeal = "((!prot_pal_tanking|!action.seal_of_fury.known)&(!seal_up|buff.seal_of_fury.up))"
+local damageSeal =
+    "((!prot_pal_tanking|!action.seal_of_fury.known)&(!seal_up|(action.seal_of_fury.known&buff.seal_of_fury.up)))"
 local tankSeal = "prot_pal_tanking&buff.seal_of_fury.down"
 local tankBuff = "buff.righteous_fury.down&prot_pal_maintain_fury"
 local raidSetup = "(prot_pal_sustained|combat=0&prot_pal_raid_prep)"
@@ -97,8 +98,8 @@ add(
 
 -- Fury Judgement is a taunt. Only the recovery policy can promote it on an enemy we don't hold.
 add("seal_of_fury,focus=2,if=prot_paladin_prepare_taunt")
-add("judgement,use_off_gcd=1,if=prot_paladin_last_resort&buff.seal_of_fury.up&prot_paladin_judgement_allowed")
-add("swift_judgement,use_off_gcd=1,if=prot_paladin_last_resort&buff.seal_of_fury.up&prot_paladin_judgement_allowed")
+add("judgement,use_off_gcd=1,if=prot_paladin_fury_taunt_ready")
+add("swift_judgement,use_off_gcd=1,if=prot_paladin_fury_taunt_ready")
 add("consecration,if=prot_paladin_ground_pickup&prot_pal_can_consecrate&!prot_paladin_urgent_pickup")
 add("recover_threat,use_off_gcd=1,if=prot_paladin_recovery_pack")
 add("holy_strike,if=prot_paladin_loose_melee&weapon.size>0")
@@ -121,7 +122,7 @@ add(
 add("purify,if=toggle.defensives&prot_pal_solo_dispel&(buff.dispellable_poison.up|buff.dispellable_disease.up)")
 add(
     "holy_strike,if=toggle.defensives&prot_pal_heavy_pressure&prot_pal_attack_target&weapon.size>0&target.within5&!target.outside5"
-        .. "&talent.iron_creed.enabled&buff.righteous_fury.up&buff.iron_creed.remains<=gcd.max"
+        .. "&prot_pal_iron_creed_due"
 )
 
 add("righteous_fury,if=combat>0&" .. tankBuff)

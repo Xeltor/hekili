@@ -281,6 +281,8 @@ local KNOWN_MISSING = {
             { "bane_of_doom", "shadow" },
             { "conflagrate", "fire" },
             { "corruption", "shadow" },
+            { "create_healthstone", "fire" },
+            { "create_healthstone", "shadow" },
             { "curse_of_recklessness", "shadow" },
             { "curse_of_the_elements", "shadow" },
             { "curse_of_weakness", "shadow" },

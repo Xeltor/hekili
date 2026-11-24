@@ -270,7 +270,8 @@
 --    `(toggle.movement&<move condition>|<gate>)`. The move's condition is translated by the usual rules (rule 18
 --    drops its walk-time terms; a caller's line puts the call's condition before it). ON shows the line where
 --    wowsims would walk to it (the client's out-of-range tint marks it); OFF leaves the bracket, so the line
---    waits for the range. An unknown bracket (no plain answer yet) still answers both sides (rule 11). Pre-pull lists
+--    waits for the range. A recipe's heldRangeEvidence[gate][action] can also confirm reach for that cast.
+--    An unknown bracket (no plain answer yet) still answers both sides (rule 11). Pre-pull lists
 --    are never rewritten (decision 7). The header lists `# Movement: <list> #<n> reaches <list>: <actions>; ...`
 --    per move that reaches a line; a spec opts into the Movement toggle (its NewClass entry's `movement = true`)
 --    exactly when its pack reads `toggle.movement` (tests/Forever/packs_spec.lua). No movement icon, no wait (decision 9).
@@ -616,6 +617,7 @@ function M.context(set, r, log, player, encounter, tank)
         condition = r.condition or {}, -- rule 7: { [action key] = SimC expression }, an owner deviation's condition
         windowVars = r.windowVars or {}, -- rule 10: { [variable name] = window }, a time since read from the window
         ranges = r.ranges or {}, -- rule 19: { [action key] = { min, max } yards }, the DB2's, where the APL gives none
+        heldRangeEvidence = r.heldRangeEvidence or {}, -- additional in-range evidence for named casts after a range wait
         sequences = r.sequences == true, -- rules 14, 14b: sequences as APL sequence lines (windows Phase 3, per recipe)
         maintenance = {}, -- rule 15: { { action key, setting key } }, by action key
     }
@@ -2798,9 +2800,12 @@ local function rewrite(c, lists, byName, origin, pre, omitted)
                 later(k[1], k[3], targets)
             end
         end
+        local bySpell = c.heldRangeEvidence[m.gate]
         for _, t in ipairs(targets) do
             local b = byName[t[1]][t[2]]
-            byName[t[1]][t[2]] = b:find(",if=", 1, true) and (b .. "&" .. g) or (b .. ",if=" .. g)
+            local evidence = bySpell and bySpell[b:match("^([%w_]+)")]
+            local gate = evidence and ("(" .. g .. "|" .. evidence .. ")") or g
+            byName[t[1]][t[2]] = b:find(",if=", 1, true) and (b .. "&" .. gate) or (b .. ",if=" .. gate)
             for _, mv in ipairs(m.movers) do
                 add(mv, t[1], b)
             end

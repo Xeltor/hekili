@@ -437,6 +437,8 @@ local function healthFraction(unit)
     end
 end
 
+Facade.ObservedUnitHealthFraction = healthFraction
+
 function Facade.PlayerHealthFraction()
     return healthFraction("player")
 end
@@ -808,6 +810,51 @@ local function auraAt(unit, harmful, i)
         return nil
     end
     return fill(slots[i], spellID, rec, stacks, applied, instance, harmful)
+end
+
+-- Inspect live debuff IDs on one unit, including another player's crowd control on a nameplate.
+-- False requires a complete, readable list. A restricted read cannot prove a debuff is absent.
+local readAuraByIndex = resolve("C_UnitAuras.GetAuraDataByIndex")
+function Facade.UnitHasObservedDebuff(unit, ids, ownOnly)
+    if not readAuraByIndex or plainAll(Facade.UnitExists(unit)) == false then
+        return nil
+    end
+    local unknown = false
+    for i = 1, 41 do
+        local ok, aura = pcall(readAuraByIndex, unit, i, "HARMFUL")
+        if not ok or issecretvalue(aura) then
+            return nil
+        elseif aura == nil then
+            if not unknown then
+                return false
+            end
+            return nil
+        end
+        if type(aura) ~= "table" then
+            return nil
+        end
+        local id = aura.spellId
+        if issecretvalue(id) or type(id) ~= "number" then
+            unknown = true
+        elseif ids[id] then
+            if not ownOnly then
+                return true
+            end
+            local source = aura.sourceUnit
+            if issecretvalue(source) or type(source) ~= "string" then
+                unknown = true
+            elseif source == "player" then
+                return true
+            else
+                local ours = plainAll(Facade.UnitIsUnit(source, "player"))
+                if ours then
+                    return true
+                elseif ours == nil then
+                    unknown = true
+                end
+            end
+        end
+    end
 end
 
 kept("C_UnitAuras.GetBuffDataByIndex", "virtual", function(unit, i)
@@ -1693,36 +1740,53 @@ local function fightingGroup(unit, victim)
         or type(Facade.UnitThreatSituation("pet", unit)) == "number"
 end
 
--- True only for an identified, living hostile NPC fighting our group. False is a confirmed idle enemy.
--- An unreadable status or another party's fight is unknown. Never infer engagement from the player's combat flag.
+-- A matched nameplate can supply a hidden fact under Map. A plain answer from the
+-- selected unit always takes precedence, especially when the target dies or becomes friendly.
+local function targetFact(read, plate, first)
+    local answer
+    if first then
+        answer = plainAll(read(first, "target"))
+        if answer == nil and plate then
+            return plainAll(read(first, plate))
+        end
+    else
+        answer = plainAll(read("target"))
+        if answer == nil and plate then
+            return plainAll(read(plate))
+        end
+    end
+    return answer
+end
+
+-- True for a living hostile NPC fighting our group. False for a confirmed idle enemy.
+-- Unknown for another group's fight or when neither unit token supplies enough evidence.
 function Facade.TargetInPlayerCombat()
     local key = Facade.TargetMemoryKey()
+    -- A hidden GUID without a matching plate has no memory slot. The selected
+    -- unit can still answer the live eligibility and group-combat checks below.
+    local plate = Facade.TargetMemoryPlate(key)
     if
-        not key
-        or plainAll(Facade.UnitExists("target")) ~= true
-        or plainAll(Facade.UnitCanAttack("player", "target")) ~= true
-        or plainAll(Facade.UnitIsDead("target")) ~= false
-        or plainAll(Facade.UnitIsPlayer("target")) ~= false
+        targetFact(Facade.UnitExists, plate) ~= true
+        or targetFact(Facade.UnitCanAttack, plate, "player") ~= true
+        or targetFact(Facade.UnitIsDead, plate) ~= false
+        or targetFact(Facade.UnitIsPlayer, plate) ~= false
     then
         return nil
     end
-    local combat = plainAll(Facade.UnitAffectingCombat("target"))
+    local combat = targetFact(Facade.UnitAffectingCombat, plate)
     if combat == false then
         return false
     end
-    if combat == true and fightingGroup("target", "targettarget") then
+    if
+        combat == true
+        and (
+            fightingGroup("target", "targettarget")
+            or plate
+                and plainAll(Facade.UnitAffectingCombat(plate)) == true
+                and fightingGroup(plate, plate .. "target")
+        )
+    then
         return true
-    end
-    -- Under Map a target's GUID can be secret while its matching plate supplies a plain combat or victim read.
-    local plate = Facade.TargetMemoryPlate(key)
-    if plate then
-        local plateCombat = plainAll(Facade.UnitAffectingCombat(plate))
-        if plateCombat == true and fightingGroup(plate, plate .. "target") then
-            return true
-        end
-        if combat == nil and plateCombat == false then
-            return false
-        end
     end
 end
 

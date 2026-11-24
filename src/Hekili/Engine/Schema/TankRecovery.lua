@@ -58,6 +58,7 @@ function Hekili:NewTankRecovery(spec, config)
             or unitFact(unit, plate, Facade.UnitIsPlayer) ~= false
             or unitFact(unit, plate, Facade.UnitIsDead) ~= false
             or unitFact(unit, plate, Facade.UnitAffectingCombat) ~= true
+            or config.avoidUnit and (config.avoidUnit(unit) == true or plate and config.avoidUnit(plate) == true)
         then
             return false
         end
@@ -237,7 +238,7 @@ function Hekili:NewTankRecovery(spec, config)
     end
 
     local function currentThreat(raid, key, spell)
-        if raid == nil or not key or not spell then
+        if raid == nil or not spell then
             return
         end
         local plate = Facade.TargetMemoryPlate(key)
@@ -255,8 +256,12 @@ function Hekili:NewTankRecovery(spec, config)
 
     -- Called by the navigation engine after a real landing, before it resets the simulation for that target.
     local function safeLanding()
+        local key = Facade.TargetMemoryKey()
+        if not key then
+            return false
+        end
         local raid = recoveryGroup()
-        local status, member = currentThreat(raid, Facade.TargetMemoryKey(), rangeSpell())
+        local status, member = currentThreat(raid, key, rangeSpell())
         return (status == 2 or status == 3) and member == "player"
             or (status == 0 or status == 1) and looseMember(member, raid) ~= nil
     end
@@ -295,7 +300,7 @@ function Hekili:NewTankRecovery(spec, config)
         end
         sample.time, sample.key, sample.generation = time, key, generation
         sample.loose, sample.other, sample.builder, sample.criticalOther = false, false, false, false
-        sample.looseMelee, sample.otherMelee, sample.criticalMelee = false, false, false
+        sample.looseMelee, sample.otherMelee, sample.criticalMelee, sample.otherTauntable = false, false, false, false
         local raid, role = recoveryGroup()
         if raid == nil then
             return sample
@@ -333,6 +338,7 @@ function Hekili:NewTankRecovery(spec, config)
                 local urgent = loose and config.urgentVictim and config.urgentVictim(loose)
                 if loose and (held or urgent) then
                     sample.other = true
+                    sample.otherTauntable = sample.otherTauntable or not config.canTaunt or config.canTaunt(guid, time)
                     local inMelee = not config.rangeSpell
                         or (melee ~= nil and plain(C_Spell.IsSpellInRange(melee, plate)) == true)
                     sample.otherMelee = sample.otherMelee or inMelee
@@ -343,6 +349,7 @@ function Hekili:NewTankRecovery(spec, config)
                         (held or sample.loose)
                         and sample.builder
                         and sample.otherMelee
+                        and sample.otherTauntable
                         and (not config.urgentVictim or sample.criticalMelee)
                     then
                         break

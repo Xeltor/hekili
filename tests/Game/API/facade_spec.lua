@@ -31,6 +31,7 @@ local RESOLVED = {
     "C_Spell.IsSpellUsable",
     "C_Spell.GetSpellInfo",
     "C_UnitAuras.GetAuraDataBySpellName",
+    "C_UnitAuras.GetAuraDataByIndex",
     "UnitCastingInfo",
     "UnitChannelInfo",
     "CreateFrame",
@@ -108,6 +109,30 @@ describe("ns.Facade", function()
         end
     end)
 
+    it("distinguishes observed enemy debuffs from restricted or incomplete aura lists", function()
+        answers.UnitExists, answers.UnitIsUnit = api.UnitExists, api.UnitIsUnit
+        local unit, ids = "nameplate1", { [1822] = true }
+        local harmful = {}
+        ctl.exists[unit], ctl.auras[unit] = true, { HARMFUL = harmful }
+        local function observed(own)
+            return Facade.UnitHasObservedDebuff(unit, ids, own)
+        end
+        assert.is_false(observed())
+        harmful[1] = { spellId = 1822, sourceUnit = "party1" }
+        assert.is_true(observed())
+        assert.is_false(observed(true))
+        harmful[1].sourceUnit = fake.SECRET
+        assert.is_nil(observed(true))
+        harmful[2] = { spellId = 1822, sourceUnit = "player" }
+        assert.is_true(observed(true))
+        harmful[1], harmful[2] = { spellId = fake.SECRET }, nil
+        assert.is_nil(observed())
+        harmful[1], ctl.auraError[unit] = nil, true
+        assert.is_nil(observed())
+        ctl.auraError[unit], ctl.exists[unit] = false, false
+        assert.is_nil(observed())
+    end)
+
     it("requires positive group combat evidence for a living hostile target", function()
         for _, name in ipairs({
             "UnitExists",
@@ -161,12 +186,30 @@ describe("ns.Facade", function()
         assert.are_not.equal(1, key, "a stable ID is distinct from this plate's token index")
         assert.are.equal("nameplate1", Facade.TargetMemoryPlate(key))
         assert.is_true(engaged(), "matching active plate confirms the fight")
+        ctl.friendly.target, ctl.dead.target, ctl.isPlayer.target = fake.SECRET, fake.SECRET, fake.SECRET
+        assert.is_true(engaged(), "a matched plate can confirm hidden hostility, life and NPC status")
+        ctl.dead.target = true
+        assert.is_nil(engaged(), "a readable dead target overrides an earlier plate observation")
+        ctl.dead.target, ctl.friendly.target = fake.SECRET, true
+        assert.is_nil(engaged(), "a readable friendly target takes precedence")
+        ctl.dead.target, ctl.friendly.target, ctl.isPlayer.target = false, false, false
         ctl.unitIs.target = fake.SECRET
         assert.is_nil(engaged(), "no current plain match to that plate")
         ctl.unitIs.target, ctl.inRaid.nameplate1target = "nameplate1", fake.SECRET
         assert.is_nil(engaged(), "unreadable victim cannot establish group membership")
         ctl.Fire("NAME_PLATE_UNIT_REMOVED", "nameplate1")
         assert.is_nil(engaged())
+
+        ctl.Fire("PLAYER_TARGET_CHANGED")
+        assert.is_nil(Facade.TargetMemoryKey(), "hidden GUID without a matching plate")
+        ctl.unitCombat.target = false
+        assert.is_false(engaged(), "the selected living enemy is idle")
+        ctl.unitCombat.target, ctl.inParty.targettarget = true, true
+        assert.is_true(engaged(), "the selected enemy is fighting a party member")
+        ctl.inParty.targettarget = false
+        assert.is_nil(engaged(), "an outsider's fight has no group witness")
+        ctl.inParty.targettarget, ctl.dead.target = true, fake.SECRET
+        assert.is_nil(engaged(), "a party victim alone cannot establish target eligibility")
     end)
 
     it("keeps exactly the inventory's names, each with its class, a reason and a function", function()

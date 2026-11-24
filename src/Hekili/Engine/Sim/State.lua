@@ -77,7 +77,7 @@ state.now = 0
 state.offset = 0
 state.modified = false
 state.resetType = "heavy"
-state.fullNext = false -- Core's alternative passes ran: the next reset is full (Engine/Sim/Core.lua altPasses)
+state.fullNext = false -- Rebuild from observations before the next display.
 -- The longest window a display in use walks, set per update (Core.lua). Never reset: false (the global window) only
 -- before the first update, then the last update's.
 state.forecastHorizon = false

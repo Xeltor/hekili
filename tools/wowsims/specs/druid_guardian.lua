@@ -33,6 +33,7 @@
 -- The translator omits numeric combat health reads. The shared Feral recipe restores both defenses with display health bands.
 -- Sim-setup difference (ruling L16): wowsims's sim starts in Dire Bear Form (its pre-pull) and its list never shifts, so out of form
 -- the list showed nothing; the `bear_form` line (the Feral APL's own cat_form pattern) never fires in the replay.
+local groupMelee = "feral_group_enemy&feral_spell_range"
 return require("tools.wowsims.feral_pve")({
     class = "DRUID",
     pack = "Guardian (wowsims.com)",
@@ -74,6 +75,8 @@ return require("tools.wowsims.feral_pve")({
     -- by role (docs/dev/wowsims-packs.md): Maul a rage dump as Heroic Strike, always tier 2, every line (owner ruling
     -- 2026-10-22 extended to Guardian, Fable for the owner 2026-11-17); Lacerate (every line) and Demoralizing Roar at 2
     focus = { maul = 2, lacerate = 2, demoralizing_roar = 2 },
-    maintenance = { demoralizing_roar = { setting = "maintain_demoralizing_roar", orWhen = "feral_pack_roar" } },
+    -- In a group the spell can confirm melee reach even when the distance bracket spans five yards.
+    heldRangeEvidence = { ["target.within5"] = { primal_bite = groupMelee, lacerate = groupMelee, maul = groupMelee } },
+    maintenance = { demoralizing_roar = { setting = "maintain_demoralizing_roar", orWhen = "feral_defensive_roar" } },
     leveling = {},
 })

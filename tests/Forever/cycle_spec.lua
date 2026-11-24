@@ -261,6 +261,40 @@ describe("target swaps (cycle_targets, option D)", function()
             assert.is_nil(output.status.targetNavigation)
         end)
 
+        it("retires a visible swap when its origin plate disappears or is reused after publication", function()
+            bootNavigation()
+            local ctl, facade, engine = H.ctl, H.ns.Facade, H.Hekili.Engine
+            ctl.guid.target = require("Game.State.helpers.fake_api").SECRET
+            ctl.exists.nameplate1, ctl.unitIs.target = true, "nameplate1"
+            H.Fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
+            H.Fire("PLAYER_TARGET_CHANGED")
+            local origin = facade.TargetMemoryKey()
+            assert.is_number(origin)
+            assert.are.equal("nameplate1", facade.TargetMemoryPlate(origin))
+            assert.are.same({ action, "cycle" }, { update() })
+            assert.is_falsy(H.ns.UI.IsStaleTargetSwap(rec[1], engine.Output.Primary))
+            local revision = engine.Output.Primary.targetRevision
+            H.Fire("NAME_PLATE_UNIT_REMOVED", "nameplate1")
+            assert.are.equal(revision, engine.Output.status.targetRevision)
+            assert.is_nil(facade.TargetMemoryKey())
+            assert.is_true(facade.TargetInPlayerCombat())
+            assert.is_true(H.ns.UI.IsStaleTargetSwap(rec[1], engine.Output.Primary))
+            engine.TargetSwapShown("Primary", rec[1])
+            assert.is_false(engine.Output.status.swapPending)
+
+            -- A matching plate can adopt the selected target again without another target change.
+            -- Losing the plate still invalidates the generation stamped on the previous forecast.
+            H.Fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
+            H.ns.VirtualState.Build(H.ns.VirtualStateInternal.def)
+            assert.are.equal(origin, facade.TargetMemoryKey())
+            assert.are_not.equal(rec[1].swapGeneration, facade.TargetMemoryGeneration(origin))
+            assert.are.equal(revision, engine.Output.status.targetRevision)
+            assert.is_true(facade.TargetInPlayerCombat())
+            assert.is_true(H.ns.UI.IsStaleTargetSwap(rec[1], engine.Output.Primary))
+            engine.TargetSwapShown("Primary", rec[1])
+            assert.is_false(engine.Output.status.swapPending)
+        end)
+
         it("releases a trash navigation request when a boss encounter starts during the same combat", function()
             bootNavigation()
             local engine = H.Hekili.Engine

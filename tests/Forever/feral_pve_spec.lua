@@ -2,69 +2,8 @@ local headless = require("Game.harness.headless")
 local W = require("Forever.helpers.druid_loop_world")
 local SECRET = require("Game.State.helpers.fake_api").SECRET
 
-local function druid(o)
-    local c = W.Feral.character()
-    c.level, c.known, c.talents = o.level or 24, o.known, {}
-    c.form = o.form and W.FORM[o.form] or 0
-    c.power = { type = 0, token = "MANA", value = 3000, max = 3000 }
-    c.instanceType = o.instance or "none"
-    local H = headless.new({ character = c, pack = (o.spec or "Feral") .. " (wowsims.com)" })
-    assert.are.same({}, H.loadErrors)
-    local ctl = H.ctl
-    ctl.cvars.autoSelfCast, ctl.cvars.enableMouseoverCast = o.selfCast or "1", "0"
-    ctl.cvars.autoUnshift = o.autoUnshift or "0"
-    ctl.groupMembers, ctl.inGroup = o.group or 0, (o.group or 0) > 1
-    ctl.groupRoles.player = o.role or "NONE"
-    ctl.distance.target, ctl.level.target = o.distance or 3, c.level
-    ctl.unitCombat.target = o.combat == true and not o.idle
-    if ctl.unitCombat.target then
-        ctl.exists.targettarget, ctl.unitIs.targettarget = true, o.victim or "player"
-        ctl.threat.target = o.threat or 3
-    end
-    if o.victim then
-        ctl.exists[o.victim], ctl.isPlayer[o.victim], ctl.inParty.targettarget = true, true, true
-        ctl.groupRoles[o.victim] = o.victimRole or "HEALER"
-    end
-    if o.plate then
-        local p = "nameplate1"
-        ctl.exists[p], ctl.guid[p], ctl.distance[p] = true, "Creature-2", o.plateDistance or 3
-        ctl.unitCombat[p], ctl.threat[p], ctl.unitIs.nameplate1target = o.plate == true, 3, "player"
-        H.Fire("NAME_PLATE_UNIT_ADDED", p)
-    end
-    ctl.healthPlain = o.health ~= SECRET
-    ctl.unitHealth.player, ctl.unitHealthMax.player = o.health or 1000, 1000
-    ctl.unitHealth.target, ctl.unitHealthMax.target = o.enemyHealth or 1000, 1000
-    ctl.ranges[5176], ctl.ranges[8921], ctl.ranges[770], ctl.ranges[1238122] =
-        { 0, 30 }, { 0, 30 }, { 0, 30 }, { 8, 25 }
-    if o.noTarget then
-        ctl.exists.target = false
-    end
-    H.Hekili:FireToggle("defensives", o.defensives == false and "off" or "on")
-    H.Hekili:FireToggle("movement", o.movement and "on" or "off")
-    H.Hekili:FireToggle("interrupts", o.interrupts and "on" or "off")
-    H.Hekili.Engine.settings.specs[H.Hekili.State.spec.id].cycle = o.swaps == true
-    H.Fire("PLAYER_TARGET_CHANGED")
-    if o.combat then
-        ctl.combat = true
-        H.Fire("PLAYER_REGEN_DISABLED")
-    end
-    if o.setup then
-        o.setup(H, ctl)
-    end
-    local pools = {}
-    for pt, value in pairs({ [0] = o.mana or 3000, [1] = o.rage or 30, [3] = 100, [4] = o.points or 0 }) do
-        pools[pt] = { lo = value, est = value, hi = value, conf = 1 }
-    end
-    H.ns.VirtualState.Power = function(pt)
-        return pools[pt]
-    end
-    local display = o.display or "Primary"
-    assert.is_true(H.Hekili.Engine.Subscribe(display, function() end))
-    assert(headless.cycle(H, ctl.now + 1.6))
-    assert.are.same({}, H.errors)
-    local out = H.Hekili.Engine.Output[display]
-    return out.count > 0 and out.recs[1].actionName or nil, out, H
-end
+local fixture = require("Forever.helpers.feral_pve")
+local druid, tank = fixture.druid, fixture.tank
 
 local forms = { 5487, 768, 6807, 1082, 779 }
 describe("Feral leveling and group tanking", function()
@@ -96,7 +35,7 @@ describe("Feral leveling and group tanking", function()
             assert.are.equal("claw", (druid(o)))
         end
     end)
-    it("leaves travel forms alone and treats an unreadable plate range as unknown", function()
+    it("leaves travel forms alone and requires a bracket or positive spell range for a second attacker", function()
         for _, form in ipairs({ "travel_form", "aquatic_form" }) do
             assert.is_nil((druid({ known = { 5487, 768, 1082, 783, 1066 }, form = form })))
         end
@@ -116,6 +55,18 @@ describe("Feral leveling and group tanking", function()
                 end
             end,
         }
+        assert.are.equal("bear_form", (druid(o)), "positive native melee range on the second enemy")
+        local hideBracket = o.setup
+        o.setup = function(H)
+            hideBracket(H)
+            local range = H.ns.Facade.C_Spell.IsSpellInRange
+            H.ns.Facade.C_Spell.IsSpellInRange = function(id, unit)
+                if unit == "nameplate1" then
+                    return nil
+                end
+                return range(id, unit)
+            end
+        end
         assert.are.equal("claw", (druid(o)))
     end)
     it("uses Swipe for an engaged pack and stays in Bear as the pull thins", function()
@@ -207,6 +158,14 @@ describe("Feral leveling and group tanking", function()
         assert.are.equal("recover_threat", action)
         assert.are.equal("cycle", out.recs[1].indicator)
         o.swaps = false
+        assert.are_not.equal("recover_threat", (druid(o)))
+        local setup = o.setup
+        o.swaps, o.rage = true, 0
+        o.setup = function(H, ctl)
+            setup(H, ctl)
+            ctl.cooldown[6795] = { isActive = true, isOnGCD = false, startTime = ctl.now, duration = 8 }
+            H.Fire("SPELL_UPDATE_COOLDOWN")
+        end
         assert.are_not.equal("recover_threat", (druid(o)))
     end)
     it("uses Bash in melee and the Bear charge talent only at its interrupt range", function()
@@ -332,5 +291,239 @@ describe("Feral leveling and group tanking", function()
         assert.are.equal("ferocious_bite", (druid(o)))
         o.enemyHealth = 950
         assert.are_not.equal("ferocious_bite", (druid(o)))
+    end)
+end)
+
+describe("Guardian in a dungeon party", function()
+    it("offers a ranged pull to the tank before anyone enters combat", function()
+        local o = { known = { 5487, 770, 6603 }, distance = 20 }
+        assert.are.equal("faerie_fire", (tank(o)))
+        o.role = "NONE"
+        assert.are.equal("faerie_fire", (tank(o)))
+        o.setup = function(_, ctl)
+            ctl.exists.party2, ctl.groupRoles.party2 = true, "TANK"
+        end
+        assert.is_nil((tank(o)))
+        o.setup = nil
+        o.role = "DAMAGER"
+        assert.is_nil((tank(o)))
+        o.role, o.combat, o.idle = "TANK", true, true
+        assert.is_nil((tank(o)))
+        o.combat, o.setup =
+            false, function(_, ctl)
+                ctl.exists.party1, ctl.unitCombat.party1 = true, true
+            end
+        assert.is_nil((tank(o)))
+        o.setup, o.distance = nil, 35
+        assert.is_nil((tank(o)))
+    end)
+
+    it("opens with trained caster spells before Bear and stays in Bear once trained", function()
+        local o = { level = 6, form = "caster", distance = 20, known = { 5177, 8921, 6603 } }
+        assert.are.equal("wrath", (tank(o)))
+        o.distance = 40
+        assert.is_nil((tank(o)))
+        o.level, o.form, o.distance, o.known = 12, "bear_form", 3, { 5487, 6807, 5177, 8921, 6603 }
+        assert.are.equal("auto_attack", (tank(o)))
+        o.distance = 20
+        assert.is_nil((tank(o)))
+    end)
+
+    it("uses Roar on a held single enemy and prioritizes Growl on a loose one", function()
+        local o = { known = { 5487, 99, 6807, 6795 }, combat = true }
+        assert.are.equal("demoralizing_roar", (tank(o)))
+        o.defensives = false
+        assert.are.equal("maul", (tank(o)))
+        o.defensives, o.victim, o.threat = true, "party1", 0
+        assert.are.equal("growl", (tank(o)))
+        o.victimRole = "TANK"
+        assert.are.equal("maul", (tank(o)))
+    end)
+
+    it("updates the same party display from a ranged pull through a healer pickup and a target change", function()
+        local opener, _, H = tank({ known = { 5487, 770, 6795, 6807, 6603 }, distance = 20 })
+        assert.are.equal("faerie_fire", opener)
+        local c = H.ctl
+        local function nextIcon()
+            assert(headless.cycle(H, c.now + 1.6))
+            assert.are.same({}, H.errors)
+            local out = H.Hekili.Engine.Output.Primary
+            return out.count > 0 and out.recs[1].actionName or nil
+        end
+        c.combat, c.unitCombat.target, c.unitCombat.party1 = true, true, true
+        c.exists.party1, c.isPlayer.party1, c.groupRoles.party1 = true, true, "HEALER"
+        c.exists.targettarget, c.unitIs.targettarget, c.inParty.targettarget = true, "party1", true
+        c.distance.target, c.threat.target, c.current[6603] = 3, 0, true
+        c.cooldown[770] = { isActive = true, isOnGCD = false, startTime = c.now, duration = 6 }
+        H.Fire("SPELL_UPDATE_COOLDOWN")
+        H.Fire("PLAYER_REGEN_DISABLED")
+        H.Fire("UNIT_THREAT_SITUATION_UPDATE", "player")
+        assert.are.equal("growl", nextIcon())
+        c.threat.target, c.unitIs.targettarget = 3, "player"
+        H.Fire("UNIT_THREAT_SITUATION_UPDATE", "player")
+        assert.are.equal("maul", nextIcon())
+        c.guid.target, c.unitCombat.target, c.threat.target = "Creature-3", false, nil
+        c.exists.targettarget, c.unitIs.targettarget = false, nil
+        H.Fire("PLAYER_TARGET_CHANGED")
+        assert.is_nil(nextIcon())
+        c.guid.target, c.unitCombat.target, c.threat.target = "Creature-4", true, 3
+        c.exists.targettarget, c.unitIs.targettarget = true, "player"
+        c.cooldown[770] = nil
+        H.Fire("SPELL_UPDATE_COOLDOWN")
+        H.Fire("PLAYER_TARGET_CHANGED")
+        assert.are.equal("faerie_fire", nextIcon())
+    end)
+
+    it("restarts swings on an engaged dungeon boss before the first point of Rage", function()
+        local o = { level = 60, known = { 5487, 6603, 6807 }, combat = true, boss = true, rage = 0 }
+        assert.are.equal("auto_attack", (tank(o)))
+        o.setup = function(_, ctl)
+            ctl.current[6603] = true
+        end
+        local action, out = tank(o)
+        assert.are.equal("maul", action)
+        assert.is_true(out.recs[1].time > 0, "Maul waits for incoming swing Rage")
+        o.setup, o.distance, o.movement, o.rage = nil, 20, true, 40
+        assert.is_nil((tank(o)))
+        o.known = { 5487, 770, 6603, 6807 }
+        assert.are.equal("faerie_fire", (tank(o)))
+    end)
+
+    it("retains a melee attack when the spell range is hidden but the distance is confirmed", function()
+        local o = {
+            known = { 5487, 6807 },
+            combat = true,
+            setup = function(H)
+                H.ns.Facade.C_Spell.IsSpellInRange = function()
+                    return nil, true
+                end
+            end,
+        }
+        assert.are.equal("maul", (tank(o)))
+        o.distance = 20
+        assert.is_nil((tank(o)))
+    end)
+
+    it("keeps a low-health tank in form when the healer enters combat first", function()
+        local o = {
+            known = { 5185, 5487, 6795, 6807 },
+            health = 350,
+            autoUnshift = "1",
+            setup = function(_, c)
+                c.unitCombat.target, c.unitCombat.party1 = true, true
+                c.exists.party1, c.isPlayer.party1, c.groupRoles.party1 = true, true, "HEALER"
+                c.exists.targettarget, c.unitIs.targettarget, c.inParty.targettarget = true, "party1", true
+                c.threat.target = 0
+            end,
+        }
+        assert.are.equal("growl", (tank(o)))
+    end)
+
+    it("uses the learned Bear single-target attack and switches filler for a safe pack", function()
+        local o = { level = 44, known = { 5487, 6807, 779, 1328616, 407995 }, combat = true, rage = 50 }
+        assert.are.equal("primal_bite", (tank(o)))
+        o.setup = function(H, c)
+            c.cooldown[407995] = { isActive = true, isOnGCD = false, startTime = c.now, duration = 6 }
+            H.Fire("SPELL_UPDATE_COOLDOWN")
+        end
+        assert.are.equal("lacerate", (tank(o)))
+        o.plate = true
+        assert.are.equal("swipe_bear", (tank(o)))
+    end)
+
+    it("keeps a damage-assigned Guardian in Cat when another party member tanks", function()
+        local o =
+            { known = forms, role = "DAMAGER", form = "caster", combat = true, victim = "party1", victimRole = "TANK" }
+        assert.are.equal("cat_form", (tank(o)))
+    end)
+
+    it("recovers a raid healer on trash and leaves boss handoffs to the raid tanks", function()
+        local o = {
+            spec = "Guardian",
+            instance = "raid",
+            group = 10,
+            role = "TANK",
+            form = "bear_form",
+            known = { 5487, 6795, 6807 },
+            level = 60,
+            combat = true,
+            victim = "raid3",
+            threat = 0,
+            setup = function(_, ctl)
+                ctl.inRaid.targettarget = 3
+            end,
+        }
+        assert.are.equal("growl", (druid(o)))
+        o.victimRole = "TANK"
+        assert.are_not.equal("growl", (druid(o)))
+        o.victimRole, o.boss = "HEALER", true
+        assert.are_not.equal("growl", (druid(o)))
+        o.boss = false
+        o.setup = function(_, ctl)
+            ctl.inRaid.targettarget, ctl.encounterInProgress = 3, true
+            ctl.exists.boss1 = true
+        end
+        assert.are_not.equal("growl", (druid(o)))
+    end)
+
+    it("offers a trained action at every level with party combat already under way", function()
+        local learn = require("Forever.wowsims.learn_druid")
+        local kit = W.Guardian
+        kit.character()
+        W.Balance.character()
+        local ranks = {
+            maul = kit.IDS.maul,
+            primal_bite = kit.IDS.primal_bite,
+            lacerate = kit.IDS.lacerate,
+            swipe_bear = kit.IDS.swipe_bear,
+            faerie_fire = kit.IDS.faerie_fire,
+            demoralizing_roar = kit.IDS.demoralizing_roar,
+            wrath = W.Balance.IDS.wrath,
+            moonfire = W.Balance.IDS.moonfire,
+        }
+        local tankLevels = { [1328617] = 25, [1328616] = 34 }
+        for level = 1, 60 do
+            local known = { 6603 }
+            if level >= 10 then
+                known[#known + 1] = 5487
+            end
+            if level >= 40 then
+                known[#known + 1] = 9634
+            end
+            local highest = {}
+            for key, family in pairs(ranks) do
+                for _, id in ipairs(family) do
+                    -- Tank talent path: Primal Bite at 40. The hotfixed Lacerate ranks precede the DB2 rows.
+                    local trainedAt = tankLevels[id] or learn[id]
+                    if trainedAt and trainedAt <= level and (key ~= "primal_bite" or level >= 40) then
+                        highest[key] = id
+                        known[#known + 1] = id
+                    end
+                end
+            end
+            local o = {
+                level = level,
+                known = known,
+                form = level >= 10 and "bear_form" or "caster",
+                combat = true,
+                plate = level % 2 == 0,
+                rage = 30,
+                setup = function(_, ctl)
+                    ctl.current[6603] = true
+                end,
+            }
+            local action, out, H = tank(o)
+            local label = "level " .. level
+            assert.is_truthy(action, label .. " has a usable attack")
+            assert.is_true(H.Hekili.State.spec.guardian, label)
+            for i = 1, out.count do
+                local key = out.recs[i].actionName
+                local family = assert(ranks[key], label .. " unexpected action " .. key)
+                local id = H.ns.VirtualState.KnownID(family[1])
+                assert.is_true(H.ctl.known[id] == true, label .. " " .. key)
+                assert.are.equal(highest[key], id, label .. " rank of " .. key)
+                assert.are.equal(level < 10, key == "wrath" or key == "moonfire", label .. " " .. key)
+            end
+        end
     end)
 end)

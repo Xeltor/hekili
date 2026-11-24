@@ -160,7 +160,8 @@ Hekili.TargetSwapPreviousTexture = "Interface\\Addons\\Hekili\\Textures\\CyclePr
 
 function ns.UI.IsStaleTargetSwap( rec, out )
     return ( rec.indicator == "cycle" or rec.cycleOrigin or Status.swapPending )
-        and out.targetRevision ~= nil and out.targetRevision ~= Status.targetRevision
+        and out.targetRevision ~= nil
+        and ( out.targetRevision ~= Status.targetRevision or rec.swapOrigin and not ns.IsCurrentSwapOrigin( rec ) )
 end
 
 function ns.UI.BuildTargetSwap( b )

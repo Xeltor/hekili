@@ -1767,7 +1767,9 @@ describe("Forever Druid Movement (R8)", function()
     -- re-pin ab0f00e4fc (wowsims #1087): one flat list; the gate sits on each line after the move entry
     it("OFF hides Shred outside 5 yd and shows it inside; ON shows it outside too", function()
         local shred = lines("shred")
-        assert.matches("feral_prowling&!action%.ravage%.known", table.remove(shred, 1))
+        assert.matches("feral_prowling&%(!action%.ravage%.known|action%.ravage%.disabled%)", table.remove(shred, 1))
+        assert.matches("!feral_damage_enemy%)|feral_behind", shred[1])
+        assert.matches("feral_behind&%(!action%.claw%.known|action%.claw%.disabled%)", table.remove(shred))
         assert.are.equal(2, #shred)
         for _, l in ipairs(shred) do
             assert.matches("&%(toggle%.movement&target%.outside5|target%.within5%)$", l)
@@ -1784,9 +1786,12 @@ describe("Forever Druid Movement (R8)", function()
         local g = "Guardian (wowsims.com)"
         local maul = lines("maul", g)
         assert.are.equal(2, #maul)
-        assert.matches("&%(toggle%.movement&target%.outside5|target%.within5%)$", maul[1])
+        assert.matches(
+            "&%(%(toggle%.movement&target%.outside5|target%.within5%)|feral_group_enemy&feral_spell_range%)$",
+            maul[1]
+        )
         assert.are.equal(
-            "actions+=/maul,use_off_gcd=1,focus=2,if=!action.primal_bite.known&(feral_sustained|feral_pull&feral_spell_range&(!action.frenzied_regeneration.known|buff.frenzied_regeneration.down))",
+            "actions+=/maul,use_off_gcd=1,focus=2,if=!action.primal_bite.known&feral_attack_in_range&feral_maul_allowed",
             maul[2]
         )
         local function at(yd)
@@ -2009,8 +2014,9 @@ describe("Forever Druid Claw vs Shred (L602)", function()
     -- two adjacent Claw lines (since e4ef929e54), one recipe condition (the OR of wowsims's two, the second guarded)
     it("guards every Shred line, and the Claw lines, by position, the talent and Clearcasting", function()
         local shred, claw = lines("shred"), lines("claw")
-        assert.matches("feral_prowling&!action%.ravage%.known", table.remove(shred, 1))
-        assert.matches("feral_pull&!feral_behind", table.remove(claw))
+        assert.matches("feral_prowling&%(!action%.ravage%.known|action%.ravage%.disabled%)", table.remove(shred, 1))
+        assert.matches("feral_damage_enemy%)&feral_behind&%(!action%.claw%.known|action%.claw%.disabled%)", table.remove(shred))
+        assert.matches("feral_damage_enemy&!feral_behind%)&feral_spell_range", table.remove(claw))
         local S = "(settings.behind|!target.is_targeting_player)&(talent.improved_shred.rank>=2|buff.clearcasting.up)"
         local C = "(!settings.behind&target.is_targeting_player|talent.improved_shred.rank<2&!buff.clearcasting.up)"
         assert.are.equal(2, #shred)

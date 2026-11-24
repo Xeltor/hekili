@@ -144,6 +144,13 @@ local function checkNavigation( spec, combat, revision, target, engaged, count )
     end
 end
 
+-- A matched nameplate may disappear or be reused without changing the selected-target revision.
+function ns.IsCurrentSwapOrigin( rec )
+    local origin = rec.swapOrigin
+    return origin and origin == Facade.TargetMemoryKey()
+        and ( type( origin ) ~= "number" or rec.swapGeneration and rec.swapGeneration == Facade.TargetMemoryGeneration( origin ) )
+end
+
 -- The built-in Primary renderer calls this only when its first recommendation's swap is actually visible.
 function Hekili.Engine.TargetSwapShown( name, rec )
     if name ~= "Primary" or not rec or rec.indicator ~= "cycle" then return end
@@ -156,8 +163,8 @@ function Hekili.Engine.TargetSwapShown( name, rec )
     local spec = status.specID and rawget( Hekili.Engine.settings.specs, status.specID )
     if out.count > 0 and rec == out.recs[ 1 ] and out.targetRevision == status.targetRevision
         and spec and spec.cycle and status.combat and status.numTargets > 1
-        and Facade.TargetInPlayerCombat() then
-        navigation.origin = Facade.TargetMemoryKey()
+        and ns.IsCurrentSwapOrigin( rec ) and Facade.TargetInPlayerCombat() then
+        navigation.origin = rec.swapOrigin
         navigation.originGeneration = Facade.TargetMemoryGeneration( navigation.origin )
         navigation.lastTarget, navigation.lastGeneration = navigation.origin, navigation.originGeneration
         navigation.combatStart = status.combatStart
@@ -2295,6 +2302,7 @@ function Hekili.Update()
     local engaged = combat and forecastTarget and Facade.TargetInPlayerCombat()
     checkNavigation( spec, combat, targetRevision, forecastTarget, engaged, numTargets )
     if combat and not engaged then forecastTarget = nil end
+    local forecastGeneration = type( forecastTarget ) == "number" and Facade.TargetMemoryGeneration( forecastTarget ) or nil
     if status.combatStart ~= state.combat or status.numTargets ~= numTargets or status.specID ~= specID or status.packName ~= packName or status.specKey ~= state.spec.key then
         status.combat, status.combatStart, status.numTargets, status.specID, status.specKey, status.packName = combat, state.combat, numTargets, specID, state.spec.key, packName
         status.specName = state.spec.name
@@ -2313,6 +2321,8 @@ function Hekili.Update()
         end
     end
     state.forecastHorizon = horizon
+    -- The first active display needs the observations drained for this update, even when it is a utility display.
+    state.fullNext = true
 
     local snaps
 
@@ -2352,6 +2362,7 @@ function Hekili.Update()
             local Queue, healthCues = Output.Begin( dispName, targetRevision )
             Queue[ 1 ].healthCues = healthCues
             local numFilled = 0
+            local simulated = false
 
             for i = #Stack, 1, -1 do tinsert( StackPool, tremove( Stack, i ) ) end
             for i = #Block, 1, -1 do tinsert( StackPool, tremove( Block, i ) ) end
@@ -2701,6 +2712,9 @@ function Hekili.Update()
                     slot.time = state.offset + wait
                     slot.exact_time = state.now + state.offset + wait
 
+                    if slot.indicator == "cycle" then
+                        slot.swapOrigin, slot.swapGeneration = forecastTarget, forecastGeneration
+                    end
                     local ability = class.abilities[ action ]
                     if rawget( ability, "targetSwap" ) then
                         -- Selection is the entire instruction. The next target's own live priorities
@@ -2777,6 +2791,7 @@ function Hekili.Update()
                     local more = i < numRecs or i < maxRecs and onGcd < 2
 
                     if more or i < display.numIcons then
+                        simulated = true
                         -- Advance through the wait time.
                         state.this_action = action
                         state.this_list = listName
@@ -2906,9 +2921,10 @@ function Hekili.Update()
 
             state.WindowSlot( false ) -- nothing after the slot loop sends (a one-icon display's slot 1 included)
 
-            -- After passes, the next reset must be full: a full reset rebuilds the state whatever the passes left, as
-            -- it would from the main loop's end (offset > 0). shortcut: skipped when the main loop ends at offset 0 (the
-            -- next reset is partial and keeps that end state, which the passes would replace); no timeline queue does.
+            -- A positive offset already requires a full reset, but even an immediate cast can spend resources.
+            if simulated and state.offset == 0 then state.fullNext = true end
+
+            -- Alternative passes reset and simulate the state themselves. Rebuild it before the next display.
             if out.needAlts > 0 and numFilled > 0 and state.offset > 0 then
                 if altPasses( dispName, packName, Queue, numFilled, abilityOpts ) then state.fullNext = true end
             end

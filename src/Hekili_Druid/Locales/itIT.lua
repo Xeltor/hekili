@@ -23,7 +23,7 @@ end
 -- L["Always Behind"] = ""
 -- L["Hekili assumes you are always behind the target. Below 2 ranks of Shredding Attacks, Claw is still preferred unless Clearcasting makes Shred free."] = ""
 -- L["Maintain Demoralizing Roar"] = ""
--- L["Refresh Demoralizing Roar when it expires on your target. With Defensives enabled, the leveling priority can also use it on engaged packs."] = ""
+-- L["Refresh Demoralizing Roar when it expires on your target. With Defensives enabled, also use it on engaged packs and single dungeon enemies you are tanking."] = ""
 -- L["Bear Form (Guardian)"] = ""
 -- L["These settings come from the Guardian priority. They apply only while you are in Bear Form."] = ""
 -- L["Cat Form (Feral)"] = ""

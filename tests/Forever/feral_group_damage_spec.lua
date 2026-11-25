@@ -176,6 +176,26 @@ describe("Cat damage in a dungeon group", function()
         assert.are.equal("ferocious_bite", (cat(o)))
     end)
 
+    it("uses a five-point dungeon Rip when the group will fight long enough for the bleed", function()
+        local seconds = 6
+        local o = {
+            level = 34,
+            known = { 768, 1082, 1822, 1079, 1328618 },
+            points = 4,
+            setup = function(H, c)
+                c.classification = "elite"
+                H.Hekili.GetTTD = function()
+                    return seconds
+                end
+            end,
+        }
+        assert.are.equal("rake", (cat(o)))
+        o.points = 5
+        assert.are.equal("rip", (cat(o)))
+        seconds = 3
+        assert.are.equal("ferocious_bite", (cat(o)))
+    end)
+
     it("spreads the player's Rake only to a confirmed eligible second enemy without stranding points", function()
         local o = {
             known = { 768, 1082, 1822 },

@@ -1100,7 +1100,8 @@ do
         local tree = Registry.Specs()[ Status.specID ]
         local recovery = tree and tree.recoveryDisplay
         local defenses = prof.toggles.defensives
-        local showsDefenses = defenses.value and id == ( defenses.separate and "Defensives" or "Primary" )
+        local showsDefenses = recovery and ( recovery.spells or recovery.combat )
+            and defenses.value and id == ( defenses.separate and "Defensives" or "Primary" )
         local upkeep = recovery and id == "Primary" and recovery.upkeep
         if recovery and ( showsDefenses or upkeep )
             and ( dPool[id].style == ns.UI.Styles.classic or dPool[id].style == ns.UI.Styles.timeline )
@@ -1112,7 +1113,7 @@ do
                 if showsDefenses then
                     if Status.combat or InCombatLockdown() then
                         if Facade.UnitAffectingCombat( "player" ) == true then spells = recovery.combat end
-                    else
+                    elseif recovery.spells then
                         local hp = Facade.PlayerHealthFraction()
                         if hp and hp > 0 and hp <= recovery.below / 100 then spells = recovery.spells end
                     end

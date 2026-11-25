@@ -15,6 +15,78 @@ local function noForm(out)
 end
 
 describe("Feral and Guardian party roles and recovery", function()
+    it("opens on a targeted enemy without hard-casting a routine heal during the aggro transition", function()
+        local headless = require("Game.harness.headless")
+        for _, spec in ipairs({ "Feral", "Guardian" }) do
+            local o = {
+                spec = spec,
+                level = 8,
+                known = { 5176, 5185, 774 },
+                health = 700,
+                noTarget = true,
+                uiOnly = true,
+                setup = function(H)
+                    local vis = H.Hekili.DB.profile.displays.Primary.visibility
+                    vis.advanced = true
+                    vis.pve.always, vis.pve.combat, vis.pve.target, vis.pve.combatTarget = 0, 0, 1, 1
+                    H.Hekili:UpdateDisplayVisibility()
+                end,
+            }
+            local _, _, H = F.druid(o)
+            local c, d = H.ctl, H.env.HekiliDisplayPrimary
+            local function refresh()
+                d:UpdateAlpha()
+                assert(headless.cycle(H, c.now + 0.5))
+                assert.are.same({}, H.errors)
+                local out = H.Hekili.Engine.Output.Primary
+                return out.count > 0 and out.recs[1].actionName or nil
+            end
+            assert.are.equal(0, d.alpha)
+            c.exists.target = true
+            H.Fire("PLAYER_TARGET_CHANGED")
+            assert.are.equal("rejuvenation", refresh())
+            assert.are.equal(1, d.alpha)
+            c.exists.targettarget, c.unitIs.targettarget = true, "player"
+            H.Fire("UNIT_TARGET", "target")
+            assert.are.equal("wrath", refresh())
+            c.unitCombat.target, c.threat.target = true, 3
+            assert.are.equal("wrath", refresh())
+            c.combat = true
+            H.Fire("PLAYER_REGEN_DISABLED")
+            assert.are.equal("wrath", refresh())
+            c.unitHealth.player = 500
+            H.Fire("UNIT_HEALTH", "player")
+            assert.are.equal("rejuvenation", refresh())
+            c.unitHealth.player = 350
+            H.Fire("UNIT_HEALTH", "player")
+            assert.are.equal("healing_touch", refresh())
+            c.healthPlain, c.unitHealth.player = false, SECRET
+            H.Fire("UNIT_HEALTH", "player")
+            assert.are.equal("wrath", refresh())
+            local cues = H.Hekili.Engine.Output.Primary.healthCues
+            local bands = {}
+            for i = 1, cues.n do
+                bands[cues[i].action] = cues[i].percent
+            end
+            assert.are.same({ healing_touch = 40, rejuvenation = 55 }, bands)
+            c.exists.target = false
+            H.Fire("PLAYER_TARGET_CHANGED")
+            refresh()
+            assert.are.equal(0, d.alpha)
+        end
+    end)
+
+    it("preserves tank form at a healthy pull and uses cast-time recovery between fights", function()
+        for _, unshift in ipairs({ "0", "1" }) do
+            local o = { known = { 5487, 6807, 6603, 5185, 774 }, autoUnshift = unshift, health = 700 }
+            assert.are.equal("auto_attack", (F.tank(o)))
+            o.noTarget = true
+            assert.are.equal(unshift == "0" and "cancel_buff" or "healing_touch", (F.tank(o)))
+        end
+        local o = { level = 8, known = { 5176, 5185 }, health = 700 }
+        assert.are.equal("wrath", (F.druid(o)))
+    end)
+
     it("keeps a wounded tank in Bear when the healer pulls a different enemy", function()
         local healerCombat = true
         local o = {

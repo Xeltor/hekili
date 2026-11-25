@@ -1781,7 +1781,7 @@ describe("Forever Druid Movement (R8)", function()
     end)
 
     -- Guardian's Maul (off the GCD, rage full). re-pin ab0f00e4fc (wowsims #1087): one flat list; its Maul line carries
-    -- the gate (no Feral Charge clause); the leveling Maul (before Primal Bite) follows it, silent at 60.
+    -- the gate; the leveling Maul follows it when Primal Bite is untrained or disabled.
     it("OFF hides Guardian's Maul outside 5 yd and shows it inside", function()
         local g = "Guardian (wowsims.com)"
         local maul = lines("maul", g)
@@ -1791,7 +1791,7 @@ describe("Forever Druid Movement (R8)", function()
             maul[1]
         )
         assert.are.equal(
-            "actions+=/maul,use_off_gcd=1,focus=2,if=!action.primal_bite.known&feral_attack_in_range&feral_maul_allowed",
+            "actions+=/maul,use_off_gcd=1,focus=2,if=(!action.primal_bite.known|action.primal_bite.disabled)&feral_attack_in_range&feral_maul_allowed",
             maul[2]
         )
         local function at(yd)
@@ -2015,7 +2015,10 @@ describe("Forever Druid Claw vs Shred (L602)", function()
     it("guards every Shred line, and the Claw lines, by position, the talent and Clearcasting", function()
         local shred, claw = lines("shred"), lines("claw")
         assert.matches("feral_prowling&%(!action%.ravage%.known|action%.ravage%.disabled%)", table.remove(shred, 1))
-        assert.matches("feral_damage_enemy%)&feral_behind&%(!action%.claw%.known|action%.claw%.disabled%)", table.remove(shred))
+        assert.matches(
+            "feral_damage_enemy%)&feral_behind&%(!action%.claw%.known|action%.claw%.disabled%)",
+            table.remove(shred)
+        )
         assert.matches("feral_damage_enemy&!feral_behind%)&feral_spell_range", table.remove(claw))
         local S = "(settings.behind|!target.is_targeting_player)&(talent.improved_shred.rank>=2|buff.clearcasting.up)"
         local C = "(!settings.behind&target.is_targeting_player|talent.improved_shred.rank<2&!buff.clearcasting.up)"

@@ -73,8 +73,36 @@ describe("Feral leveling and group tanking", function()
         local o = { known = forms, combat = true, form = "bear_form", plate = true }
         assert.are.equal("swipe_bear", (druid(o)))
         o.plate = nil
-        local first = druid(o)
-        assert.is_true(first == "swipe_bear" or first == "maul", tostring(first))
+        assert.are.equal("maul", (druid(o)))
+    end)
+
+    it("uses the hybrid Cat finisher when the selected outdoor enemy has time for two bleed ticks", function()
+        local seconds = 6
+        local o = {
+            known = { 5487, 768, 1082, 1079, 1822, 1328618 },
+            level = 30,
+            form = "cat_form",
+            combat = true,
+            points = 3,
+            setup = function(H)
+                H.Hekili.GetTTD = function()
+                    return seconds
+                end
+            end,
+        }
+        assert.are.equal("rip", (druid(o)))
+        seconds = 5
+        assert.are.equal("claw", (druid(o)))
+        o.points, seconds = 4, 3
+        assert.are.equal("ferocious_bite", (druid(o)))
+        o.points = 3
+        assert.are.equal("claw", (druid(o)))
+        seconds = 3600
+        assert.are.equal("rake", (druid(o)), "unmeasured ordinary enemy")
+        o.enemyHealth = 200
+        assert.are.equal("ferocious_bite", (druid(o)), "unmeasured dying enemy")
+        seconds = 12
+        assert.are.equal("rip", (druid(o)), "slow health loss even at low health")
     end)
     it("recovers a groupmate with Growl only with confirmed loose melee threat", function()
         local o = {

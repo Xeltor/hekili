@@ -7,13 +7,13 @@ return function(recipe)
         "healthstone,use_off_gcd=1,display_below=30,if=toggle.defensives&feral_defense",
         "healing_potion,use_off_gcd=1,display_below=40,if=toggle.defensives&feral_defense",
         "barkskin,display_below=60,if=toggle.defensives&feral_defense&buff.barkskin.down",
-        "healing_touch,display_below=40,if=toggle.defensives&feral_caster_heal",
+        "healing_touch,display_below=40,if=toggle.defensives&(feral_caster_heal|feral_prepare_heal)",
         "rejuvenation,display_below=55,if=toggle.defensives&feral_caster_heal&buff.rejuvenation.down",
-        "cancel_buff,buff_name=bear_form,display_below=75,if=toggle.defensives&feral_unshift_heal",
-        "cancel_buff,buff_name=cat_form,display_below=75,if=toggle.defensives&feral_unshift_heal",
-        "healing_touch,display_below=75,if=toggle.defensives&feral_prepare_heal",
-        "regrowth,display_below=75,if=toggle.defensives&feral_prepare_heal",
-        "rejuvenation,display_below=75,if=toggle.defensives&feral_prepare_heal&buff.rejuvenation.down",
+        "cancel_buff,buff_name=bear_form,display_below=75,if=toggle.defensives&feral_unshift_heal&feral_resting_target",
+        "cancel_buff,buff_name=cat_form,display_below=75,if=toggle.defensives&feral_unshift_heal&feral_resting_target",
+        "healing_touch,display_below=75,if=toggle.defensives&feral_prepare_heal&feral_resting_target",
+        "regrowth,display_below=75,if=toggle.defensives&feral_prepare_heal&feral_resting_target",
+        "rejuvenation,display_below=75,if=toggle.defensives&feral_prepare_heal&(buff.form.down|feral_resting_target)&buff.rejuvenation.down",
         "remove_curse,if=buff.dispellable_curse.up&feral_self_dispel",
         "abolish_poison,if=buff.dispellable_poison.up&buff.abolish_poison.down&feral_self_dispel",
         "cure_poison,if=buff.dispellable_poison.up&(!action.abolish_poison.known|buff.abolish_poison.down)&feral_self_dispel",
@@ -28,6 +28,7 @@ return function(recipe)
         "challenging_roar,if=toggle.defensives&feral_challenging_roar&debuff.challenging_roar.down",
         "growl,use_off_gcd=1,if=feral_loose_target&debuff.growl.down",
         "recover_threat,use_off_gcd=1,if=combat>0&feral_recover_threat",
+        "enrage,use_off_gcd=1,if=feral_tank_opener&feral_enrage",
         "faerie_fire,if=(feral_tank_opener|(feral_pull|feral_group_enemy)&target.outside5)&feral_spell_range&buff.feral_form.up&(!action.prowl.known|buff.prowl.down)&debuff.faerie_fire.down",
         "auto_attack,use_off_gcd=1,if=(feral_pull|feral_group_enemy|feral_tank_opener)&buff.feral_form.up",
         "moonfire,if=!action.bear_form.known&!action.cat_form.known&(feral_pull|feral_tank_opener)&feral_spell_range&debuff.moonfire.down&(moving|combat>0)",
@@ -43,18 +44,33 @@ return function(recipe)
         first[#first + 1] = "demoralizing_roar,if=feral_defensive_roar&debuff.demoralizing_roar.down"
         -- Keep the Bear priority in guide order: save an established bleed just before it falls,
         -- then Bite the selected mob before spreading armor reduction or filling on a safe pack.
+        local packBleed = "feral_held_pack&feral_durable&!feral_dying"
+        local earlySwipe = "(!action.lacerate.known|action.lacerate.disabled)"
+            .. "&(!action.primal_bite.known|action.primal_bite.disabled)"
+            .. "&(!action.maul.known|action.maul.disabled|buff.maul.up&rage.lo>=action.swipe_bear.cost+action.maul.cost)"
         recipe.extra = {
             {
                 before = "primal_bite",
                 translated = true,
-                line = "lacerate,focus=2,if=feral_bear_fight&feral_spell_range&(!feral_pack|!feral_area_safe)&debuff.lacerate.stack=5&debuff.lacerate.remains<=gcd.max",
+                line = "lacerate,focus=2,if=feral_bear_fight&feral_spell_range&debuff.lacerate.remains<=gcd.max"
+                    .. "&((!feral_pack|!feral_area_safe)&debuff.lacerate.stack=5|"
+                    .. packBleed
+                    .. "&debuff.lacerate.up)",
             },
             { before = "primal_bite", translated = true, line = "berserk,use_off_gcd=1,if=feral_bear_burst" },
+            {
+                before = "lacerate",
+                translated = true,
+                line = "lacerate,focus=2,if=feral_bear_fight&feral_spell_range&debuff.lacerate.down&" .. packBleed,
+            },
+            { before = "lacerate", translated = true, line = "lacerate,other_target=1,if=feral_spread_target" },
             { before = "lacerate", translated = true, line = "faerie_fire,other_target=1,if=feral_spread_target" },
             {
                 before = "lacerate",
                 translated = true,
-                line = "swipe_bear,if=feral_bear_fight&feral_area_safe&feral_spell_range&(feral_pack|!action.lacerate.known&!action.primal_bite.known)",
+                line = "swipe_bear,if=feral_bear_fight&feral_area_safe&feral_spell_range&(feral_pack|"
+                    .. earlySwipe
+                    .. ")",
             },
         }
         for _, key in ipairs({ "primal_bite", "lacerate", "maul", "faerie_fire" }) do
@@ -68,23 +84,28 @@ return function(recipe)
         addGuard("elunes_light", "feral_sustained|feral_pull")
         addGuard("feral_charge", "feral_primary&toggle.movement&feral_spell_range&(feral_sustained|feral_pull)")
         recipe.leveling = {
-            "maul,use_off_gcd=1,focus=2,if=!action.primal_bite.known&feral_attack_in_range&feral_maul_allowed",
+            "maul,use_off_gcd=1,focus=2,if=(!action.primal_bite.known|action.primal_bite.disabled)&feral_attack_in_range&feral_maul_allowed",
         }
     else
         -- Open from Prowl before applying bleeds. Ravage remains the preferred learned opener.
         first[#first + 1] =
             "shred,if=feral_pull&feral_prowling&(!action.ravage.known|action.ravage.disabled)&feral_behind&feral_spell_range"
-        first[#first + 1] = "ferocious_bite,if=feral_pull&feral_dying&combo_points.current>=2&feral_spell_range"
+        first[#first + 1] = "ferocious_bite,if=feral_pull&feral_dying&feral_spell_range"
+            .. "&(combo_points.current>=4|combo_points.current>=2&target.real_ttd=3600)"
         -- Spend points where the leveling kit can use them. Keep the imported pooling
         -- and powershift windows on sustained fights.
         local fighting = "feral_pull&!feral_prowling&feral_spell_range"
-        first[#first + 1] = "rip,if=" .. fighting
-            .. "&!feral_dying&debuff.rip.down&(combo_points.current>=5|combo_points.current>=4&feral_durable)"
+        first[#first + 1] = "rip,if="
+            .. fighting
+            .. "&feral_bleed_worthwhile&debuff.rip.down&(combo_points.current>=5|combo_points.current>=3&feral_leveling_rip"
+            .. "|combo_points.current>=4&feral_durable&target.real_ttd=3600)"
             .. "&energy.lo>=action.rip.cost"
-        first[#first + 1] = "ferocious_bite,if=" .. fighting
+        first[#first + 1] = "ferocious_bite,if="
+            .. fighting
             .. "&combo_points.current>=4&feral_bite_fallback&energy.lo>=action.ferocious_bite.cost"
-        first[#first + 1] = "rake,if=" .. fighting
-            .. "&!feral_dying&debuff.rake.down&energy.lo>=action.rake.cost"
+        first[#first + 1] = "rake,if="
+            .. fighting
+            .. "&feral_bleed_worthwhile&debuff.rake.down&energy.lo>=action.rake.cost"
         first[#first + 1] = "rake,other_target=1,if=feral_spread_target&energy.lo>=action.rake.cost"
         addGuard("cat_form", "feral_sustained_form|feral_wants_cat")
         for _, key in ipairs({ "ravage", "claw", "shred", "ferocious_bite", "faerie_fire" }) do
@@ -94,9 +115,10 @@ return function(recipe)
         addGuard("shred", "(!feral_field&!feral_damage_enemy)|feral_behind")
         recipe.leveling[#recipe.leveling + 1] =
             "shred,if=(feral_pull|feral_damage_enemy)&feral_behind&(!action.claw.known|action.claw.disabled)&feral_spell_range"
-        recipe.leveling[#recipe.leveling + 1] = "claw,if=(feral_pull|feral_damage_enemy&!feral_behind)&feral_spell_range"
+        recipe.leveling[#recipe.leveling + 1] =
+            "claw,if=(feral_pull|feral_damage_enemy&!feral_behind)&feral_spell_range"
         for _, key in ipairs({ "rake", "rip" }) do
-            addGuard(key, "feral_attack_in_range&(!feral_field|!feral_dying)")
+            addGuard(key, "feral_attack_in_range&(!feral_field|feral_bleed_worthwhile)")
         end
         for _, key in ipairs({ "dash", "prowl", "elunes_light" }) do
             addGuard(key, "!feral_field|feral_pull&!feral_wants_bear")

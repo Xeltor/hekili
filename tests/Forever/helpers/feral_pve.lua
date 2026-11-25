@@ -62,7 +62,9 @@ local function druid(o)
         return pools[pt]
     end
     local display = o.display or "Primary"
-    assert.is_true(H.Hekili.Engine.Subscribe(display, function() end))
+    if not o.uiOnly then
+        assert.is_true(H.Hekili.Engine.Subscribe(display, function() end))
+    end
     assert(headless.cycle(H, ctl.now + 1.6))
     assert.are.same({}, H.errors)
     local out = H.Hekili.Engine.Output[display]

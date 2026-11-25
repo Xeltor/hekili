@@ -644,6 +644,8 @@ lists the health cues that may appear when combat or target visibility normally 
 threshold uses readable player health. Its combat cues can use the client's protected health curves.
 The optional `upkeep` entry identifies a personal buff by action and spell ranks. When a trained buff is
 missing, a combat-only Primary can show it once the rotation selects it as the next usable action.
+Version 19 adds `Shared:RegisterPriorityInterrupts`, which registers a Forever NPC and spell catalog and the
+state expressions that use it. Interrupt actions declare their range and stopping requirements in the class packs.
 `tests/Forever/content_spec.lua` checks the TOCs and the constant agree.
 
 Protection Warrior and Paladin supply the observer with their class’s range probes and spells that can recover

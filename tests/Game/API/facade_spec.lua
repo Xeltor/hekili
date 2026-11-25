@@ -671,6 +671,143 @@ describe("ns.Facade", function()
         assert.is_nil(Facade.UnitChannelInfo("target"))
     end)
 
+    local function useInterruptUnitReads()
+        for _, name in ipairs({
+            "UnitExists",
+            "UnitCanAttack",
+            "UnitGUID",
+            "UnitIsPlayer",
+            "UnitAffectingCombat",
+            "UnitThreatSituation",
+            "UnitIsUnit",
+            "UnitInParty",
+            "UnitInRaid",
+        }) do
+            answers[name] = api[name]
+        end
+    end
+
+    it("confirms a secret target cast through its plain bar and explicit interruptibility event", function()
+        useInterruptUnitReads()
+        local secret, bar = fake.SECRET, 31
+        ctl.guid.target = "Creature-0-1-2-3-3840-000ABC"
+        ctl.unitCombat.target, ctl.unitIs.targettarget = true, "player"
+        local spell
+        api.UnitCastingInfo = function()
+            return secret, secret, secret, secret, secret, false, secret, secret, spell, bar
+        end
+        local facts = Facade.InterruptUnitFacts
+        ctl.Fire("UNIT_SPELLCAST_START", "target", secret, 12345, bar)
+        assert.are.same({ 3840, true, true, nil, false, 31, 12345 }, { facts("target") })
+        spell = secret
+        assert.are.same({ 3840, true, true, nil, false, 31 }, { facts("target") })
+        ctl.Fire("UNIT_SPELLCAST_INTERRUPTIBLE", "target")
+        assert.are.same({ 3840, true, true, true, false, 31 }, { facts("target") })
+        ctl.Fire("UNIT_SPELLCAST_START", "target", secret, secret, bar)
+        assert.are.same({ 3840, true, true, true, false, 31 }, { facts("target") }, "same bar keeps its observed flag")
+        ctl.Fire("UNIT_SPELLCAST_STOP", "target", secret, secret, bar)
+        assert.are.same({ 3840, true, false }, { facts("target") }, "a stale native cast does not outlive STOP")
+    end)
+
+    it("observes a plate channel before targeting, and never transfers it to a reused token", function()
+        useInterruptUnitReads()
+        local unit, secret = "nameplate1", fake.SECRET
+        local guid = "Creature-0-1-2-3-3840-000ABC"
+        ctl.guid[unit], ctl.exists[unit], ctl.unitCombat[unit], ctl.inParty.nameplate1target = guid, true, true, true
+        ctl.Fire("NAME_PLATE_UNIT_ADDED", unit)
+        ctl.Fire("UNIT_SPELLCAST_CHANNEL_START", unit, secret, secret, 54)
+        ctl.Fire("UNIT_SPELLCAST_INTERRUPTIBLE", unit)
+        local facts = Facade.InterruptUnitFacts
+        assert.are.same({ 3840, true, true, true, true, 54 }, { facts(unit) })
+        ctl.Fire("UNIT_SPELLCAST_CHANNEL_STOP", unit, secret, secret, secret, 52)
+        assert.are.same({ 3840, true, true, true, true, 54 }, { facts(unit) }, "previous channel stopped late")
+
+        ctl.guid.target, ctl.unitCombat.target, ctl.inParty.targettarget = guid, true, true
+        ctl.Fire("PLAYER_TARGET_CHANGED")
+        assert.are.same({ 3840, true, true, true, true, 54 }, { facts("target") })
+        assert.is_true(Facade.TargetCastInterruptible())
+        assert.are.same({ "Channeling", "", 136243, 1000, 3000, false, false, 0 }, { Facade.UnitChannelInfo("target") })
+        api.UnitChannelInfo = function(alias)
+            if alias == unit then
+                return "Heal", "Heal", 1, 800, 7000, false, false, 12345, false, 0, 54
+            end
+        end
+        assert.are.same(
+            { "Channeling", "", 136243, 800, 7000, false, false, 12345 },
+            { Facade.UnitChannelInfo("target") }
+        )
+        ctl.Fire("UNIT_SPELLCAST_CHANNEL_STOP", "target", secret, secret, secret, 54)
+        assert.are.same({ 3840, true, false }, { facts("target") })
+        assert.is_false(Facade.TargetCastInterruptible())
+        assert.is_nil(Facade.UnitChannelInfo("target"))
+        api.UnitChannelInfo = function() end
+        ctl.Fire("NAME_PLATE_UNIT_REMOVED", unit)
+        assert.is_nil(facts(unit), "a removed plate cannot be queried, even while its token still answers")
+        ctl.guid[unit] = "Creature-0-1-2-3-3840-000DEF"
+        ctl.Fire("NAME_PLATE_UNIT_ADDED", unit)
+        assert.are.same({ 3840, true, false }, { facts(unit) }, "same NPC type, different unit")
+    end)
+
+    it("enumerates observed hostile mobs once per live unit and keeps restricted identity unknown", function()
+        useInterruptUnitReads()
+        local secret = fake.SECRET
+        ctl.guid.target, ctl.unitIs.target = secret, "nameplate1"
+        ctl.exists.nameplate1, ctl.guid.nameplate1 = true, secret
+        ctl.exists.focus, ctl.guid.focus = true, "Creature-0-1-2-3-3840-000DEF"
+        ctl.exists.nameplate2, ctl.guid.nameplate2 = true, "Creature-0-1-2-3-3840-000EF0"
+        ctl.exists.nameplate3, ctl.exists.nameplate4 = true, true
+        ctl.friendly.nameplate3, ctl.dead.nameplate4 = true, true
+        ctl.Fire("PLAYER_FOCUS_CHANGED")
+        for _, unit in ipairs({ "nameplate1", "nameplate2", "nameplate3", "nameplate4" }) do
+            ctl.Fire("NAME_PLATE_UNIT_ADDED", unit)
+        end
+        ctl.Fire("PLAYER_TARGET_CHANGED")
+        api.UnitChannelInfo = function(unit)
+            if unit == "focus" then
+                return "Channel", "Channel", 1, 1000, 5000, false, true, 12345, false, 0, 51
+            end
+        end
+        local seen = {}
+        Facade.ForEachInterruptUnit(function(unit)
+            seen[#seen + 1] = unit
+        end)
+        assert.are.same({ "target", "focus", "nameplate2" }, seen)
+        assert.are.same({ nil, false, false }, { Facade.InterruptUnitFacts("target") })
+        assert.is_nil(Facade.InterruptUnitFacts(secret))
+        assert.is_nil(Facade.InterruptUnitFacts("player"))
+        local context = {}
+        local found = Facade.ForEachInterruptUnit(
+            function(unit, npc, engaged, casting, kickable, channel, bar, spell, ctx, active)
+                assert.are.same({ "focus", 3840, false, true, false, true, 51, 12345 }, {
+                    unit,
+                    npc,
+                    engaged,
+                    casting,
+                    kickable,
+                    channel,
+                    bar,
+                    spell,
+                })
+                assert.are.equal(context, ctx)
+                assert.is_true(active)
+                return unit
+            end,
+            context,
+            true
+        )
+        assert.are.equal("focus", found)
+
+        local queried = {}
+        api.UnitCastingInfo = function(unit)
+            queried[#queried + 1] = unit
+        end
+        ctl.guid.nameplate2 = "Creature-0-1-2-3-3841-000ABC"
+        Facade.ForEachInterruptUnit(function(unit)
+            assert.are.equal("nameplate2", unit)
+        end, nil, false, { [3841] = true })
+        assert.are.same({ "nameplate2" }, queried)
+    end)
+
     it("answers spells, power types and units nothing tracks in the real shapes, without an error", function()
         local c = Facade.C_Spell.GetSpellCooldown(999999)
         assert.are.same({ 0, 0, false }, { c.startTime, c.duration, c.isActive })

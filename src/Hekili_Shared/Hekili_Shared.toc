@@ -8,11 +8,12 @@
 ## Dependencies: Hekili
 ## Group: Hekili
 ## LoadOnDemand: 1
-## X-Hekili-ContentAPI: 18
+## X-Hekili-ContentAPI: 19
 
 Shared\Auras.lua
 Shared\Control.lua
 Shared\Consumables.lua
+Shared\InterruptCatalog.lua
 Shared\Items.lua
 Shared\TimeToDie.lua
 Races\Gnome.lua

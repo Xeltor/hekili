@@ -73,7 +73,7 @@ local function sync(e)
     any, general, un1, un2 = false, false, nil, nil
     if I.api and S.HANDLERS[e] and not S.DORMANT[e] then
         local su = S.UNITS[e]
-        if su then
+        if su and not S.ALL_UNITS[e] then
             for k = 1, #su do
                 add(su[k])
             end

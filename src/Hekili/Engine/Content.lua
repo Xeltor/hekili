@@ -67,7 +67,8 @@ local format = string.format
 -- 17: targeted navigation abilities, target memory identity, group roles and encounter state. A Warrior
 -- pack using these facilities needs a core that can distinguish a target cue from a spell recommendation.
 -- 18: Hekili:NewTankRecovery, group member health measurements and per-spec leveling support.
-local CONTENT_API = 18
+-- 19: Shared:RegisterPriorityInterrupts and the hostile cast facts used by PvE interrupt priorities.
+local CONTENT_API = 19
 
 local done, notice = false, nil
 

@@ -5,7 +5,7 @@ local function addPvE(recipe)
     local attacking = field .. "&!stealthed.all"
     local fighting = attacking .. "&combat>0"
     local meleePvE = "combat>0&rogue_pve_target&rogue_engaged&rogue_melee"
-    local casting = meleePvE .. "&debuff.casting.up"
+    local casting = meleePvE .. "&debuff.casting.up&pve_priority_interrupt"
     local canGarrote = "rogue_garrote&debuff.garrote.down"
     local ghostlyGarrote = fighting .. "&rogue_durable&buff.ghostly_strike_next.up&" .. canGarrote
     local dagger = "main_hand.dagger&rogue_behind"

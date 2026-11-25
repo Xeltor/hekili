@@ -60,7 +60,7 @@ local interrupt = "("
     .. pveCombat
     .. "&warrior_attack_target"
     .. melee
-    .. "&debuff.casting.up&debuff.casting.v2=0)|warrior_pvp_interrupt"
+    .. "&debuff.casting.up&debuff.casting.v2=0&pve_priority_interrupt)|warrior_pvp_interrupt"
 local spearBonus = "(target.creature_type='giant'|target.creature_type='dragonkin')"
 local preserveShield = "(!(warrior_field|warrior_pvp_target)|combat=0|!arms_shield_stance)"
 

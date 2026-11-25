@@ -1250,11 +1250,17 @@ kept("C_Spell.GetSpellLossOfControlCooldown", "virtual", nothing, "absent on For
 -- Casts: the player's own are plain [W PR9], the target's secret [W PR8]
 
 local CAST_ICON = 136243
+local targetAliasCast
 
 -- A cast start alone carries no interruptibility information on Forever.
 function Facade.TargetCastInterruptible()
-    local _, _, _, interruptible = VS.TargetCastFacts()
-    return interruptible == 1 and VS.TargetCast(now()) ~= nil
+    local time = now()
+    if VS.TargetCast(time) then
+        local _, _, _, interruptible = VS.TargetCastFacts()
+        return interruptible == 1
+    end
+    local _, _, _, _, interruptible = targetAliasCast(time)
+    return interruptible == true
 end
 
 kept("UnitCastingInfo", "hybrid", function(unit, ...)
@@ -1267,12 +1273,19 @@ kept("UnitCastingInfo", "hybrid", function(unit, ...)
         return nil
     end
     modelled = true
-    local channel, castBarID, start, interruptible = VS.TargetCastFacts()
-    local rec = channel == false and VS.TargetCast(now())
-    if not rec then
-        return nil
+    local time = now()
+    local rec = VS.TargetCast(time)
+    if rec then
+        local channel, castBarID, start, interruptible = VS.TargetCastFacts()
+        if channel == false then
+            return "Casting", "", CAST_ICON, start * 1000, rec.est * 1000, false, castBarID, interruptible == 0, 0
+        end
+    else
+        local channel, bar, start, finish, interruptible, spell = targetAliasCast(time)
+        if channel == false then
+            return "Casting", "", CAST_ICON, start, finish, false, bar, interruptible ~= true, spell or 0
+        end
     end
-    return "Casting", "", CAST_ICON, start * 1000, rec.est * 1000, false, castBarID, interruptible == 0, 0
 end, "player plain [W PR9]; target secret [W PR8]; TargetCast()")
 
 kept("UnitChannelInfo", "hybrid", function(unit, ...)
@@ -1285,12 +1298,19 @@ kept("UnitChannelInfo", "hybrid", function(unit, ...)
         return nil
     end
     modelled = true
-    local channel, _, start, interruptible = VS.TargetCastFacts()
-    local rec = channel == true and VS.TargetCast(now())
-    if not rec then
-        return nil
+    local time = now()
+    local rec = VS.TargetCast(time)
+    if rec then
+        local channel, _, start, interruptible = VS.TargetCastFacts()
+        if channel then
+            return "Channeling", "", CAST_ICON, start * 1000, rec.est * 1000, false, interruptible == 0, 0
+        end
+    else
+        local channel, _, start, finish, interruptible, spell = targetAliasCast(time)
+        if channel then
+            return "Channeling", "", CAST_ICON, start, finish, false, interruptible ~= true, spell or 0
+        end
     end
-    return "Channeling", "", CAST_ICON, start * 1000, rec.est * 1000, false, interruptible == 0, 0
 end, "player plain [W PR9]; target secret [W PR8]; TargetCast()")
 
 ----------------------------------------------------------------------------------------------------------------------
@@ -1742,20 +1762,24 @@ end
 
 -- A matched nameplate can supply a hidden fact under Map. A plain answer from the
 -- selected unit always takes precedence, especially when the target dies or becomes friendly.
-local function targetFact(read, plate, first)
+local function unitFact(unit, plate, read, first)
     local answer
     if first then
-        answer = plainAll(read(first, "target"))
+        answer = plainAll(read(first, unit))
         if answer == nil and plate then
             return plainAll(read(first, plate))
         end
     else
-        answer = plainAll(read("target"))
+        answer = plainAll(read(unit))
         if answer == nil and plate then
             return plainAll(read(plate))
         end
     end
     return answer
+end
+
+local function targetFact(read, plate, first)
+    return unitFact("target", plate, read, first)
 end
 
 -- True for a living hostile NPC fighting our group. False for a confirmed idle enemy.
@@ -1787,6 +1811,158 @@ function Facade.TargetInPlayerCombat()
         )
     then
         return true
+    end
+end
+
+local hostileCasts, unitTokens = I.HostileCasts, I.Units.TOKENS
+
+local function sameInterruptUnit(unit, other, guid)
+    return Facade.UnitIsUnit(unit, other) == true or (guid ~= nil and guid == Facade.UnitGUID(other))
+end
+
+local function aliasInterruptCast(index, time, guid, channel, bar)
+    local unit = unitTokens[index]
+    local bestChannel, bestBar, bestSpell, bestStart, bestEnd
+    for otherIndex = 1, 42 do
+        local other = unitTokens[otherIndex]
+        if
+            otherIndex ~= index
+            and hostileCasts.HasEvidence(otherIndex)
+            and hostileCasts.Index(other)
+            and sameInterruptUnit(unit, other, guid)
+        then
+            local up, kickable, otherChannel, otherBar, spell, start, finish = hostileCasts.Facts(otherIndex, time)
+            if
+                up
+                and not hostileCasts.Ended(index, otherChannel, otherBar)
+                and (not bar or (bar == otherBar and channel == otherChannel))
+            then
+                if kickable ~= nil then
+                    return true, kickable, otherChannel, otherBar, spell, start, finish
+                elseif bestChannel == nil then
+                    bestChannel, bestBar, bestSpell, bestStart, bestEnd = otherChannel, otherBar, spell, start, finish
+                end
+            end
+        end
+    end
+    if bestChannel ~= nil then
+        return true, nil, bestChannel, bestBar, bestSpell, bestStart, bestEnd
+    end
+end
+
+-- The selected-target model clears on a target change. A proven alias may have observed the same mob start earlier.
+targetAliasCast = function(time)
+    if not hostileCasts.HasAliasEvidence(1) then
+        return
+    end
+    local targetUp, targetKickable, targetChannel, targetBar, targetSpell, targetStart, targetEnd =
+        hostileCasts.Facts(1, time)
+    if targetUp and not targetBar then
+        return
+    end
+    local casting, kickable, channel, bar, spell, start, finish =
+        aliasInterruptCast(1, time, Facade.UnitGUID("target"), targetChannel, targetBar)
+    if not casting or Facade.TargetInPlayerCombat() ~= true then
+        return
+    end
+    if targetUp then
+        if targetKickable ~= nil then
+            kickable = targetKickable
+        end
+        spell, start, finish = targetSpell, targetStart or start, targetEnd or finish
+    end
+    if start and finish > time * 1000 then
+        return channel, bar, start, finish, kickable, spell
+    end
+end
+
+local function interruptUnitFacts(index, time, npcIDs)
+    local unit, victim = unitTokens[index], hostileCasts.Victim(index)
+    local plate = unit == "target" and Facade.TargetMemoryPlate(Facade.TargetMemoryKey()) or nil
+    if
+        unitFact(unit, plate, Facade.UnitExists) ~= true
+        or unitFact(unit, plate, Facade.UnitCanAttack, "player") ~= true
+        or unitFact(unit, plate, Facade.UnitIsDead) ~= false
+        or unitFact(unit, plate, Facade.UnitIsPlayer) ~= false
+    then
+        return
+    end
+
+    local guid = unitFact(unit, plate, Facade.UnitGUID)
+    local npcID = hostileCasts.NpcID(index, guid)
+    if npcIDs and not npcIDs[npcID] then
+        return
+    end
+    local engaged
+    local combat = unitFact(unit, plate, Facade.UnitAffectingCombat)
+    if combat == false then
+        engaged = false
+    elseif
+        combat == true
+        and (
+            fightingGroup(unit, victim)
+            or plate and fightingGroup(plate, hostileCasts.Victim(hostileCasts.Index(plate)))
+        )
+    then
+        engaged = true
+    end
+
+    local casting, interrupts, channel, bar, spell = hostileCasts.Facts(index, time)
+    -- A newly selected/focused mob can already have a cast on a proven alias. Carry only evidence of that same cast.
+    if index <= 2 and interrupts == nil and (not casting or bar) and hostileCasts.HasAliasEvidence(index) then
+        local otherCast, otherInterrupts, otherChannel, otherBar, otherSpell =
+            aliasInterruptCast(index, time, guid, channel, bar)
+        if otherCast then
+            interrupts = otherInterrupts
+            if not casting then
+                casting, channel, bar, spell = otherCast, otherChannel, otherBar, otherSpell
+            end
+        end
+    end
+    return true, npcID, engaged, casting, interrupts, channel, bar, spell, guid
+end
+
+--- Facts for a target, focus or active nameplate that is confirmed to be a living hostile NPC.
+--- Unknown or withheld facts are nil. The cast bar identifies one cast, while a spell ID identifies its type.
+function Facade.InterruptUnitFacts(unit)
+    if issecretvalue(unit) or type(unit) ~= "string" then
+        return
+    end
+    local index = hostileCasts.Index(unit)
+    if index then
+        local _, npcID, engaged, casting, interrupts, channel, bar, spell = interruptUnitFacts(index, now())
+        return npcID, engaged, casting, interrupts, channel, bar, spell
+    end
+end
+
+--- Visits eligible units, preferring target and then focus for aliases. A truthy visitor result stops enumeration.
+function Facade.ForEachInterruptUnit(visitor, context, activeOnly, npcIDs)
+    local time = now()
+    local targetSeen, targetGUID, focusSeen, focusGUID
+    for index = 1, 42 do
+        local unit = unitTokens[index]
+        if hostileCasts.Index(unit) then
+            local eligible, npcID, engaged, casting, interrupts, channel, bar, spell, guid =
+                interruptUnitFacts(index, time, npcIDs)
+            if
+                eligible
+                and (not targetSeen or not sameInterruptUnit("target", unit, targetGUID))
+                and (not focusSeen or not sameInterruptUnit("focus", unit, focusGUID))
+            then
+                if index == 1 then
+                    targetSeen, targetGUID = true, guid
+                elseif index == 2 then
+                    focusSeen, focusGUID = true, guid
+                end
+                if not activeOnly or casting then
+                    local result =
+                        visitor(unit, npcID, engaged, casting, interrupts, channel, bar, spell, context, activeOnly)
+                    if result then
+                        return result
+                    end
+                end
+            end
+        end
     end
 end
 

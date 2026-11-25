@@ -13,6 +13,10 @@ This fork extends Hekili Forever's existing endgame rotations across levels 1–
 
 See the [upstream development guide](../../DEVELOPMENT.md), [pack authoring guide](wowsims-packs.md), and [in-game ledger](ingame-ledger.md) for the existing tools and checks.
 
+### PvE interrupt priorities
+
+Druid, Warrior, Rogue, and Protection Paladin interrupt recommendations share a catalog drawn from Forever logs and encounter references. A readable priority spell can get an interrupt cue even when the caster is new to the catalog. A known caster in range can also make Hekili save the interrupt, provided the caster is fighting you or your group. That check includes visible enemies whose identity is readable. An unlisted mob still gets the normal interrupt cue when there is no reachable priority caster. If the selected known caster's spell is hidden, its normal cue remains available unless another reachable enemy has a confirmed priority cast. [Interrupt catalog](../../src/Hekili_Shared/Shared/InterruptCatalog.lua)
+
 ## Feral Druid leveling and tanking
 
 The Feral and Guardian packs share their Cat and Bear lists. Before completing the Bear Form quest, pull with Wrath and use learned Moonfire while moving or fighting. Bear covers the levels before Cat Form and Claw. Outdoors, a single enemy favors Cat. A second distinct, engaged melee enemy can warrant Bear in solo play or an unassigned party. A low-health solo Cat under direct attack can also get a Bear recommendation. Keep Bear through the rest of that fight and reassess on the next pull. Single-target mode suppresses pack-based shifts. [Icy Veins Feral leveling guide](https://www.icy-veins.com/wow-forever/feral-druid-leveling).

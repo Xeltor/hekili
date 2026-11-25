@@ -36,7 +36,7 @@ actions+=/healthstone,use_off_gcd=1,display_below=30,if=toggle.defensives&prot_p
 actions+=/healing_potion,use_off_gcd=1,display_below=40,if=toggle.defensives&prot_pal_combat_defense
 actions+=/divine_shield,display_below=20,if=toggle.defensives&prot_pal_solo_immunity
 actions+=/divine_protection,display_below=20,if=toggle.defensives&prot_pal_solo_immunity
-actions+=/hammer_of_justice,if=prot_pal_attack_target&combat>0&toggle.interrupts&debuff.casting.up&!boss&!target.is_boss&target.within10&!target.outside10&debuff.hammer_of_justice.down
+actions+=/hammer_of_justice,if=prot_pal_attack_target&combat>0&toggle.interrupts&debuff.casting.up&!boss&!target.is_boss&target.within10&!target.outside10&debuff.hammer_of_justice.down&pve_priority_interrupt
 actions+=/seal_of_fury,focus=2,if=prot_paladin_prepare_taunt
 actions+=/judgement,use_off_gcd=1,if=prot_paladin_fury_taunt_ready
 actions+=/swift_judgement,use_off_gcd=1,if=prot_paladin_fury_taunt_ready

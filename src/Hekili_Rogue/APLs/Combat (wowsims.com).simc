@@ -44,8 +44,8 @@ actions+=/deadly_poison,use_off_gcd=1,label=Main Hand,if=combat=0&!rogue_opening
 actions+=/deadly_poison,use_off_gcd=1,label=Off Hand,if=combat=0&!rogue_opening_attack&rogue_pve_target&off_hand.size>0&buff.off_hand_enchant.down&rogue_poison_off=2
 actions+=/instant_poison,use_off_gcd=1,label=Off Hand,if=combat=0&!rogue_opening_attack&rogue_pve_target&off_hand.size>0&buff.off_hand_enchant.down&(rogue_poison_off=1|rogue_poison_off=2&settings.off_hand_poison='auto')
 actions+=/stealth,use_off_gcd=1,if=combat=0&rogue_outdoor_opener&rogue_field_damage&!stealthed.all&combo_points.current<4&((action.cheap_shot.known&rogue_stunnable&(!action.cheap_shot.known|debuff.cheap_shot.down)&(!action.kidney_shot.known|debuff.kidney_shot.down)&(solo|target.is_targeting_player))|((action.ambush.known|action.backstab.known)&main_hand.dagger&rogue_behind)|(action.garrote.known&rogue_durable&rogue_garrote&debuff.garrote.down))
-actions+=/kick,if=combat>0&rogue_pve_target&rogue_engaged&rogue_melee&debuff.casting.up&!stealthed.all&debuff.casting.v2=0
-actions+=/kidney_shot,if=combat>0&rogue_pve_target&rogue_engaged&rogue_melee&debuff.casting.up&rogue_stunnable&!stealthed.all&(!action.cheap_shot.known|debuff.cheap_shot.down)&debuff.kidney_shot.down&(!action.kick.known|cooldown.kick.remains>=debuff.casting.remains|debuff.casting.v2=1)&combo_points.current>=2
+actions+=/kick,if=combat>0&rogue_pve_target&rogue_engaged&rogue_melee&debuff.casting.up&pve_priority_interrupt&!stealthed.all&debuff.casting.v2=0
+actions+=/kidney_shot,if=combat>0&rogue_pve_target&rogue_engaged&rogue_melee&debuff.casting.up&pve_priority_interrupt&rogue_stunnable&!stealthed.all&(!action.cheap_shot.known|debuff.cheap_shot.down)&debuff.kidney_shot.down&(!action.kick.known|cooldown.kick.remains>=debuff.casting.remains|debuff.casting.v2=1)&combo_points.current>=2
 actions+=/healthstone,use_off_gcd=1,display_below=30,if=combat>0&rogue_pve_target&!stealthed.all
 actions+=/healing_potion,use_off_gcd=1,display_below=40,if=combat>0&rogue_pve_target&!stealthed.all
 actions+=/stoneform,display_below=65,if=combat>0&rogue_pve_context&rogue_danger&!stealthed.all&buff.stoneform.down

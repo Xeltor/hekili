@@ -49,6 +49,7 @@ Game\State\Sources\Target.lua
 Game\State\Sources\Talents.lua
 Game\State\Sources\Gear.lua
 Game\State\Sources\Nameplates.lua
+Game\State\Sources\HostileCasts.lua
 Game\State\Sources\Totems.lua
 Game\State\Sources\Pets.lua
 Game\State\Sources\Enchants.lua

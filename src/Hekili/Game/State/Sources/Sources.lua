@@ -111,8 +111,8 @@ end
 
 -- The event registry: event -> handlers, and event -> the units it is registered for (unit events). The event facade
 -- registers them with the client at Start.
-local HANDLERS, UNITS = {}, {}
-S.HANDLERS, S.UNITS = HANDLERS, UNITS
+local HANDLERS, UNITS, ALL_UNITS = {}, {}, {}
+S.HANDLERS, S.UNITS, S.ALL_UNITS = HANDLERS, UNITS, ALL_UNITS
 
 --- Registers `fn(api, t, a1, a2, a3, a4, a5)` for `event`; `unit` ("player" or "target") makes it a unit event
 --- for that unit (the handler still checks a1). Every argument reaches the handler through Plain. Load time only.
@@ -133,6 +133,12 @@ function S.On(event, unit, fn)
             u[#u + 1] = unit
         end
     end
+end
+
+-- A source can require the unfiltered event even when other sources subscribe to specific units.
+function S.OnAllUnits(event, fn)
+    S.On(event, nil, fn)
+    ALL_UNITS[event] = true
 end
 
 -- Events a provider owns while it is inactive: the facade does not register them with the client (spec §3.2).

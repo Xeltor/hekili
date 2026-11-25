@@ -93,7 +93,7 @@ add("divine_shield,display_below=20,if=toggle.defensives&prot_pal_solo_immunity"
 add("divine_protection,display_below=20,if=toggle.defensives&prot_pal_solo_immunity")
 add(
     "hammer_of_justice,if=prot_pal_attack_target&combat>0&toggle.interrupts&debuff.casting.up"
-        .. "&!boss&!target.is_boss&target.within10&!target.outside10&debuff.hammer_of_justice.down"
+        .. "&!boss&!target.is_boss&target.within10&!target.outside10&debuff.hammer_of_justice.down&pve_priority_interrupt"
 )
 
 -- Fury Judgement is a taunt. Only the recovery policy can promote it on an enemy we don't hold.

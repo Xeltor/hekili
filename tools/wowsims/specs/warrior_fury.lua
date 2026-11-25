@@ -52,7 +52,7 @@
 local field = "warrior_field&warrior_attack_target&combat>0"
 local melee = field .. "&target.within5&!target.outside5"
 local interrupt = "warrior_pvp_interrupt|(arms_pve_target&warrior_attack_target&combat>0"
-    .. "&target.within5&!target.outside5&debuff.casting.up&debuff.casting.v2=0)"
+    .. "&target.within5&!target.outside5&debuff.casting.up&debuff.casting.v2=0&pve_priority_interrupt)"
 local burst = "!warrior_field|(" .. melee .. "&(warrior_durable|warrior_nearby_enemies>1))"
 local healingSpent = "(!talent.gore_drinker.enabled|buff.gore_drinker.down)"
 local holdBattle = "(fury_whirlwind_available&fury_overpower_opportunity&fury_overpower_window)"

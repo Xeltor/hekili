@@ -96,7 +96,7 @@ actions+=/moonfire,if=!action.bear_form.known&!action.cat_form.known&(feral_pull
 actions+=/wrath,if=!action.bear_form.known&!action.cat_form.known&(feral_pull|feral_tank_opener)&(!moving|action.wrath.cast_time=0)&feral_spell_range
 actions+=/bear_form,if=feral_primary&!buff.bear_form.up&feral_sustained_form
 actions+=/demoralizing_roar,if=(settings.maintain_demoralizing_roar|feral_defensive_roar)&feral_defensive_roar&debuff.demoralizing_roar.down
-actions+=/feral_charge,use_off_gcd=1,if=target.outside5&(feral_primary&toggle.movement&feral_spell_range&(feral_sustained|feral_pull))
+actions+=/feral_charge,use_off_gcd=1,if=target.outside5&(feral_primary&toggle.movement&feral_spell_range&!pve_reserve_interrupt&(feral_sustained|feral_pull))
 actions+=/elunes_light,use_off_gcd=1,if=action.elunes_light.known&(feral_sustained|feral_pull)&(toggle.movement&target.outside5|target.within5)
 actions+=/enrage,use_off_gcd=1,if=(action.lacerate.known&gcd.remains<=0&(!action.lacerate.known|rage.lo<action.lacerate.cost))&(feral_enrage)&(toggle.movement&target.outside5|target.within5)
 actions+=/faerie_fire,if=(action.faerie_fire.known&debuff.faerie_fire.remains<=0)&(feral_attack_in_range)&(toggle.movement&target.outside5|target.within5)

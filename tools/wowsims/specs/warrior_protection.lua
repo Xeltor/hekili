@@ -52,7 +52,7 @@ local groupedThreat = "((" .. contextual .. melee .. "&" .. targetThreat .. ")|p
 local threatAttacks = "((" .. contextual .. melee .. ")|prot_loose_victim)"
 local safeVictoryRush = contextual .. melee .. "&!" .. packThreat
 local pvpMelee = "warrior_pvp_target" .. melee
-local interruptWindow = "prot_attack_target&combat>0" .. melee .. "&debuff.casting.up"
+local interruptWindow = "prot_attack_target&combat>0" .. melee .. "&debuff.casting.up&pve_priority_interrupt"
 local noMajorDefense = "(!action.last_stand.known|!buff.last_stand.up)&(!action.shield_wall.known|!buff.shield_wall.up)"
 local charge = "prot_contextual&prot_attack_target&combat=0&prot_charge_range"
 

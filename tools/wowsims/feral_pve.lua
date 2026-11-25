@@ -82,7 +82,10 @@ return function(recipe)
         -- Enrage trades armor for rage. In the field use it before contact, with room for the gain.
         addGuard("enrage", "feral_enrage")
         addGuard("elunes_light", "feral_sustained|feral_pull")
-        addGuard("feral_charge", "feral_primary&toggle.movement&feral_spell_range&(feral_sustained|feral_pull)")
+        addGuard(
+            "feral_charge",
+            "feral_primary&toggle.movement&feral_spell_range&!pve_reserve_interrupt&(feral_sustained|feral_pull)"
+        )
         recipe.leveling = {
             "maul,use_off_gcd=1,focus=2,if=(!action.primal_bite.known|action.primal_bite.disabled)&feral_attack_in_range&feral_maul_allowed",
         }

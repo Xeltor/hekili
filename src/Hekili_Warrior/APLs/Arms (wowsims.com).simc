@@ -50,8 +50,8 @@ actions.precombat+=/battle_shout,if=!buff.battle_shout.up
 actions.precombat+=/call_action_list,name=pre_pull_move
 actions=charge,use_off_gcd=1,if=combat=0&warrior_field&warrior_attack_target&warrior_charge_range
 actions+=/auto_attack,use_off_gcd=1,if=combat=0&warrior_start_attack
-actions+=/shield_bash,if=(arms_pve_target&combat>0&warrior_attack_target&target.within5&!target.outside5&debuff.casting.up&debuff.casting.v2=0)|warrior_pvp_interrupt
-actions+=/pummel,if=(arms_pve_target&combat>0&warrior_attack_target&target.within5&!target.outside5&debuff.casting.up&debuff.casting.v2=0)|warrior_pvp_interrupt
+actions+=/shield_bash,if=(arms_pve_target&combat>0&warrior_attack_target&target.within5&!target.outside5&debuff.casting.up&debuff.casting.v2=0&pve_priority_interrupt)|warrior_pvp_interrupt
+actions+=/pummel,if=(arms_pve_target&combat>0&warrior_attack_target&target.within5&!target.outside5&debuff.casting.up&debuff.casting.v2=0&pve_priority_interrupt)|warrior_pvp_interrupt
 actions+=/healthstone,use_off_gcd=1,display_below=30,if=arms_pve_target&combat>0
 actions+=/shield_wall,display_below=25,if=arms_pve_target&combat>0&(!action.last_stand.known|!buff.last_stand.up)
 actions+=/last_stand,use_off_gcd=1,display_below=35,if=arms_pve_target&combat>0&(!action.shield_wall.known|!buff.shield_wall.up)

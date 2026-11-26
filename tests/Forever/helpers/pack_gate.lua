@@ -543,6 +543,7 @@ M.FLICKER = {
     -- INTEG re-measured: batch 5 one rule (L1814; seeds 1-20 on integ/batch5 9a8a95e23, the reading; 21-60 not
     -- re-measured): heldReady 447 -> 443, loOver 2374 -> 428; flicker 0.30 (floor kept: the one rule's 0.31 would
     -- loosen it; forever read 0.29, the 0.30 already at stage 1 e59706ac9, untraced on this arm)
+    -- See M.ARM_FLOORS.default for the independent-world teardown calibration.
     ["Guardian"] = { loOver = 428, flicker = 0.30, retracted = 0, readyShort = 0, heldReady = 443 }, -- 0.77 / 0.91 / 1.03, 0.35 / 0.54 / 0.60
     -- regen phase lane, cause harness: seeded random regen phase per fight (ledger L667) (R6; seeds 1-20 / 21-40 /
     -- 41-60 flicker 0.00 / 0.00 / 0.00, retracted 0.00 / 0.00 / 0.00, readyShort 0 / 0 / 0, heldReady 159 / 156 / 150):
@@ -1266,6 +1267,13 @@ M.FLICKER = {
 -- seed-stream shift is a re-measure with its cause. An arm or label not named is judged on M.FLICKER (bands-drop,
 -- the stress arm, has none).
 M.ARM_FLOORS = {
+    default = {
+        -- Independent-world teardown (3b6a981e5) closes still-active combat before the 30 s gap, ending the prior
+        -- fight on its own clock. Upstream 8a00bd0b9 with only that harness change matches the merge on all 20 seeds:
+        -- heldReady 447, loOver 489. First new hold: seed 4 at 9.4 s, Maul's 20-rage gate waits for swing credit
+        -- (truth 25.5, lo 12). The shipped arm reads 321 and 2 under the original limits in both trees.
+        ["Guardian"] = { heldReady = 447, loOver = 489 },
+    },
     bands = {
         -- L1783 (B4 round 4 trace; batch 3 bands run 22675171a: Arms 0.40, Fury L60 0.36, Fury L24 0.18 /min): a
         -- stale usability answer under the harness's unmeasured G7 delay (L1675 clip) takes the icon back after the

@@ -1268,6 +1268,16 @@ M.FLICKER = {
 -- the stress arm, has none).
 M.ARM_FLOORS = {
     default = {
+        -- Fury L60's outdoor priority skips Sunder Armor on these ordinary mobs. The 20 outdoor fights span
+        -- 7,444 combat polls against upstream's 8,535. Upstream, the premerge fork and the merge each count two
+        -- countdown flips. The shorter outdoor run measures 0.0806/min against upstream's 0.0703/min.
+        ["Fury L60"] = { flicker = 0.09 },
+        -- Fury L24's solo fixture exercises the outdoor priority. With the same current engine, kit, world and
+        -- teardown, the stock upstream list holds 675 times (679 on the upstream runtime), and the outdoor list
+        -- holds 790. Of those, 658 are Heroic Strikes below the stock 40-Rage threshold, versus 13 on the stock list.
+        -- The floor covers each strike's 15-Rage cost. Its reserve for Rend, Overpower and the replaced white swing
+        -- is the outdoor policy's separate eligibility check. Keep the stock limit on the shared row.
+        ["Fury L24"] = { heldReady = 790 },
         -- Independent-world teardown (3b6a981e5) closes still-active combat before the 30 s gap, ending the prior
         -- fight on its own clock. Upstream 8a00bd0b9 with only that harness change matches the merge on all 20 seeds:
         -- heldReady 447, loOver 489. First new hold: seed 4 at 9.4 s, Maul's 20-rage gate waits for swing credit

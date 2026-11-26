@@ -3,7 +3,7 @@
 local gate = require("Forever.helpers.fury_gate")
 
 describe("the headless Fury gates, 20 fights #loop", function()
-    it("Fury solo, level 24, one mob, 20 fights of up to 3 minutes: the first icon against the oracle's", function()
+    it("Fury solo, level 24, first icon against the oracle over 20 single-mob outdoor fights", function()
         -- this branch's run (central fix 21): agreement 0.908, react p90 0, unmatched cost 1.2 per 100, flicker 3.31/min
         -- (oracle 2.16), dps A/B 0.972; before the fix 0.893, 0, 1.8, 4.35, 1.006
         -- unmatched 1.5 -> 0.9, flicker 3.5 -> 1.1 (the world's off hand by rank, pack_gate.lua's Fury L24 row; seeds 1-20 /

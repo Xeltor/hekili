@@ -144,6 +144,9 @@ local function rogue(spec, level, o)
     if o.mainPoison then
         ctl.enchants[0] = { { hasEnchant = true, enchantType = 3, timeLeft = 600000, charges = 50, enchantID = 323 } }
     end
+    -- The fixture's pick reads Primary, including interrupt and defensive ordering.
+    local toggles = H.Hekili.DB.profile.toggles
+    toggles.defensives.separate, toggles.interrupts.separate = false, false
     if not o.defensives then
         H.Hekili:FireToggle("defensives", "off")
     end
@@ -172,6 +175,8 @@ local function rogue(spec, level, o)
         H.Fire("UNIT_SPELLCAST_CHANNEL_START", "target", SECRET, SECRET, 77)
         if o.uninterruptible then
             H.Fire("UNIT_SPELLCAST_NOT_INTERRUPTIBLE", "target")
+        else
+            H.Fire("UNIT_SPELLCAST_INTERRUPTIBLE", "target")
         end
     end
     assert.is_true(H.Hekili.Engine.Subscribe("Primary", function() end))

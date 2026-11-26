@@ -302,7 +302,8 @@ describe("Forever Paladin", function()
                 return math.floor(ld.run(w.abilities[key].spend, e) * 100000 + 0.5) / 100000
             end
             for _, key in ipairs({ "cleanse", "purify" }) do
-                assert.are.same({ 0.08, 0.072, 0.064, 0.0576 }, {
+                -- the fraction as declared; the cost modifiers cut the rounded whole (percent_cost_order_spec.lua)
+                assert.are.same({ 0.08, 0.08, 0.08, 0.08 }, {
                     price(key, {}),
                     price(key, { purifying_power = 1 }),
                     price(key, { purifying_power = 2 }),
@@ -443,7 +444,7 @@ describe("Forever Paladin", function()
         assert.is_true(math.abs(ld.run(w.abilities.holy_strike.spend, e) - 18) < 1e-9)
         assert.is_true(math.abs(ld.run(w.abilities.consecration.spend, e) - 305.1) < 1e-9)
         assert.is_true(math.abs(ld.run(w.abilities.hammer_of_wrath.spend, e) - 425 * 0.6) < 1e-9)
-        assert.is_true(math.abs(ld.run(w.abilities.judgement.spend, e) - 0.06 * 0.9) < 1e-9)
+        assert.is_true(math.abs(ld.run(w.abilities.judgement.spend, e) - 0.06) < 1e-9) -- its cut is the cost modifier
     end)
 
     it(
@@ -867,14 +868,14 @@ describe("Forever Paladin priorities", function()
                 for i, e in ipairs(pe.flat(entries)) do
                     local where = name .. " " .. list .. " " .. i
                     local isList = e.action == "run_action_list" or e.action == "call_action_list" or pe.LINE[e.action]
-                    -- stoneform: the Dwarf racial (Hekili_Shared/Races), rule 13's line for a tank
+                    -- stoneform: the Dwarf racial (Hekili_Shared/Races), rule 13's low-health line for a tank
                     -- use_items is Hekili's `all` (Hekili_Shared/Shared/Items.lua), as in druid_spec
                     local shared = e.action == "use_items"
                         or merged.abilities[e.action] ~= nil
                         or merged.racial[e.action] ~= nil
                     assert.is_true(cls.abilities[e.action] ~= nil or isList or shared, where)
                     for kind, key in (e.criteria or ""):gmatch("(%a+)%.([%w_]+)") do
-                        if kinds[kind] then
+                        if kinds[kind] and not pe.SHARED[key] then
                             assert.is_not_nil(kinds[kind][key], where .. ": no " .. kind .. " " .. key)
                         end
                     end
@@ -918,12 +919,12 @@ describe("Forever Paladin priorities", function()
         assert.are.same({ 2, 2 }, { sof.focus, hs.focus })
     end)
 
-    it("Protection (wowsims.com): retains Stoneform's existing cleanse-only policy", function()
+    it("Protection (wowsims.com): Stoneform follows its health setting and waits out Divine Shield", function()
         line(
             "Protection (wowsims.com)",
             "default",
             "stoneform",
-            "(buff.dispellable_poison.up||buff.dispellable_disease.up)"
+            "health.known&health.pct<=settings.stoneform_health&(!action.divine_shield.known||!buff.divine_shield.up)"
         )
     end)
 

@@ -65,7 +65,15 @@ remembered target slot, keyed by GUID in the open world and by stable ID under t
 meanwhile, or the aura is untracked); `state.active_dot` reads it (§2, "Target swaps on Forever"). The third is the
 target's stable ID (ledger L1734, owner's A, 2026-11-22): `ns.Facade.TargetID()` -> an integer while the target's GUID
 is secret, 0 for a target read plain, nil with no target. It is never a GUID or a stand-in for one. Its one reader is
-`Engine/Sim/State.lua`'s swapped-cast compare (`landsElsewhere`, §2). `tools/check_border.sh` passes exactly two lines
+`Engine/Sim/State.lua`'s swapped-cast compare (`landsElsewhere`, §2). The fourth is the hidden-value enablement
+(ledger L1805, the owner's "yes" 2026-11-23: "a single enablement check ... health and power reads can break
+independently from the cdm reads"): `ns.Facade.Known(kind, powerType)` -> whether that kind's hidden values answer now,
+each kind on its own (`Facade.KNOWN_HEALTH` 1: the player's health estimate is a reading, a plain read, a live band or
+one held after a re-prime, false when it reads full; `KNOWN_POWER` 2: that power type read plain or its band live,
+false when the model alone answers; `KNOWN_AURA` 3: the hidden-value library's aura kind, by its capability report (asked with no spec, so it follows the library's shared bar self-test: a failed self-test turns `aura.known` off with health and power, while the Cooldown Manager's presence reads still stand),
+apart from the core's own Cooldown Manager reader). Its readers are the APL conditions `health.known`,
+`<power>.known` (the resource metatable) and `aura.known` (`Engine/Sim/State.lua`); the translator guards every
+generated line that reads the player's health with `health.known` (§6). `tools/check_border.sh` passes exactly two lines
 naming it there, both inside `landsElsewhere` and each exactly the cast's pin or the compare, so the ID never feeds a
 GUID field; it fails a read elsewhere in State.lua, a third read, a change to either line, and any other core file or
 pack that names `TargetID`. Target navigation uses the remembered slot through `Facade.TargetMemoryKey` and
@@ -240,7 +248,7 @@ What a content addon may use, and nothing else (`tests/boundary_spec.lua` enforc
   calls on the object they return (abilities, auras, hooks, settings, packs, ...). `NewClass` (`Engine/Schema/Spec/Kits.lua`)
   returns the class's kit, or nil on another class (the pack then returns). The kit holds every ability, aura and talent;
   each entry of `specs` is one talent tree's spec: `{ key, name, tree (1-3), icon, role, ranged, package, unsupported,
-  fillWindow }` (`package`: the default priority's name; `unsupported`: no priorities on Forever, its displays off and
+  fillWindow }` (`role`: "attack", "tank" or "healer", `state.role` while the spec is active; `package`: the default priority's name; `unsupported`: no priorities on Forever, its displays off and
   its page a notice; `fillWindow`: a resource key, every forecast window of the spec reaching at least the time that
   pool takes to fill from empty at its combined rate, `state.ForecastWindow`). A spec reads the kit through its metatable and keeps its own settings and options. Ids are the core's:
   `100000 + client class id x 10 + slot` (`ns.TreeSpecID`, `Engine/Schema/Trees.lua`; slot 0 the kit, 1..n the specs
@@ -254,6 +262,12 @@ What a content addon may use, and nothing else (`tests/boundary_spec.lua` enforc
   default and `sim` must be candidates (else RegisterSetting errors), the spec's page shows it as a dropdown, `/hekili
   set spec <key> <candidate>` sets it, and a priority reads it as `settings.<key>='<candidate>'` (a quoted string
   passes through the script language as is: `Engine/Sim/Scripts.lua` never extends a resource name inside quotes).
+  A defensive line's player-health threshold (owner L1808, "Setting per line") is a setting whose option comes from
+  `spec:HealthOption(ability)` (`ns.HealthOption`, `Engine/Schema/Spec.lua`): a 1-100 slider named after the ability
+  (the client's name, read when the options open); the line reads `health.pct<=settings.<action>_health`. Shared
+  content registers a setting for every spec with `shared:RegisterSetting(key, value, option)` (and
+  `shared:HealthOption`): kept in `ns.sharedSettings` and registered on each spec when `NewClass` builds the kit (the
+  shared content loads first).
 - `Hekili.State` (the simulation's `state`) and `Hekili.Class` (the registry the class file fills).
 - `Hekili.Client`: the game client as an addon may read it, the same table as `ns.Facade`. Content never names a WoW
   global (`tools/check_api_reads.sh`).
@@ -428,10 +442,13 @@ x (h - p) / h, h the facade's target health, 0 at or below p) answer its live es
 `GetGreatestTTD` (`fight_remains`, `longest_ttd`: the longest among the enemies) and `GetLowestTTD` answer it with one
 enemy; with more they are unknown (only the target is tracked). One or several follows the enemy count's change after
 it held one update, read before the token plates' hold of a fall; it is the count `active_enemies` starts from, so
-with plates off or the others outside the radius it is one. Nothing is kept across a target change: the library
-answers `priming` only then (a re-prime of the same unit keeps answering), and after it nothing before 1.5 s of the
-new target's loss, so the last target's time would bridge to no answer and is no fact about this one (B8's 0.5 s keep
-went with vendor-libs, L1730).
+with plates off or the others outside the radius it is one. The core keeps nothing across a target change (B8's
+0.5 s keep went with vendor-libs, L1730): it reads the library's answer for whatever the target is now. The library
+(minor 5) keeps a past target's estimate on that mob's nameplate (its "life", fed at 5%) and hands it back when the
+mob is targeted again, so switching back answers at once; a mob never targeted before reads nothing before 1.5 s of
+its loss. Lives are on by default for every owner (`SetRecent`, Hekili leaves it on), at most four, moved only on a
+plain `UnitIsUnit` true between the target and a shown plate (a secret answer links nothing). `Get` reads nil from the
+target change's own event on (LibHiddenValues minor 10); the core's readers all pass only a `live` state.
 
 The library forgets the last target itself (LibTimeToDie minor 3): a new target reads unknown until it loses health,
 and from then the last target's rate can only lengthen the first answers (a threshold factor learned through
@@ -442,12 +459,16 @@ Minor 4 answers a new stream (a pull, a swap, a re-target) only once its loss sp
 fit: a big first hit is no rate (live, minor 2 read 3.63 s at 72%, then 52 s). The core still reads a live answer whose
 reason is `seed` as unknown (owner L1742; shortcut): a burst then a far slower fall seeds at about half the true time
 for 2 s (the fit after it reads 0.74), and with the rule removed the Fury swap set's flicker rose 0.35 -> 0.40/min
-(vendor-libs fight runs, L1736). The rule would also blank a seed after a fit (Fable I1, L1756); minor 4 gave none in
-the probes, and the unknown of about a second after a sudden speed-up is the library's own (its README: up to 1.5 s on
-fast trash). Pinned through the core in the same spec.
+(vendor-libs fight runs, L1736). The rule blanks a seed only while its life (the id `Get` returns) has given no non-seed
+answer: the core remembers five such lives in place by recency, a life shown again written again, so the one dropped
+is the least recently shown (the library keeps its four most recent past targets' lives, plus the target's). Minor 5 can step from a fit, a stall or a prior to a seed and back, on a mob targeted again and after a
+stall on one never left (the ttd arm: Arms seed 17, Feral seed 20); it keeps showing, where the blank read known,
+unknown, known (vendor-libs-next I1). The unknown of about a second after a sudden speed-up is the library's own (its
+README: up to 1.5 s on fast trash). Pinned through the core in the same spec.
 
-Unknown is 3600: any other state, a seed, a target that is not plainly attackable (a secret answer included), several enemies,
-no library. A refused track is
+Unknown is 3600: any other state, a seed before its life's first other answer, a target that is not plainly attackable (a secret
+answer included), several enemies,
+no library, or a LibHiddenValues older than minor 10 (`lhv-old`, LibTimeToDie's `LHV_MIN`). A refused track is
 asked again at most once a second. `Hekili.bandOff` and disable release the track. Hints, numbers only: the
 highest execute line present goes to `HintBelow` (threshold only), out of combat at the spec's activation,
 `GROUP_ROSTER_UPDATE` and the combat's end. The player's own line comes from its pack: an ability's `healthGate` while
@@ -595,6 +616,45 @@ by pushbacks) and at most 0.5 s after it; a broken channel, one whose times were
 channel's, whose start was secret) runs nothing. Both write `modelled` samples no avoid
 undoes.
 
+**The point fact** (L1832). A cast whose `now` gains a counter the client answers plain in combat (a resource with
+no regen, swing pay or decay: the combo points, a builder's `gain(1, "combo_points")`, which a pack declares in `now`
+beside its `handler`'s) is settled by that resource's plain reads, not by the rows' timing (`Families/Now.lua`): against its last plain read
+strictly before the cast's frame (`I.SAME_FRAME`; live, a builder's point never came before its success), a read after
+the cast showing it risen (by any amount: a crit's extra point counts) proves the cast landed, and one `PT_AVOID`
+(0.3 s, the owner's two Feral captures: 33 landed builders, the latest point 0.119 s after the success) or more after
+it showing no rise proves it avoided. The cast's own `Obs.Avoided` waits for the fact, which is decided at the resource's read (poll 1), before
+the drain's bands and usable answers; a refund decided a drain late keeps the slot's state after the cast's spend plus
+the share as a floor (an answer since only bounded it). Landed:
+the held avoid was another's, nothing is undone or refunded, and each target record the `now` wrote re-opens at the
+fact's time with its expiry kept (the avoid's SPELL_MISSED already went to Hekili, whose missable hook drops a record
+applied at the cast's stamp); an avoid paid to the cast after the fact decided (live, the normal order: the point in
+the success's frame, the rows about 0.47 s later) re-opens them the same way, at the row. Avoided: the undo and refund
+run as an avoid's, with no reaction when no avoid row of its own came. Silent, so the rows' verdict stands: at the
+resource's maximum before the cast, no read old enough, a read that fell, a secret read (the target-bound read
+substitutes 0), a target swap or death, no plain read past `PT_AVOID` by the settle, or the next cast.
+Finishers predict no gain in `now` and stay with the rows (a missed finisher keeps its points in wowsims: a later fact).
+
+**The refund guard** (L1832, owner 2026-11-25 "guard every refund"). The server refunds an avoided cast at its success;
+the belief books it at the avoid's row or the point fact. While a refund on a cost slot is unsettled (the latest
+refundable cast's point fact pending, or its own avoid row still inside the cast ticket's window, `I.Log.LandWindow(1)`
+never under `I.Melee.CAST_WINDOW`), `I.RefundPending` holds every regen measurement of that slot: an exact pin
+calibrates nothing, and a swing-paid slot's pin adds nothing to the swing-scale window (`Families/Resources.lua` pin).
+A refund booked after a pin since its cast leaves that pin measuring nothing (`pinValid`). Band crossings need no
+guard: they measure band values only, and the cast's booked spend and the late refund each start the pair over.
+
+**A gain that may not come** (L1832, cp-fact-4). A `now` declares a gain with a chance strictly between 0 and 100% with
+`mayGain(amount, resource)` (Rogue's Relentless Strikes below 100%): nothing is booked (owner L1397), and the slot's
+exact pins measure no regen across a window whose start is at or before the cast (`I.ResourceMayGain`; inclusive, so a
+pin in the cast's own frame starts no measuring window). Without it the next pin pair learned an unseen proc as regen
+(Assassination 10 to 11.5-13 a second, then a finisher shown ready while short). The swing scale's window does not
+honour it yet (no pack declares one on a swing-paid slot). Band crossings measured 10 a second on the bands arm without it.
+Shortcut: a chance gain declared on a cast every 1 s (`I.PIN_GAP`) or less would skip every window, so that slot's regen
+would stop learning and keep its last value; no pack does (Assassination skips 25% of its windows).
+
+**What only a landing gains.** A refundable cast's `now` gain to its own cost slot (Rogue's Relentless Strikes on a
+finisher, counted only when certain: 100%, never its expected value) goes back out on its avoid, as no spend
+(`I.Unrefund`), before the refund; an ability with its own `onAvoid` takes back its own gain there.
+
 **A GCD modifier.** `spec:RegisterGcdMod({ aura = <key>, pct = <n>, spells = { <ids> } | nil })` (aura audit C12;
 the cost modifier's shape and scope: `spells` nil is every ability, a listed ID matches the ability's `id` or a `copy`
 rank) makes a spell-kind GCD (1 + pct) as long while the player's aura is up, before the floor, as wowsims's
@@ -646,6 +706,7 @@ The optional `upkeep` entry identifies a personal buff by action and spell ranks
 missing, a combat-only Primary can show it once the rotation selects it as the next usable action.
 Version 19 adds `Shared:RegisterPriorityInterrupts`, which registers a Forever NPC and spell catalog and the
 state expressions that use it. Interrupt actions declare their range and stopping requirements in the class packs.
+Version 20 adds shared settings, per-spec health sliders and ability variants that inherit the original spell’s keybind.
 `tests/Forever/content_spec.lua` checks the TOCs and the constant agree.
 
 Protection Warrior and Paladin supply the observer with their class’s range probes and spells that can recover
@@ -690,6 +751,23 @@ value; a legacy custom priority stays the choice of the active spec, or of the f
 is unsupported, and custom priorities bound to the legacy id are rebound to it. Exports carry the spec as a share key
 `"<TOKEN>:<key>"` (`"WARRIOR:fury"`), which the importer resolves to this session's id (another class's key is kept
 as the string until that class logs in).
+
+**Defensives and interrupts** (owner, L1808: "Defensives and interrupts should always be categorized in defensive and
+interrupt displays"). The Defensives and Interrupts toggles are separate by default (`Options.lua` defaults), so an
+ability on either toggle shows only in its own display. A spell one line casts for damage and another as a defensive or
+a kick gets a second key: the ability field `variantOf = "<original key>"` registers the same spell under its own key
+and toggle; the original keeps the spell's IDs, its name and the belief's record (`Spec/Abilities.lua`,
+`Tracked.lua`), the options list shows the variant with its toggle's name, and the pack sets each key's cooldown in
+the other's handler (Warlock `death_coil_defensive`, Mage `ice_barrier_defensive`, Shaman `earth_shock_interrupt`).
+A bar holds the spell once, as the original, so the variant joins the original's `bind`: it shows the original's
+keybind and glows its button.
+A separate display whose active priority has no line for it is not walked (`Engine/Sim/Core.lua` `packHasLine`, read
+every update: an entry, not switched off, whose ability's toggle, the player's per-ability choice first, is the
+display's filter and which the player has not disabled; the engine's internal verbs, `use_items` among them, count for
+Cooldowns and for a toggle a player gave an item), so the Interrupts display costs nothing until a priority has a kick;
+it publishes an empty set, as with its toggle off. A line `health.known` guards whole (`ns.HealthGuarded`, the
+detector's sense; the script's `NeedsHealth`) counts only while `state.health.known`: with no health reading the
+Defensives display is not walked either.
 
 ## 4. `Hekili.Virtual`
 
@@ -813,14 +891,23 @@ wider each side, logged only once the belief read that max plain. With no live b
 the library.
 
 **Player health.** The client hides the player's own health (`UnitHealth`/`UnitHealthMax("player")` secret in combat, owner L1461,
-and out of it on live, L1710; the headless fake client still answers plain out of combat): `health.pct`,
+and `UnitHealth` out of it too on live, L1710, as the headless fake client answers): `health.pct`,
 `health.current`, `health.deficit` read the plain value whenever the client answers one and, while the answer is secret, the hidden-value library's live 1% band
 (`Game/State/Sources/Bands.lua`, channel 0): its middle, so a whole-number threshold answers as the true value does
 (`Game/State/Families/Player.lua`; a plain read of the same drain is exact and wins). With no live band (the library
 absent, priming, unavailable, `Hekili.bandOff`) the secret answer reads full, never a stale read from before the pull,
-and the facade's row never hands the core a secret. A custom line reading it gets no load warning (FABLE-FOR-OWNER 7);
-the translator still omits every wowsims entry reading `currentHealthPercent` or `currentHealth` (its rule 23, owner
-L1462).
+and the facade's row never hands the core a secret. A band lost while its watch still works (`I.bandOK`: a re-prime
+after values that moved on every frame) holds its last reading for `I.HEALTH_HOLD` (1 s from the last drain it was
+live; owner "Hold last reading", L1805), then reads full; `I.healthHolds` and `I.healthSnaps` count both. `health.known`
+(Facade.Known, §1) is true exactly while the estimate is a reading. One check decides whether a line reads the
+player's health (`health.<field>`, `stat.health`, `stat.health_pct`, `stat.maximum_health`, `group_health`,
+`raid_health`, `at_risk`) without `health.known&` guarding its whole condition
+(first, the rest one group or free of a top-level `|`): `ns.HealthUnguarded` (`Engine/Sim/AplThresholds.lua`). A custom
+priority's line that does is warned once a session at load, naming the priority, list and line (`Hekili:LoadScript`,
+`Hekili:Print`; owner L1808: "yes add the health.known warning but dont for the others since we model those": a power
+line reads the model, no warning); the translator, which loads the same file, keeps every wowsims entry reading
+`currentHealthPercent` or `currentHealth` under `health.known&` (its rule 23, owner L1805) and refuses any emitted line
+that fails the check.
 Classic also renders health cues through the client's percentage curves. A player cue with a positive
 `displayPlayerFloor` uses a measured fraction for the forecast. A `display_below=100` line can display
 through full health, with WoW applying the ability's minimum in the frame.
@@ -1036,7 +1123,8 @@ show in two slots when a held slot's icon is the next slot's new icon.
 
 Every piece of text a player sees is `L["English text"]`. The key is the English itself. Each addon with text is its
 own AceLocale-3.0 app (`Libs/AceLocale-3.0`, Ace3 Release-r1403), named after its folder: the core's table is `ns.L`
-(`local L = ns.L`), a pack's `local L = Hekili:GetLocale("Hekili_<Class>")`. Separate apps keep a pack's strings out
+(`local L = ns.L`), a pack's `local L = Hekili:GetLocale("Hekili_<Class>")`. The shared content's is `Hekili_Shared` (L1808: the
+Healthstone's and the healing potion's names while the client has not cached their item). Separate apps keep a pack's strings out
 of the core (core-is-generic) and stop one key meaning two things (the core's "Combat" and Rogue's spec).
 
 - **The locale block.** `Locales/enUS.lua` loads first: written by `tools/locales.py`, every key `L[key] = true`

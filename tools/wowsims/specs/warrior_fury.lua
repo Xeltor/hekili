@@ -132,7 +132,8 @@ return require("tools.wowsims.warrior_dps")({
         cleave = "!warrior_field",
         reckless_swings = "warrior_attack_target&(!warrior_field|(warrior_reckless_safe&" .. healingSpent .. "))",
         bloodrage = "!warrior_field|(warrior_field_bloodrage_safe&" .. healingSpent .. ")",
-        berserker_rage = "!warrior_field|(" .. field .. "&rage.lo<=25&" .. healingSpent .. ")",
+        -- Recover when below a Cleave's 25 Rage, reusing that exact observation threshold.
+        berserker_rage = "!warrior_field|(" .. field .. "&rage.lo<25&" .. healingSpent .. ")",
     },
     leveling = {
         "sunder_armor,if=!warrior_field&!warrior_pvp_target&warrior_attack_target&!action.bloodthirst.known&debuff.sunder_armor.stack<5",
@@ -142,9 +143,12 @@ return require("tools.wowsims.warrior_dps")({
         { before = "call_action_list", line = "pummel,if=" .. interrupt },
         {
             before = "call_action_list",
-            line = "healthstone,use_off_gcd=1,display_below=30,if=arms_pve_target&combat>0",
+            line = "healthstone,use_off_gcd=1,display_below=30,if=!health.known&arms_pve_target&combat>0",
         },
-        { before = "call_action_list", line = "healing_potion,use_off_gcd=1,display_below=40,if=" .. field },
+        {
+            before = "call_action_list",
+            line = "healing_potion,use_off_gcd=1,display_below=40,if=!health.known&" .. field,
+        },
         { before = "call_action_list", line = "victory_rush,focus=1,if=" .. melee },
         {
             before = "call_action_list",

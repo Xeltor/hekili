@@ -735,16 +735,25 @@ describe("the headless loop's flicker counter (loop.flips)", function()
         assert.are.equal(1, loop.flips(seq, 4, { "a", "c", "a", false }))
     end)
 
+    it("counts an icon -> empty -> icon blip: an empty slot is no press of it (L1791)", function()
+        local blank = { "a", false, "a", "a" } -- an empty slot and "no press" are both false
+        assert.are.equal(1, loop.flips(blank, 4, { false, false, false, false }))
+        assert.are.equal(1, loop.flips(blank, 4, { false, "c", false, false }))
+        assert.are.equal(1, loop.flips(blank, 4, { {}, {}, {}, {} })) -- a replay's sets of casts
+        assert.are.equal(0, loop.flips(blank, 4, nil, { [2] = "aura", [3] = "press" })) -- each poll a fact
+    end)
+
     it("takes a replay's set of casts per tick: B cast before the next tick is excused, another cast is not", function()
         assert.are.equal(0, loop.flips(seq, 4, { {}, { c = true, b = true }, {}, {} }))
         assert.are.equal(1, loop.flips(seq, 4, { {}, { c = true }, {}, {} }))
         assert.are.equal(1, loop.flips(seq, 4, { {}, {}, { b = true }, {} })) -- cast after we flipped back
     end)
 
-    it("excuses a flip whose change follows a fact (flicker.changes), unless either poll is stale (L1762)", function()
+    it("excuses a flip whose change and return each follow a fact, neither stale (L1762, L1791)", function()
         local by = {}
-        assert.are.equal(0, loop.flips(seq, 4, nil, { [2] = "aura" }, by))
+        assert.are.equal(0, loop.flips(seq, 4, nil, { [2] = "aura", [3] = "press" }, by))
         assert.are.same({ aura = 1 }, by)
+        assert.are.equal(1, loop.flips(seq, 4, nil, { [2] = "aura", [3] = false })) -- the change's fact alone
         assert.are.equal(1, loop.flips(seq, 4, nil, { [2] = false, [3] = "press" })) -- the return's fact alone
         assert.are.equal(1, loop.flips(seq, 4, nil, { [2] = "stale" }))
         assert.are.equal(1, loop.flips(seq, 4, nil, { [2] = "aura", [3] = "stale" })) -- taken back by a stale answer
@@ -827,4 +836,101 @@ describe("the headless loop's verdict truth check (loop.verdictTruth)", function
         assert.is_true(loop.auraUp(mob, { 12, 11 }, 9.9) and not loop.auraUp(nil, { 11 }, 1))
         assert.is_true(loop.VERDICT_ARM["viewer-swap"] and not loop.VERDICT_ARM["viewer-buffs"])
     end)
+end)
+
+-- L1793: a replay's lines of one wowsims timestamp sit replay.EPS (1 us) apart; in game they are one client frame
+describe("the headless loop's client frames, one per wowsims timestamp (L1793)", function()
+    local headless = require("Game.harness.headless")
+    local scenarios = require("Game.harness.scenarios")
+    local real = headless.frame
+    after_each(function()
+        headless.frame = real
+    end)
+    local function near(times, x)
+        for _, f in ipairs(times) do
+            if math.abs(f - x) < 1e-9 then
+                return true
+            end
+        end
+        return false
+    end
+
+    it("feeds lines 1 us apart as one frame, after the later; a real frame apart as two (loop.feed)", function()
+        local times = {}
+        headless.frame = function(_, t)
+            times[#times + 1] = t
+        end
+        local s = { n = 3, t = { 1.000001, 1.000002, 1.5 }, ev = { "A", "B", "C" }, a1 = {}, a2 = {}, a3 = {} }
+        s.a4, s.a5 = {}, {}
+        local obs = {
+            s = s,
+            step = function()
+                return 1, 3
+            end,
+        }
+        loop.feed({ ctl = {}, Fire = function() end }, obs, 2, 0)
+        assert.are.same({ 1.000002, 1.5 }, times)
+    end)
+
+    it(
+        "walks lines 1 us apart into one frame, one 16 ms on into its own, one 1 us before a decision into its cycle",
+        function()
+            local stub = {
+                character = function()
+                    return { level = 60, power = { type = 1, token = "RAGE", max = 100 } }
+                end,
+                resolve = function()
+                    error("no press in a replay")
+                end,
+                usable = function()
+                    return {}
+                end,
+                uptime = function()
+                    return {}
+                end,
+                gain = function()
+                    return 0
+                end,
+                WORLD = { level = 60, max = 100, mobHealth = 1e9 },
+            }
+            local L = loop.new(stub)
+            local R = {
+                pull = 3,
+                duration = 6,
+                decisions = { { t = 3.3, key = "a", gcd = true }, { t = 5.1, key = "b", gcd = true } },
+            }
+            local lines = { 4.050001, 4.050002, 4.55, 4.566, 5.1 - 1e-6 } -- world time: a bag count's row each
+            function R.world(wo, seed)
+                local W = scenarios.world(wo, seed)
+                for n, at in ipairs(lines) do
+                    W.at(at, function()
+                        W.emit({ kind = "item", src = W.ents[1], item = 6948, count = n })
+                    end)
+                end
+                return W
+            end
+            function R.next()
+                return false
+            end
+            local times, base = {}, nil
+            headless.frame = function(H, t)
+                if H == L.us then
+                    times[#times + 1] = t
+                end
+                return real(H, t)
+            end
+            loop.replay(L, R, {
+                on = function(_, steps)
+                    base = base or steps[1].base
+                end,
+            })
+            assert.is_number(base)
+            local seen = {}
+            for i, at in ipairs(lines) do
+                seen[i] = near(times, base + at)
+            end
+            assert.are.same({ false, true, true, true, false }, seen)
+            assert.is_true(near(times, base + 5.1)) -- the decision's cycle
+        end
+    )
 end)

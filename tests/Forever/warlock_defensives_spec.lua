@@ -7,9 +7,12 @@ local heals = { 6789, 689 }
 describe("Forever Warlock defensives", function()
     for _, build in ipairs(builds) do
         it(build .. " chooses instant emergency healing and conserves Death Coil during a stable pull", function()
-            assert.are.equal("death_coil", field.pick(field.warlock(build, 42, heals, { health = 390 })))
+            assert.are.equal("death_coil_defensive", field.pick(field.warlock(build, 42, heals, { health = 340 })))
             assert.are.equal("drain_life", field.pick(field.warlock(build, 42, heals, { health = 650 })))
-            assert.are.equal("death_coil", field.pick(field.warlock(build, 42, heals, { health = 550, moving = true })))
+            assert.are.equal(
+                "death_coil_defensive",
+                field.pick(field.warlock(build, 42, heals, { health = 550, moving = true }))
+            )
             assert.is_nil(field.pick(field.warlock(build, 42, heals, { health = 300, defensives = false })))
         end)
     end
@@ -23,7 +26,7 @@ describe("Forever Warlock defensives", function()
 
     it("uses an in-range Coil when Drain Life cannot reach, and holds both on a fresh enemy", function()
         assert.are.equal(
-            "death_coil",
+            "death_coil_defensive",
             field.pick(field.warlock("Destruction", 42, heals, { health = 550, range = 25 }))
         )
         assert.is_nil(field.pick(field.warlock("Destruction", 42, heals, { health = 300, idleTarget = true })))
@@ -35,7 +38,7 @@ describe("Forever Warlock defensives", function()
         assert.is_nil(field.pick(h))
         local cues = h.Hekili.Engine.Output.Primary.healthCues
         assert.are.equal(2, cues.n)
-        assert.are.same({ "death_coil", 40 }, { cues[1].action, cues[1].percent })
+        assert.are.same({ "death_coil_defensive", 40 }, { cues[1].action, cues[1].percent })
         assert.are.same({ "drain_life", 65 }, { cues[2].action, cues[2].percent })
         h.Hekili:FireToggle("defensives", "off")
         field.pick(h)
@@ -43,12 +46,12 @@ describe("Forever Warlock defensives", function()
     end)
 
     it("routes survival recommendations to a separately enabled Defensives display", function()
-        local h = field.warlock("Affliction", 42, heals, { health = 390 })
+        local h = field.warlock("Affliction", 42, heals, { health = 340 })
         local engine = h.Hekili.Engine
         engine.settings.toggles.defensives.separate = true
         assert.is_true(engine.Subscribe("Defensives", function() end))
         assert.is_nil(field.pick(h))
-        assert.are.equal("death_coil", engine.Output.Defensives.recs[1].actionName)
+        assert.are.equal("death_coil_defensive", engine.Output.Defensives.recs[1].actionName)
         h.ctl.unitHealth.player = 1000
         h.Fire("UNIT_HEALTH", "player")
         field.pick(h)
@@ -65,7 +68,7 @@ describe("Forever Warlock defensives", function()
         local out = engine.Output.Defensives
         assert.are.equal(0, out.count)
         assert.are.equal(2, out.healthCues.n)
-        assert.are.equal("death_coil", out.healthCues[1].action)
+        assert.are.equal("death_coil_defensive", out.healthCues[1].action)
         assert.are.equal("drain_life", out.healthCues[2].action)
     end)
 

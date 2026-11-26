@@ -205,6 +205,7 @@ local function read(api, i)
     end
     return nil, false
 end
+U.ReadGUID = read
 
 -- Binds token i to its live GUID, else unbinds it; returns whether the GUID was secret.
 local function rebind(api, i, t)

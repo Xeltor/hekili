@@ -47,7 +47,8 @@ local UNKNOWN, NOT, YES, SHORT = -1, 0, 1, 2
 -- `liftE/L/H[r]` and `liftT[r]`: how far a rung lifted a swing-paid slot's est, lo and hi (our cast's success, a usable
 -- answer, a flip's pin: the game held more than we believed) and the latest lifting rung's time; a landed swing at or
 -- before it pays that much less (owe, I.On(Obs.Swing)). `liftRec[r]`: the credit record that paid from it (its crit
--- may pay the rest).
+-- may pay the rest). `emptyT[r]`: when our cast's `now` last took the slot's top to 0 (it spent the whole pool: a
+-- spend-all, I.Emptied); a swing at or before it was in that pool, so its credit pays nothing (L1793).
 -- `capT[r]`: when a short answer last reached the floor since our last spend; until the next fold moves the clock a read
 -- stands on a ceiling, not a measurement (VS.Power's `capped`), and a poll still short marks it again; a usable answer
 -- above the top (the same poll's, a dearer ability) contradicts the short one and ends it. `capB[r]`: false
@@ -126,6 +127,7 @@ local R = {
     pinDelta = {},
     pinValid = {},
     pinOwn = {},
+    mayT = {}, -- the latest cast's time whose `now` declared a gain that may not come (mayGain, I.ResourceMayGain)
     ownT = {}, -- our latest cast gain's time (ownGain), and what we gained within I.GAIN_SHOWS of it
     ownV = {},
     swFrom = {},
@@ -160,6 +162,7 @@ local R = {
     liftH = {},
     liftT = {},
     liftRec = {},
+    emptyT = {},
     liftCE = {},
     liftCL = {},
     liftCH = {},
@@ -531,11 +534,12 @@ I.OnBuild(function(def, now)
         R.dev[r], R.scale[r], R.spread[r] = 0, 1, I.REGEN_SPREAD
         R.pinT[r], R.pinV[r], R.pinDelta[r], R.pinValid[r], R.gain[r], R.spends[r] = 0, 0, 0, false, 0, 0
         R.pinOwn[r], R.pinSkip[r], R.swFrom[r], R.skipFrom[r], R.skipTo[r] = false, false, 0, 0, 0
+        R.mayT[r] = -1e9
         R.swAccG[r], R.swAccT[r] = 0, 0
         R.ownT[r], R.ownV[r], R.castGain[r] = -1e9, 0, 0
         R.crossT[r], R.crossLo[r] = -1e9, 0
         R.pinN[r], R.pinErr[r] = 0, 0
-        R.liftE[r], R.liftL[r], R.liftH[r], R.liftT[r], R.liftRec[r] = 0, 0, 0, -1e9, 0
+        R.liftE[r], R.liftL[r], R.liftH[r], R.liftT[r], R.liftRec[r], R.emptyT[r] = 0, 0, 0, -1e9, 0, -1e9
         R.liftCE[r], R.liftCL[r], R.liftCH[r] = 0, 0, 0
         R.sinceShort[r], R.sinceShortEst[r], R.sinceYes[r], R.sinceSnap[r] = math.huge, 0, false, false
         R.raised[r] = 0
@@ -1085,11 +1089,15 @@ local function pin(r, v, width, t, origin, event, mid)
                     calibrate(r, g / d, t, R.pinA[r], R.pinB[r], R.pinT[r], Obs.Usable)
                     R.swAccG[r], R.swAccT[r] = 0, 0
                 end
-                -- an interval holding a gain besides the swings (our cast's, a refund, a periodic or decay step, a
-                -- hit taken, a crit's extra), or a hit whose damage is unknown, adds nothing: the scale measures
-                -- swings only; the instant keeps that verdict for its re-estimates
-                R.pinSkip[r] = R.pinOwn[r]
-                if R.pinOwn[r] then
+                -- an interval holding a gain the belief knows besides the swings (our cast's, a refund, a periodic or
+                -- decay step, a hit taken, a crit's extra), or a refund it has not booked yet (I.RefundPending, L1832),
+                -- adds nothing: the scale measures swings only (the old per-interval filter refused such intervals);
+                -- the instant keeps that verdict for its re-estimates
+                -- shortcut: a possible gain (I.ResourceMayGain) is not held out of the swing scale's window: no pack
+                -- declares one on a swing-paid slot; add `R.mayT[r] >= R.pinT[r] - 1e-6` here and below if one does
+                local own = R.pinOwn[r] or I.RefundPending(r, t)
+                R.pinSkip[r] = own
+                if own then
                     R.skipFrom[r], R.skipTo[r] = R.pinT[r], t
                 else
                     if R.swAccT[r] == 0 then
@@ -1097,7 +1105,7 @@ local function pin(r, v, width, t, origin, event, mid)
                     end
                     R.swAccG[r], R.swAccT[r] = R.swAccG[r] + vm - R.pinV[r] - R.pinDelta[r], R.swAccT[r] + dt
                 end
-            elseif R.pinOwn[r] then
+            elseif R.pinOwn[r] or I.RefundPending(r, t) then
                 R.pinSkip[r] = true -- a known gain between pins of one instant: its re-estimate is none of the window's
             elseif R.swAccT[r] > 0 and not R.pinSkip[r] then
                 R.swAccG[r] = R.swAccG[r] + vm - R.pinV[r] - R.pinDelta[r]
@@ -1105,7 +1113,18 @@ local function pin(r, v, width, t, origin, event, mid)
         else
             R.swAccG[r], R.swAccT[r], R.pinSkip[r] = 0, 0, false
         end
-    elseif measures and R.pinValid[r] and dt >= I.PIN_GAP then
+    elseif
+        measures
+        and R.pinValid[r]
+        and dt >= I.PIN_GAP
+        and not I.RefundPending(r, t)
+        and R.mayT[r] < R.pinT[r] - 1e-6
+    then
+        -- (L1832) a refund unsettled on the slot: the pin holds what the server gave back, the belief not yet; a gain
+        -- a cast may have given at or after the window's start (I.ResourceMayGain; a pin at its own stamp included:
+        -- one frame per event time) is in the pin or not, unseen: either way the window measures nothing
+        -- shortcut: a chance gain declared on a cast every <= PIN_GAP (1 s) skips every window, so the slot's regen stops
+        -- learning and keeps its last value (Assassination skips 25%); bound the skipped share if a pack declares one
         local gain = vm - R.pinV[r] - R.pinDelta[r]
         local m = R.shaped[r] and gain or gain / dt -- nonzero: dt >= PIN_GAP (1 s)
         calibrate(r, m, t, R.pinA[r], R.pinB[r], R.pinT[r], Obs.Usable)
@@ -1750,14 +1769,16 @@ end
 
 -- Slot r's band moved to [lo, hi) at bt. A crossing: its low end rose to the top of the last one by continuous regen,
 -- so the value then was the new low end within a frame. Two at least I.PIN_GAP apart with no change we know of between
--- measure the regen (calibrate, never pin). Anything else that moves the low end (a jump, a fall, full) starts over;
+-- measure the regen (calibrate, never pin). A rise stamped at or within I.BAND_MARGIN after a change we know of is that
+-- change shown (a gain inside the cell: the value is not the low end; L1794), so it starts over too, as does anything
+-- else that moves the low end (a jump, a fall, full);
 -- a band whose top alone moved is neither. So a percent band (widened: the ends never meet) and regen past a cell
 -- between two stamps (10 a second polled less often than every point) are never measured. Allocates nothing.
 local function crossing(r, lo, hi, bt)
     local was = R.bandLo[r]
     if lo == was then
         return
-    elseif lo < was or abs(lo - R.bandHi[r]) > I.EPS or lo >= R.max[r] - I.EPS or R.movedT[r] > bt then
+    elseif lo < was or abs(lo - R.bandHi[r]) > I.EPS or lo >= R.max[r] - I.EPS or R.movedT[r] > bt - I.BAND_MARGIN then
         R.markT[r] = -1
         return
     end
@@ -1965,11 +1986,12 @@ I.On(Obs.Swing, function(o, t)
                 local pE, pL, pH = R.liftE[r], R.liftL[r], R.liftH[r]
                 -- a rung that lifted the slot while this swing was out already holds its rage (owe): net it first
                 local owes = o.t <= R.liftT[r] and t - R.liftT[r] <= I.LIFT_WINDOW
+                local keep = o.t > R.emptyT[r] and 1 or 0 -- 0: a cast since spent this swing's rage with the pool
                 if c == 5 then -- est and hi only: affordability never rests on an assumption
                     -- EV (decision 52 as ruled): the expected share of a step, read after the update above (a lost
                     -- close's: h0 x (1 - alpha^2), the swing's decay and the share's credit)
                     local f = hitRate[hand]
-                    local de = v * sc * f
+                    local de = v * sc * f * keep
                     local dh = de
                     if owes then
                         de, R.liftE[r] = net(de, R.liftE[r])
@@ -1988,8 +2010,8 @@ I.On(Obs.Swing, function(o, t)
                 elseif k > 0 and recR[k] == r then -- confirmed: the rest of a landed step, and its floor
                     R.liftRec[r] = owes and o.b or 0 -- as a landed swing's (c = 1): its crit pays the rest it owed
                     local w = I.SwingWidth(r, hand, o.t)
-                    local de, dh = v * sc * (1 - recAsm[k]), (v + w) * (sc + sp) - v * sc * recAsm[k]
-                    local dl = lowStep(r, hand, o.t)
+                    local de, dh = v * sc * (1 - recAsm[k]) * keep, ((v + w) * (sc + sp) - v * sc * recAsm[k]) * keep
+                    local dl = lowStep(r, hand, o.t) * keep
                     if owes then
                         de, R.liftE[r] = net(de, R.liftE[r])
                         dh, R.liftH[r] = net(dh > 0 and dh or 0, R.liftH[r])
@@ -2035,7 +2057,10 @@ I.On(Obs.Swing, function(o, t)
                 owes = R.liftRec[r] == o.b -- its crit pays the rest of what its landed step owed
             end
             local pE, pL, pH = R.liftE[r], R.liftL[r], R.liftH[r]
-            swingStep(r, hand, c, t, owes, at)
+            -- a swing stamped in the emptying cast's own frame is dropped whatever the real order was (the safe side)
+            if at > R.emptyT[r] then -- else a cast since spent this swing's rage with the whole pool
+                swingStep(r, hand, c, t, owes, at)
+            end
             ownCover(r, hand, at, pE, pL, pH)
             if k > 0 and c == 1 then
                 local x = abs(o.t - swT[hand]) < 1e-6 and swE[hand] < e and swE[hand] or e
@@ -2402,6 +2427,16 @@ function I.ResourceShift(r, delta, t, event, late)
     return shown
 end
 
+--- The least slot r regenerates over (from, from + dt]: the floor's rates over the spans (spans, above); 0 for a slot
+--- its swings pay. A late refund's floor (Families/Now.lua, L1832). Allocates nothing.
+function I.RegenLo(r, from, dt)
+    if R.swing[r] ~= 0 or dt <= 0 then
+        return 0
+    end
+    local a, b, k = spans(r, from, dt)
+    return R.regL[r] * a + R.spL[r] * b + k
+end
+
 --- An avoided cast's refund `d` (> 0) to slot r, dated at that cast's success (the server refunds there, the user
 --- 2026-10-20; the target's avoid only reports it later): est and hi take it, clamped by the lowest top a short answer
 --- set since the cast plus what the slot gained since that answer (the answer already saw the refunded pool; regen or
@@ -2474,6 +2509,12 @@ function I.LiftExplained(r, sE, sL, sH, gE, gL, gH)
     R.liftH[r] = u > 0 and R.liftH[r] - u or R.liftH[r]
 end
 
+--- Our cast's `now` took slot r's top to 0 at t (Families/Now.lua; -1e9: its avoid gave the pool back): a swing at or
+--- before t was in the pool it spent, so its credit pays nothing (L1793, R.emptyT). Allocates nothing.
+function I.Emptied(r, t)
+    R.emptyT[r] = t
+end
+
 --- A refund `d` proven wrong (the CDM verdict's, struck: Families/Now.lua I.VerdictTakeBack) comes back out of slot r:
 --- est, lo and hi lose what it gave them (dE, dL, dH, I.Refund's returns). No spend: the ladder's marks, the spend
 --- serial and mana's five-second window stay. `pinT0`: the slot's pin time at the refund; a pin since reset pinDelta
@@ -2535,6 +2576,15 @@ function I.ResourceCap(r, maximum, t, event)
         R.paidT[r], R.paidLo[r] = t, cap + I.EPS
     end
     I.Sample(R.power[r], "modelled", R.est0[r], t, event)
+end
+
+--- (L1832, cp-fact-4) Our own cast at t may have gained slot r something the belief does not book (a proc chance
+--- strictly between 0 and 1: owner L1397, no expected value): est, lo and hi stay; only the regen pins learn of it (a
+--- window holding t measures nothing, Families/Resources.lua pin). Allocates nothing.
+function I.ResourceMayGain(r, t)
+    if t > R.mayT[r] then
+        R.mayT[r] = t
+    end
 end
 
 --- Our own cast gained `d` (> 0) to slot r by a roll the belief does not see, `spread` either side (L481: a potion's

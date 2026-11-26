@@ -30,8 +30,13 @@
 --            points handle (one point or more) for 9 frames after its max moves (README, `points`: its point bars are
 --            placed again on UNIT_MAXPOWER), `t` then that prime's end, a frame back;
 --   cells:   a step watch is the 1% cell [lo, lo + 1), full its own closed cell [100, 100] (Bars.lua `band`; ledger
---            L1669), cut further by its edges or points; a points handle answers in points, its cell (max / 100) wide,
+--            L1669), health exactly empty (under max / 1,000,000) its own closed cell [0, 0] (minor 9, L1712), cut further by its edges or points; a points handle answers in points, its cell (max / 100) wide,
 --            [max, max] at full (README, `step`, `points`); the library's 0.05% guard below each edge is not modelled;
+--   plates:  (minor 10) health on nameplate1-40, a step 5 watch the 5% cell [c, c + 5) (95-99 [95, 100], full
+--            [100, 100], empty [0, 5]; README `step`), timed as any step source; the observer primes a plate at its
+--            ADDED and pushes nil (gone) at its REMOVED (observer.lua `plateBands`). shortcut: a 1% watch joining a 5%
+--            source does not prime it again (the real library swaps the whole set, about 9 frames unknown): no consumer
+--            mixes them; the library's 6 bars a plate are not modelled (no bar pool here);
 --   caps:    8 distinct points per source and 64 in total, over either the request is refused with edge-limit and
 --            nothing granted (README, `points`; GetPool).
 -- shortcut: every handle times as a step source (Hekili's watches are step = 1, design decision 13): an edges-only
@@ -41,7 +46,8 @@
 -- across a retarget is not); upgrade if a consumer's gate turns on that case. Sinks are kept, never called
 -- (the belief polls in Drain, decision 15). A point-precision spec is not read (Hekili never asks for one, decision
 -- 6). No aura kind (unproven here), no bar pool: GetStats counts
--- watches only. GetVersion answers minor 8; GetSelfTest reads the capability (pending nil, a "selftest" loss false,
+-- watches only. GetVersion answers minor 10 (LibTimeToDie minor 5 needs it; its Get is nil from a retarget or a gone
+-- unit on, as this fake's always was: Get answers only while State is live); GetSelfTest reads the capability (pending nil, a "selftest" loss false,
 -- else true) and SelfTest calls back at once. `o.history`: every push kept per source, lib:TruthAt(kind, unit, power,
 -- t) the last at or before t (the bands arms' containment, loop.bandCheck). The bands-drop arm's capability loss is
 -- lib:SetAvailable; the unmeasured knobs (bandLead, spendFirst) are the observer's (observer.lua).
@@ -78,10 +84,24 @@ M.ERR = {
 -- The kinds of the major (README, GetKinds) and the units and powers proven for the two this fake models.
 local KNOWN = { health = true, power = true, aura = true, cooldown = true, meter = true }
 local UNITS = { health = { player = true, target = true }, power = { player = true } }
+for i = 1, 40 do -- minor 10: nameplate health (the ttd arm's plates, observer.lua `plateBands`)
+    UNITS.health["nameplate" .. i] = true
+end
 local PROVEN_POWER = { [0] = true, [1] = true, [3] = true } -- Mana, Rage, Energy
 local GUARD = 0.05
 
 local floor, sort = math.floor, table.sort
+local EMPTYX = 0.000001 -- health under this fraction of max reads empty (Bars.lua EMPTYX, minor 9)
+
+-- The cell of v of max m for a watch of step w (nil or 1: the 1% cell, health empty the cell -1, the band [0, 0]; 5: the
+-- 5% cell holding the 1% one, empty its cell 0: exact empty is the 1% step's only, minor 10).
+local function cellOf(kind, v, m, w)
+    local c = (kind == "health" and v < m * EMPTYX) and -1 or floor(v * 100 / m)
+    if w == 5 then
+        return c < 0 and 0 or c - c % 5
+    end
+    return c
+end
 
 -- A sorted list of distinct whole points >= 1, or nil.
 local function pointList(pts)
@@ -126,6 +146,16 @@ function M.new(o)
     local now = assert(o.now, "fake_lhv.new: o.now (the harness clock)")
     local lib = { UNKNOWN = M.UNKNOWN, BAND = M.BAND, ERR = M.ERR, rules = R, handles = {}, sources = {} }
     local cap, capWhy = "ready", nil
+    local kcap, kwhy = {}, {} -- [kind] = one kind's own loss (SetAvailable's `kind`), under the global one
+    local function capOf(kind)
+        if cap ~= "ready" then
+            return cap, capWhy
+        end
+        if kcap[kind] then
+            return kcap[kind], kwhy[kind]
+        end
+        return "ready"
+    end
     local H = {}
     H.__index = H
 
@@ -177,7 +207,7 @@ function M.new(o)
     local CUT, CELL = 1, 2
     local function fires(h, v1, m1, v2, m2)
         local x1, x2 = v1 * 100 / m1, v2 * 100 / m2
-        if h.step and floor(x1) ~= floor(x2) then
+        if h.step and cellOf(h.kind, v1, m1, h.step) ~= cellOf(h.kind, v2, m2, h.step) then
             return CELL
         end
         local cuts, a, b = h.edges, x1, x2
@@ -359,7 +389,9 @@ function M.new(o)
         if pts and not list then
             return nil, E.POINTS_INVALID
         end
-        h.unit, h.power, h.edges, h.step = unit, kind == "power" and spec.power or nil, cuts, step and 1 or nil
+        -- step 5 on health is granted as the 5% cell (minor 10), any other step as the 1% cell
+        h.step = step == 5 and kind == "health" and 5 or step and 1 or nil
+        h.unit, h.power, h.edges = unit, kind == "power" and spec.power or nil, cuts
         h.points = list -- nil: a percent handle (a points handle's percent edges are not modelled)
         if
             not UNITS[kind][unit]
@@ -393,6 +425,11 @@ function M.new(o)
         settle(s, t)
         if value == nil then
             s.pend, s.v, s.m, s.t, s.gone = false, nil, nil, t, true
+            for _, h in ipairs(lib.handles) do -- minor 10: a paused watch drops its band too (Bars.lua forget)
+                if h.src == s then
+                    h.plo, h.phi, h.pt = nil, nil, nil
+                end
+            end
             return
         end
         s.gone = false
@@ -437,15 +474,30 @@ function M.new(o)
                 report(s, s.pv, s.pm, s.pa)
             end
         end
+        -- minor 10 (Bars.lua forget): a source some unpaused watch feeds drops every watch's band at once, a paused
+        -- one's too; the real library feeds no source whose watches are all paused, so those keep theirs
+        local fed = false
+        for _, h in ipairs(lib.handles) do
+            fed = fed or (h.unit == unit and not h.paused)
+        end
         for _, h in ipairs(lib.handles) do
             if h.unit == unit and not h.released then
                 prime(h, t)
+                if fed then
+                    h.plo, h.phi, h.pt = nil, nil, nil
+                end
             end
         end
     end
 
-    -- The capability (the bandDrop arm, a failed self-test): "ready", or "pending" / "unavailable" with a reason.
-    function lib:SetAvailable(state, reason)
+    -- The capability (the bandDrop arm, a failed self-test): "ready", or "pending" / "unavailable" with a reason; with
+    -- `kind`, that kind's alone (the real library loses one kind on its own: a read missing or raising, capability_spec),
+    -- "ready" clearing it. The global one comes first and never clears a kind's.
+    function lib:SetAvailable(state, reason, kind)
+        if kind then
+            kcap[kind], kwhy[kind] = state ~= "ready" and state or nil, reason
+            return
+        end
         cap, capWhy = state, reason
     end
 
@@ -464,7 +516,7 @@ function M.new(o)
 
     -- The major and the minor this fake follows (README, Diagnostics).
     function lib:GetVersion()
-        return "LibHiddenValues-1.0", 8
+        return "LibHiddenValues-1.0", 10
     end
 
     -- The self-test as the capability says it: nil pending, false a failed self-test, else true; never running. No bar
@@ -483,14 +535,16 @@ function M.new(o)
         end
     end
 
+    -- The aura kind answers its capability with no unit (the Cooldown Manager's; no aura watch is modelled).
     function lib:IsAvailable(kind, unit)
-        if not UNITS[kind] then
+        if not UNITS[kind] and not (kind == "aura" and unit == nil) then
             return false, "unavailable", KNOWN[kind] and "unproven" or "unknown-kind"
         end
-        if cap == "ready" and unit ~= nil and not UNITS[kind][unit] then
+        local state, why = capOf(kind)
+        if state == "ready" and unit ~= nil and not UNITS[kind][unit] then
             return false, "unavailable", "unproven"
         end
-        return cap == "ready", cap, capWhy
+        return state == "ready", state, why
     end
 
     function lib:ReleaseAll(owner)
@@ -514,8 +568,9 @@ function M.new(o)
         if self.unproven then
             return "unavailable", self.unproven
         end
-        if cap ~= "ready" then
-            return cap, capWhy
+        local state, why = capOf(self.kind)
+        if state ~= "ready" then
+            return state, why
         end
         if self.paused then
             return "paused"
@@ -555,8 +610,15 @@ function M.new(o)
             end
         end
         if self.step then
-            local cell = floor(v * 100 / m)
+            local cell = cellOf(self.kind, v, m)
             local glo, ghi = cell, cell < 100 and cell + 1 or 100 -- full: the closed cell [100, 100] (ledger L1669)
+            if cell < 0 then -- health empty: the closed cell [0, 0] (minor 9)
+                glo, ghi = 0, 0
+            end
+            if self.step == 5 then -- the 5% cell [c, c + 5), 95-99 [95, 100], full [100, 100], empty [0, 5] (minor 10)
+                glo = cellOf(self.kind, v, m, 5)
+                ghi = cell < 100 and glo + 5 or 100
+            end
             if self.points then
                 glo, ghi = glo * m / 100, ghi * m / 100
             end

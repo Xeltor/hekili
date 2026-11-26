@@ -286,7 +286,7 @@ function VS.DebuffBlocked(key, t, guid)
             and primary[T.ab[i]] == j
             and not U.IsDead(T.uid[i])
             and t < deadline(i)
-            and (T.state[i] == T.COMMITTED or not I.DebuffObserved(j, guid, T.at[i]))
+            and (T.state[i] == T.COMMITTED or not I.DebuffResolved(j, guid, T.at[i]))
         then
             return "waiting for debuff result"
         end

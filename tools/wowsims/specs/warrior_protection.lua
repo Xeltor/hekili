@@ -34,9 +34,9 @@
 -- 11-02 catch-up ruling).
 -- Disagreements (P7; floor 0.93 -> 0.98, decisions on-GCD 0.990 (97 of 98), n 98): shatter_curse -> shield_slam 45.03 (the Orc
 -- racial at <= 50% health; the replay does not replay our health: the old class). Nothing else disagrees.
--- Owner L1462 (translator rule 23): the five lines reading the player's health (Last Stand <= 40%, Shield Wall <= 35%,
--- Stoneform and Shatter Curse <= 50%, Healthstone <= 30%) are omitted: the client hides it in combat. The 45.03
--- disagreement stays (wowsims casts Shatter Curse; ours has no line for it now).
+-- Owner L1805 (translator rule 23, replacing L1462's omission): the five lines reading the player's health (Last Stand
+-- <= 40%, Shield Wall <= 35%, Stoneform and Shatter Curse <= 50%, Healthstone <= 30%) read the hidden-value band under
+-- `health.known`. The 45.03 disagreement stays (the replay does not replay our health: the guard reads false).
 -- Thunder Clap's and Demoralizing Shout's `debuff.X.remains<=6` are wowsims's own refresh lines, kept as wowsims has
 -- them (R47, owner 2026-11-05: a refresh in the debuff's last 6 s is a maintenance need, not a filler).
 -- Measured after 5049ede22 (the replay's GCD end): 0.990 (98); ready-time real 3, all early (wowsims's queued Shield
@@ -113,7 +113,7 @@ return {
     -- player-facing lines of the in-game description (the user's audit rulings, 2026-10-21)
     notes = {
         "Cooldowns toggle hides: Retaliation, Death Wish, Sweeping Strikes and the racials (Blood Fury, Berserking, Eureka, Elune's Light).",
-        "Classic Primary can show low-health defensives even when the client hides your health. Healing potions use the Defensives toggle.",
+        "Low-health defensives use their configured thresholds while health is readable. Classic can also show low-health cues when it is hidden.",
         "Outdoor pulls can use Charge or Attack. Dungeon attacks and Charge preparation require an enemy already fighting you or your party.",
         "Attack starts or resumes melee swings before routine buffs when autoattack is off. Vanguard lets you Charge without swapping stances.",
         "Without a shield, return to Defensive Stance when a dungeon enemy is confirmed to be tanked by you and the switch preserves your Rage.",
@@ -209,25 +209,28 @@ return {
                 .. "&(!action.shield_bash.known|!action.shield_bash.ready|debuff.casting.v2=1)"
                 .. "&(!action.pummel.known|!action.pummel.ready|debuff.casting.v2=1)",
         },
-        -- The translated defensives use the same conditions and HP cutoffs as the simulator, with a Primary cue.
+        -- Keep Classic cues at the default cutoffs when the translated health settings cannot read the player's health.
         {
             before = "death_wish",
-            line = "last_stand,use_off_gcd=1,display_below=40,if=!buff.last_stand.up&(!action.shield_wall.known|!buff.shield_wall.up)",
+            line = "last_stand,use_off_gcd=1,display_below=40,if=!health.known&!buff.last_stand.up&(!action.shield_wall.known|!buff.shield_wall.up)",
         },
         {
             before = "death_wish",
-            line = "shield_wall,display_below=35,if=!buff.shield_wall.up&(!action.last_stand.known|!buff.last_stand.up)",
+            line = "shield_wall,display_below=35,if=!health.known&!buff.shield_wall.up&(!action.last_stand.known|!buff.last_stand.up)",
         },
         -- Preserve this pack's existing cleanse-only policy now that the shared racial also permits mitigation.
         {
             before = "death_wish",
-            line = "stoneform,display_below=50,if="
+            line = "stoneform,display_below=50,if=!health.known&"
                 .. noMajorDefense
                 .. "&(buff.dispellable_poison.up|buff.dispellable_disease.up)",
         },
-        { before = "death_wish", line = "shatter_curse,display_below=50,if=" .. noMajorDefense },
-        { before = "death_wish", line = "healthstone,use_off_gcd=1,display_below=30" },
-        { before = "death_wish", line = "healing_potion,use_off_gcd=1,display_below=40,if=prot_contextual&combat>0" },
+        { before = "death_wish", line = "shatter_curse,display_below=50,if=!health.known&" .. noMajorDefense },
+        { before = "death_wish", line = "healthstone,use_off_gcd=1,display_below=30,if=!health.known" },
+        {
+            before = "death_wish",
+            line = "healing_potion,use_off_gcd=1,display_below=40,if=!health.known&prot_contextual&combat>0",
+        },
         {
             before = "death_wish",
             line = "defensive_stance,use_off_gcd=1,if=prot_contextual&combat>0&!buff.defensive_stance.up&(equipped.shield|prot_shieldless_tanking)",

@@ -207,6 +207,9 @@ describe("Guardian threat and Rage priorities", function()
         o.known, o.setup = { 5487, 6807, 22842 }, nil
         o.health = 200
         assert.are.equal("frenzied_regeneration", (feral.tank(o)))
+        o.distance = 20
+        assert.are.equal("frenzied_regeneration", (feral.tank(o)), "self-defense does not need melee contact")
+        o.distance = nil
         o.defensives = false
         assert.are.equal("maul", (feral.tank(o)))
         o.defensives, o.health = true, 1000

@@ -31,6 +31,37 @@ describe("the Paladin loop worlds", function()
             assert.is_false(pcall(C.resolve, "not_an_ability", H))
         end)
     end
+
+    it("clears a dead Paladin's aura before the next world's first recommendation", function()
+        local L = loop.new(pw.Protection)
+        local drivers = { { H = L.us }, { H = L.oracle, plain = true } }
+        local aura = L.us.Hekili.Class.auras.retribution_aura.id
+        local first = loop.run(L, 1, {
+            duration = 3,
+            on = function(run, _, t)
+                if t == loop.PULL then
+                    local us = run.us
+                    run.W.emit({ kind = "spell", act = "WOUND", src = us.target, dst = us, amount = us.health })
+                end
+            end,
+        }, drivers)
+        assert.are.equal(0, first.us.health)
+        assert.is_true(first.us.target.health > 0)
+        assert.are.equal(1, first.pressedBy.retribution_aura)
+
+        loop.run(L, 2, {
+            duration = 1,
+            on = function(_, steps, t)
+                if t == loop.TICK then
+                    for _, st in ipairs(steps) do
+                        local VS = st.H.ns.VirtualState
+                        assert.is_false(VS.InCombat())
+                        assert.is_nil(VS.Aura("player", aura, st.base + t))
+                    end
+                end
+            end,
+        }, drivers)
+    end)
 end)
 
 describe("the Paladin world's Judgement", function()
@@ -80,10 +111,12 @@ end)
 
 describe("the headless Paladin gates, 3 fights a pack #slow", function()
     for _, name in ipairs(PACKS) do
+        local C = name == "Protection" and pw.ProtectionElite or pw[name]
+        local enemy = name == "Protection" and "one elite" or "one mob"
         it(
-            name .. " solo, level 60, one mob, 3 fights of up to 3 minutes: the first icon against the oracle's",
+            name .. " solo, level 60, " .. enemy .. ", 3 fights of up to 3 minutes: the first icon against the oracle's",
             function()
-                local r, line = pack_gate.solo(name, pw[name], 3, nil, "seeds 1-3")
+                local r, line = pack_gate.solo(name, C, 3, nil, "seeds 1-3")
                 assert.is_true(r.focus > 0, "no flagged line ran: " .. line)
             end
         )

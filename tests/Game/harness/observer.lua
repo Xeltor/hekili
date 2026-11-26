@@ -86,6 +86,8 @@ M.DEFAULTS = {
     -- wound or heal on us (world.lua's snapshot after it), each power at each change, all at the pre-pull. Added events
     -- only, never on the plain oracle.
     bands = false,
+    -- (the ttd arm, with bands) each mob's plate health for the library's nameplate watches (fake_lhv.lua `plates`)
+    plateBands = false,
     -- (integration design 5.4, lane B4; both UNMEASURED: study 3.1, whether the bars' displayed power leads what the
     -- server honours; only with `bands`) `bandLead` +1 / -1: the shown power is the true pool ahead of or behind by its
     -- latest regen tick (a predicted display, or one a server tick late; at full it shows full). `spendFirst` s: above
@@ -417,6 +419,24 @@ function M.new(W, k)
     for _, e in ipairs(W.ents) do
         hp[e] = start[e] or e.health
     end
+    -- (k.plateBands) a mob's plate in the hidden-value library: primed at its first ADDED (targets() repeats ADDED at
+    -- each target event; the client fires it once a plate shows), then its health at each wound or heal, gone at its
+    -- REMOVED and at its death (shortcut: the real plate's death shows at the plate's removal about 0.25 s later; the
+    -- client's REMOVED there is not modelled, as before)
+    local plateUp = {}
+    local function plateBand(t, e)
+        if k.plateBands and not plateUp[e] then
+            plateUp[e] = true
+            push(t, "@lhvPrime", plate[e])
+            push(t, "@lhv", "health", plate[e], nil, hp[e], e.healthMax)
+        end
+    end
+    local function plateGone(t, e)
+        if plateUp[e] then
+            plateUp[e] = nil
+            push(t, "@lhv", "health", plate[e], nil, nil, nil)
+        end
+    end
     local function retarget(t, tgt) -- the client re-reads its target items the frame after a change (CDM-O: f=1)
         if k.bands and tgt ~= bandTarget then -- the library's target watches prime again on the new unit
             bandTarget = tgt
@@ -478,6 +498,9 @@ function M.new(W, k)
         end
         for _, e in ipairs(mobs) do
             push(t, "NAME_PLATE_UNIT_ADDED", plate[e])
+            if (hp[e] or 0) > 0 then -- the observer reads a world already run: e.dead is its end
+                plateBand(t, e)
+            end
         end
         local tgt = tt[us] or nil
         push(t, "@guid", "target", tgt and tgt.guid)
@@ -497,13 +520,23 @@ function M.new(W, k)
     end
     -- UnitDamage read out of combat only (docs/superpowers/specs/2026-10-16-forever-protection-design.md §1.1); the
     -- attack speeds (Sources/Swing.lua, probe W PR2) and the regen rates (probe W: 10.001 a second out of combat) too.
+    local maxSent = {} -- by power type: the maximum last pushed (cache)
     local function cache(t, ev)
         local d = ev.damage
         push(t, "@damage", d[1], d[2], d[3], d[4])
         if k.powerMax then -- UnitPowerMax, plain [W PR16]: the world's pools, not the character sheet's
             push(t, "@powerMax", us.pt, us.powerMax)
+            local moved = maxSent[us.pt] ~= us.powerMax
+            maxSent[us.pt] = us.powerMax
             for pt, r in pairs(us.res) do
                 push(t, "@powerMax", pt, r.max)
+                moved = moved or maxSent[pt] ~= r.max
+                maxSent[pt] = r.max
+            end
+            -- the client's event for a changed maximum (L1793): the first push moves the boot's sheet to the world's
+            -- pools, which a frame-timed answer before the next poll's read must not meet unknown
+            if moved then
+                push(t, "UNIT_MAXPOWER", "player")
             end
         end
         if k.playerSpeed and ev.speed then
@@ -833,6 +866,7 @@ function M.new(W, k)
                 push(t, "PARTY_KILL", us.guid, ev.dst.guid)
             end
             push(t + kt.died, "UNIT_DIED", ev.dst.guid)
+            plateGone(t + kt.died, ev.dst)
             if ev.dst == ev.ourTarget then
                 push(t + kt.died, "PLAYER_TARGET_DIED")
                 push(t + kt.died, "@dead", "target", true)
@@ -927,10 +961,12 @@ function M.new(W, k)
             castEv(t, ev.onUs, "UNIT_SPELLCAST_FAILED", g, id, nil)
         elseif kind == "plateOff" then -- soft-targeting log: the removal still answers the GUID; the plate goes after
             push(t, "NAME_PLATE_UNIT_REMOVED", plate[ev.mob])
+            plateGone(t, ev.mob)
             push(t + 0.001, "@guid", plate[ev.mob], nil)
         elseif kind == "plateOn" then
             push(t, "@guid", plate[ev.mob], ev.mob.guid)
             push(t, "NAME_PLATE_UNIT_ADDED", plate[ev.mob])
+            plateBand(t, ev.mob)
         elseif kind == "channelStop" and ev.src == us then -- its end or a clip: UnitChannelInfo empty, then the stop
             push(t, "@channel", nil)
             castEv(t, ev.onUs, "UNIT_SPELLCAST_CHANNEL_STOP", "Cast-" .. chanN, spellID(ev.spell))
@@ -980,6 +1016,9 @@ function M.new(W, k)
             hp[ev.dst] = ev.health
             if ev.dst == bandTarget then
                 push(t, "@lhv", "health", "target", nil, ev.health, ev.dst.healthMax)
+            end
+            if plateUp[ev.dst] then
+                push(t, "@lhv", "health", plate[ev.dst], nil, ev.health, ev.dst.healthMax)
             end
             if ev.dst == us then
                 push(t, "@lhv", "health", "player", nil, ev.health, us.healthMax)
@@ -1048,7 +1087,9 @@ function M.new(W, k)
     for pt, v in pairs(us.res0 or {}) do
         view[pt], cur[pt] = v, v
     end
+    obs.ahead = 0 -- how far the world had run past an answer's time when it was evaluated (its look-ahead, L1793)
     local function answer(t)
+        obs.ahead = math.max(obs.ahead, W.t - t)
         local flipped = false
         for _, u in ipairs(answers) do
             local ok, short = u[2](W, now, power, view)
@@ -1102,6 +1143,16 @@ function M.new(W, k)
     end
     local function bySeq(a, b)
         return a[1] < b[1] or (a[1] == b[1] and a[2] < b[2])
+    end
+    --- The earliest time this observer has work at, or nil: a truth row not read yet (a press made after the last
+    --- step), or an answer still waiting (a gain's usableDelay). The loop runs the world only to it first, so the
+    --- answer reads the world as of its own time (L1793; obs.ahead).
+    function obs.due()
+        local d = W.truth[cursor + 1] and W.truth[cursor + 1].t
+        for _, x in ipairs(deltas) do
+            d = (d == nil or x[1] < d) and x[1] or d
+        end
+        return d
     end
     function obs.step(tEnd)
         local truth = W.truth

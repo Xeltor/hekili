@@ -116,6 +116,8 @@ local KIT = {
 
 -- The abilities whose cast changes the now-state beyond its declared cost, cooldown and GCD (spec §4).
 local NOW = {
+    "claw",
+    "shred",
     "rake",
     "rip",
     "ferocious_bite",
@@ -308,14 +310,15 @@ describe("Forever Druid", function()
             { 43, 38, 13, 18, 18, 48, 13 },
             { at("claw"), at("rake"), at("maul"), at("swipe_bear"), at("primal_bite"), at("shred"), at("lacerate") }
         )
-        -- Natural Shapeshifter -10% a rank on the forms and Shifting Power: a fraction of the base mana
+        -- Natural Shapeshifter -10% a rank on the forms and Shifting Power: a fraction of the base mana as declared;
+        -- its cut is a cost modifier on the rounded whole (percent_cost_order_spec.lua)
         for key, cost in pairs({
-            cat_form = 0.44,
-            bear_form = 0.44,
-            shifting_power = 0.44,
-            moonkin_form = 0.28,
-            travel_form = 0.16,
-            aquatic_form = 0.16,
+            cat_form = 0.55,
+            bear_form = 0.55,
+            shifting_power = 0.55,
+            moonkin_form = 0.35,
+            travel_form = 0.2,
+            aquatic_form = 0.2,
         }) do
             near(cost, at(key))
         end
@@ -324,7 +327,8 @@ describe("Forever Druid", function()
         local function mana(key)
             return priced(w, at(key), "mana")
         end
-        assert.are.same({ 547, 348 }, { mana("shifting_power"), mana("moonkin_form") })
+        -- the uncut whole prices at rank 2 (the cut is a cost modifier: percent_cost_order_spec.lua prices it by rank)
+        assert.are.same({ 684, 435 }, { mana("shifting_power"), mana("moonkin_form") })
         e.talent = rank(0)
         assert.are.same({ 684, 684, 62 }, { mana("shifting_power"), mana("cat_form"), mana("innervate") })
         e.talent = rank(2)
@@ -836,16 +840,26 @@ describe("Forever Druid", function()
             end
         )
 
-        it("writes no combo points from any `now`", function()
+        -- the builders' point is the point fact's prediction (L1832: the plain read after the cast proves landed or
+        -- avoided); no `now` spends points (a finisher's spend is read; a missed one keeps them, wowsims rip.go:29-33)
+        it("writes a builder's one combo point from its `now`, and spends none from any", function()
             local e = ld.env(w)
             e.talent = rank(1)
+            local builders = {}
             for _, k in ipairs(NOW) do
+                e.gained = {}
                 ld.run(w.abilities[k].now, e)
-            end
-            for _, list in ipairs({ e.gained, e.spent }) do
-                for _, v in ipairs(list) do
-                    assert.are_not.equal("combo_points", v[2])
+                for _, v in ipairs(e.gained) do
+                    if v[2] == "combo_points" then
+                        assert.are.equal(1, v[1], k)
+                        builders[#builders + 1] = k
+                    end
                 end
+            end
+            table.sort(builders)
+            assert.are.same({ "claw", "pounce", "rake", "ravage", "shred" }, builders)
+            for _, v in ipairs(e.spent) do
+                assert.are_not.equal("combo_points", v[2])
             end
         end)
     end)
@@ -1013,7 +1027,7 @@ describe("Forever Druid", function()
     end)
 
     it("declares Poised as a flat -10 cost modifier over the eight Feral abilities (one charge)", function()
-        local m = w.costMods[2]
+        local m = w.costMods[3]
         assert.are.same(
             { "poised", -10, 1, { 1082, 1822, 5221, 6785, 9005, 1079, 1328618, 8998 } },
             { m.aura, m.flat, m.charges, m.spells }
@@ -1022,7 +1036,7 @@ describe("Forever Druid", function()
 
     it("declares the Idol of Ferocity's aura as a flat -2 on Claw and Rake (wowsims e4ef929e54, 27851)", function()
         assert.are.equal(27851, w.auras.idol_of_ferocity.id)
-        local m = w.costMods[3]
+        local m = w.costMods[4]
         assert.are.same({ "idol_of_ferocity", -2, nil, { 1082, 1822 } }, { m.aura, m.flat, m.charges, m.spells })
     end)
 
@@ -1035,7 +1049,7 @@ describe("Forever Druid", function()
     end)
 
     it("declares Clearcasting as one cost modifier over the covered rank-1 IDs, and no `spend` reads it", function()
-        assert.are.equal(3, #w.costMods) -- Clearcasting, Poised, the Idol of Ferocity
+        assert.are.equal(4, #w.costMods) -- Clearcasting, Natural Shapeshifter, Poised, the Idol of Ferocity
         local m = w.costMods[1]
         assert.are.same({ "clearcasting", -1, 1, COVERED }, { m.aura, m.pct, m.charges, m.spells })
         local first = {}
@@ -1140,7 +1154,10 @@ describe("Forever Druid", function()
                         assert.is_not_nil(p.lists[e.list_name], where .. ": no list " .. e.list_name)
                     else
                         assert.is_true(
-                            w.abilities[e.action] ~= nil or sharedActions[e.action] or pe.LINE[e.action],
+                            w.abilities[e.action] ~= nil
+                                or sharedActions[e.action]
+                                or pe.LINE[e.action]
+                                or pe.SHARED[e.action],
                             where .. ": no ability " .. e.action
                         )
                         assert.is_true(
@@ -1151,7 +1168,7 @@ describe("Forever Druid", function()
                     local c = (e.criteria or "") .. " " .. (e.value or "") -- CN25: a pure variable's text too
                     for kind, key in c:gmatch("(%a+)%.([%w_]+)") do
                         if kinds[kind] then
-                            local ok = kinds[kind][key] ~= nil or (shared[kind] or {})[key]
+                            local ok = kinds[kind][key] ~= nil or (shared[kind] or {})[key] or pe.SHARED[key]
                             assert.is_true(ok, where .. ": no " .. kind .. " " .. key)
                         end
                     end
@@ -1167,7 +1184,16 @@ describe("Forever Druid", function()
             n = n + 1
         end
         local roar = w.settings.maintain_demoralizing_roar
-        assert.are.same({ 2, false, false, true }, { n, w.settings.behind.default, roar.default, roar.option.sim })
+        assert.are.same({ 5, false, false, true }, { n, w.settings.behind.default, roar.default, roar.option.sim })
+        -- L1808: the recorder keeps the first default, Balance's own Barkskin 50 (Guardian's and Feral's bear line 60
+        -- is registered after it, on those specs: tests/Forever/defensive_settings_spec.lua reads each spec's)
+        assert.are.same({ 50, 25, 50 }, {
+            w.settings.barkskin_health.default,
+            w.settings.frenzied_regeneration_health.default,
+            w.settings.barkskin_cat_health.default,
+        })
+        assert.are.same({ "balance", "guardian", "feral" }, w.settings.barkskin_health.specs)
+        assert.are.same({ "feral", "guardian" }, w.settings.barkskin_cat_health.specs)
         assert.is_nil(w.options)
     end)
 
@@ -1304,7 +1330,7 @@ describe("Forever Druid in VirtualState's now context", function()
         I.Sources.Direct(VS.Obs.Swing, 16, 1, 0, 1)
         VS.Drain(16)
         assert.are.equal(power(1, 15.1), power(1, 16))
-        assert.are.same({ 0, 9 }, { I.nowErrors, I.nowRuns })
+        assert.are.same({ 0, 10 }, { I.nowErrors, I.nowRuns }) -- Shred's `now` too: its point (L1832)
     end)
 
     -- L576 bug 1: energy is secret even out of combat and the rate read never came (a /reload in combat): the build
@@ -1327,8 +1353,8 @@ describe("Forever Druid in VirtualState's now context", function()
             end
         end
         -- wrath, starfire, moonfire, insect_swarm and the debuffs demoralizing_roar, faerie_fire, growl, challenging_roar,
-        -- feral_charge (its velocity: the Cooldown Manager verdict's window, L450)
-        assert.are.same({ 9, 0 }, { n, I.nowErrors })
+        -- feral_charge (its velocity: the Cooldown Manager verdict's window, L450), rip ("debuff": avoids only, L1810 F2)
+        assert.are.same({ 10, 0 }, { n, I.nowErrors })
     end)
 
     it("gives Primal Fury's 5 rage at a bear strike's own crit with the talent at 2/2, none at 0/2 (GAP T)", function()
@@ -1350,13 +1376,31 @@ describe("Forever Druid in VirtualState's now context", function()
 
     -- L586, Furor (wowsims forms.go): out of Cat the pool keeps its 10 a second except in Bear Form, and a Cat entry
     -- keeps 20% a rank of it: untalented, none. Cat at 2 (from 100), Shred at 3 (60), out of Cat at 4 to the caster
-    -- form or Bear Form, back into Cat at 7. At 5/5: 40 left, 50 at 4, then 80 (caster) or 50 (Bear); at 3/5: 60 at
-    -- the entry, 10 after Shred, 20 at 4, 50 at 7, x 0.6.
-    for _, x in ipairs({ { 0, false, 0 }, { 0, true, 0 }, { 5, false, 80 }, { 5, true, 50 }, { 3, false, 30 } }) do
-        local furor, bear, want = x[1], x[2], x[3]
+    -- form or Bear Form, back into Cat 3 s (or 10 s) later. At 5/5: 40 left, 50 at 4, then 80 (caster) or 50 (Bear);
+    -- at 3/5: 60 at the entry, 10 after Shred, 20 at 4, 50 at 7, x 0.6. The tooltip (L1809, owner 2026-11-23: the
+    -- entry is the only reset, a share by rank, not a roll) at rank r: 20r% of the energy at leaving Cat plus 2r a
+    -- second outside Bear, up to 20r: the same rule, the cap on the restored total (10 s: 1/5 and 3/5 cap at 20 and 60).
+    for _, x in ipairs({
+        { 0, false, 0 },
+        { 0, true, 0 },
+        { 1, false, 8 },
+        { 1, true, 2 },
+        { 2, false, 16 },
+        { 2, true, 4 },
+        { 3, false, 30 },
+        { 3, true, 12 },
+        { 4, false, 56 },
+        { 4, true, 32 },
+        { 5, false, 80 },
+        { 5, true, 50 },
+        { 1, false, 20, 10 },
+        { 3, false, 60, 10 },
+    }) do
+        local furor, bear, want, outside = x[1], x[2], x[3], x[4] or 3
         it(
-            ("enters Cat Form with Furor %d/5 after 3 s in %s: %d energy"):format(
+            ("enters Cat Form with Furor %d/5 after %d s in %s: %d energy"):format(
                 furor,
+                outside,
                 bear and "Bear Form" or "caster form",
                 want
             ),
@@ -1374,12 +1418,34 @@ describe("Forever Druid in VirtualState's now context", function()
                     ctl.Tick(4)
                     VS.Drain(4.01)
                 end
-                cast(768, 7)
-                near(want + 0.5, power(3, 7.05))
+                cast(768, 4 + outside)
+                near(want + 0.5, power(3, 4 + outside + 0.05))
                 assert.are.equal(0, I.nowErrors, tostring(I.nowError))
             end
         )
     end
+
+    -- A live band after the Cat entry is the game's value (memory lhv-live-band-is-fact): it replaces Furor's modelled
+    -- share. Furor 3/5, caster form 4..7: 30 at the entry; the band at 7.5 reads [42, 43).
+    it("takes a live energy band after a Cat entry over Furor's share", function()
+        I.Sources.Direct(VS.Obs.CombatStart, 1.5)
+        I.SetTalentRank(I.talents.bySpell[17056], 3)
+        cast(768, 2)
+        cast(5221, 3)
+        ctl.form = 0
+        ctl.Fire("UPDATE_SHAPESHIFT_FORM")
+        ctl.Tick(4)
+        VS.Drain(4.01)
+        cast(768, 7)
+        near(30.5, power(3, 7.05))
+        local r = I.res.slotOf[3]
+        I.Fold(7.5 - 1e-9)
+        I.bandT[r], I.bandShows[r] = 7.5, 0.17 -- stamped past the entry's hold (Resources.lua holdsBack)
+        I.Sources.Direct(VS.Obs.Band, 7.5, r, 42, 43)
+        VS.Drain(7.5)
+        local p = VS.Power(3, 7.5)
+        assert.are.same({ 42, 42 }, { p.est, p.lo })
+    end)
 
     -- Rage outside Bear Form (owner 2026-11-12: Cat Form out of combat, the client at 0, the belief pinned at 5). wowsims's
     -- Cat entry leaves rage alone (forms.go RegisterCatFormAura) and wowsims has no out-of-combat decay; the class file's
@@ -1466,6 +1532,29 @@ describe("Forever Druid in VirtualState's now context", function()
             assert.are.same(x[2], { r.est, r.lo, r.hi })
             assert.are.equal(0, I.nowErrors, tostring(I.nowError))
         end)
+    end
+
+    -- Owner 2026-11-23 (L1809): rage kept in Cat Form is real and decays out of combat (BandProbe2 2026-11-20: 19 -> 8);
+    -- only the Bear entry wipes it, then Furor's 10 is credited at 5/5 alone (a 20% a rank roll below: est and lo 0).
+    for _, x in ipairs({ { 0, { 0, 0, 0 } }, { 3, { 0, 0, 10 } }, { 5, { 10, 10, 10 } } }) do
+        it(
+            ("wipes rage decayed in Cat Form at a Bear entry with Furor %d/5 to [%d, %d]"):format(
+                x[1],
+                x[2][2],
+                x[2][3]
+            ),
+            function()
+                bearSwingCat()
+                I.SetTalentRank(I.talents.bySpell[17056], x[1])
+                I.Sources.Direct(VS.Obs.CombatEnd, 5)
+                VS.Drain(5)
+                near(7.5, settle(7.5).est) -- 11.25 less three quanta (5, 6, 7)
+                cast(5487, 7.5)
+                local r = VS.Power(1, 7.6)
+                assert.are.same(x[2], { r.est, r.lo, r.hi })
+                assert.are.equal(0, I.nowErrors, tostring(I.nowError))
+            end
+        )
     end
 
     -- Furor 3/5's unseen roll leaves the top 10 over the estimate. The estimate rests at its beat at 13; the top keeps
@@ -2218,5 +2307,27 @@ describe("Forever Druid Rake after an avoided recast (hotfix 0.8.6)", function()
         S.reset("Primary", true)
         assert.is_false(S.debuff.rake.up)
         assert.are.same({}, H.errors)
+    end)
+end)
+
+-- The harness worlds' shift entry rules come from the class file's swap_form (tests/Forever/helpers/druid_world.lua):
+-- the same rules as the belief's (owner L1809, 2026-11-23): Bear wipes rage, then Furor's 10 at 5/5 alone; Cat keeps
+-- Furor's share of the energy, rage untouched.
+describe("Forever Druid harness entry rules by Furor rank", function()
+    local dw = require("Forever.helpers.druid_world")
+    it("wipes rage into Bear Form and credits Furor's 10 at 5/5 only; keeps rank/5 of energy into Cat Form", function()
+        local function at(rule, cur)
+            return type(rule) == "function" and rule(nil, nil, nil, cur) or rule
+        end
+        local got = {}
+        for _, f in ipairs({ 0, 3, 5 }) do
+            local bear, cat = dw.entryRules("bear_form", f), dw.entryRules("cat_form", f)
+            got[#got + 1] =
+                { at(bear[dw.RAGE], 40), at(bear[dw.ENERGY], 40), at(cat[dw.RAGE], 40), at(cat[dw.ENERGY], 40) }
+        end
+        assert.are.same(
+            { { "zero", "keep", "keep", "zero" }, { "zero", "keep", "keep", 24 }, { 10, "keep", "keep", "keep" } },
+            got
+        )
     end)
 end)

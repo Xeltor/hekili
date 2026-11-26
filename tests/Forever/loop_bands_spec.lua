@@ -58,22 +58,24 @@ end
 
 describe("the bands arm #slow", function()
     for _, case in ipairs({
-        -- case[4]: the seed-3 fight has a gap and a held-while-ready tick to compare (L1733); Feral's and Frost's 30 s
-        -- agree with the oracle on every tick, so theirs are 0 against 0 (compared, never able to fail there)
-        { "Arms (rage)", ww, { -1, 0, 1 }, true },
+        -- The outdoor Arms priority exercises both disagreement and held-while-ready rows on seed 5.
+        -- Feral's and Frost's 30 s seed-3 fights compare the rows even when they agree with the oracle on every tick.
+        { "Arms (rage)", ww, { -1, 0, 1 }, seed = 5 },
         { "Feral (energy; mana and rage while not shown are paused)", dlw.Feral, { -1, 0 } },
         { "Frost (mana)", mw.Frost, { -1, 0 } },
     }) do
         it(
             case[1] .. ": the health bands alone leave the rows; each applied band holds the truth or lagged it",
             function()
-                local base = fight(case[2], "default", 3, nil, nil, true)
-                local health = fight(case[2], "bands-health", 3, nil, nil, true)
+                local seed = case.seed or 3
+                local base = fight(case[2], "default", seed, nil, nil, true)
+                local health = fight(case[2], "bands-health", seed, nil, nil, true)
                 assert.are.same({}, moved(base, health))
-                if case[4] then -- (L1733) the oracle's rows are measured: a gap at a disagreement, a held tick
-                    assert.is_true(#base.gap > 0 and base.heldReady > 0, "the oracle's rows are empty")
+                if case.seed then -- the selected seed must exercise both oracle rows (L1733)
+                    assert.is_true(#base.gap > 0, "no disagreement with the oracle")
+                    assert.is_true(base.heldReady > 0, "no held-while-ready tick")
                 end
-                local run, H, lines = fight(case[2], "bands", 3)
+                local run, H, lines = fight(case[2], "bands", seed)
                 assert.is_true(run.loOver <= base.loOver, ("lo over %d, default %d"):format(run.loOver, base.loOver))
                 local b = run.bands
                 assert.are.same({}, b.misses)
@@ -94,7 +96,7 @@ describe("the bands arm #slow", function()
                 end
                 assert.is_true(powers >= 1, "a power band") -- the class's own power, in points
                 assert.is_truthy(
-                    lines[#lines]:match("^bands seed 3 checked %d+ held %d+ lagged %d+ live .* est %d+ "),
+                    lines[#lines]:match("^bands seed " .. seed .. " checked %d+ held %d+ lagged %d+ live .* est %d+ "),
                     lines[#lines]
                 )
             end

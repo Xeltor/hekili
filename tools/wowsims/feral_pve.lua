@@ -6,11 +6,11 @@ return function(recipe)
         "travel_form,if=combat=0&druid_form_intent",
         "bear_form,if=combat=0&druid_form_intent",
         "cat_form,if=combat=0&druid_form_intent",
-        "frenzied_regeneration,display_below=25,if=toggle.defensives&feral_defense&rage.lo>=10&buff.frenzied_regeneration.down",
+        "frenzied_regeneration,display_below=25,if=!health.known&toggle.defensives&feral_defense&rage.lo>=10&buff.frenzied_regeneration.down",
         "frenzied_regeneration,display_below=55,if=toggle.defensives&feral_regeneration_pressure&buff.frenzied_regeneration.down",
-        "healthstone,use_off_gcd=1,display_below=30,if=toggle.defensives&feral_defense",
-        "healing_potion,use_off_gcd=1,display_below=40,if=toggle.defensives&feral_defense",
-        "barkskin,display_below=60,if=toggle.defensives&feral_defense&buff.barkskin.down",
+        "healthstone,use_off_gcd=1,display_below=30,if=!health.known&toggle.defensives&feral_defense",
+        "healing_potion,use_off_gcd=1,display_below=40,if=!health.known&toggle.defensives&feral_defense",
+        "barkskin,display_below=60,if=!health.known&toggle.defensives&feral_defense&buff.barkskin.down",
         "healing_touch,display_below=40,if=toggle.defensives&(feral_caster_heal|feral_prepare_heal)",
         "rejuvenation,display_below=55,if=toggle.defensives&feral_caster_heal&buff.rejuvenation.down",
         "cancel_buff,buff_name=bear_form,display_below=75,if=toggle.defensives&feral_unshift_heal&feral_resting_target",
@@ -54,6 +54,11 @@ return function(recipe)
             .. "&(!action.maul.known|action.maul.disabled|buff.maul.up&rage.lo>=action.swipe_bear.cost+action.maul.cost)"
         recipe.extra = {
             {
+                first = true,
+                line = "frenzied_regeneration,if=health.known&health.pct<settings.frenzied_regeneration_health"
+                    .. "&rage.lo>=10&buff.frenzied_regeneration.down",
+            },
+            {
                 before = "primal_bite",
                 translated = true,
                 line = "lacerate,focus=2,if=feral_bear_fight&feral_spell_range&debuff.lacerate.remains<=gcd.max"
@@ -79,7 +84,10 @@ return function(recipe)
             addGuard(key, "feral_attack_in_range")
         end
         addGuard("maul", "feral_maul_allowed")
-        addGuard("primal_bite", "buff.berserk.up&feral_bear_contact&feral_spell_range|feral_attack_in_range")
+        addGuard(
+            "primal_bite",
+            "(action.berserk.known&buff.berserk.up&feral_bear_contact&feral_spell_range)|feral_attack_in_range"
+        )
         addGuard("demoralizing_roar", "feral_roar_in_combat")
         -- Enrage trades armor for rage. In the field use it before contact, with room for the gain.
         addGuard("enrage", "feral_enrage")
@@ -95,15 +103,17 @@ return function(recipe)
         -- Open from Prowl before applying bleeds. Ravage remains the preferred learned opener.
         first[#first + 1] =
             "shred,if=feral_pull&feral_prowling&(!action.ravage.known|action.ravage.disabled)&feral_behind&feral_spell_range"
-        first[#first + 1] = "ferocious_bite,if=feral_pull&feral_dying&feral_spell_range"
-            .. "&(combo_points.current>=4|combo_points.current>=2&target.real_ttd=3600)"
+        local bitePoints = "(combo_points.current>=4|combo_points.current>=2&target.real_ttd=3600)"
+        local ripPoints = "(combo_points.current>=5|combo_points.current>=3&feral_leveling_rip"
+            .. "|combo_points.current>=4&feral_durable&target.real_ttd=3600)"
+        first[#first + 1] = "ferocious_bite,if=feral_pull&feral_dying&feral_spell_range&" .. bitePoints
         -- Spend points where the leveling kit can use them. Keep the imported pooling
         -- and powershift windows on sustained fights.
         local fighting = "feral_pull&!feral_prowling&feral_spell_range"
         first[#first + 1] = "rip,if="
             .. fighting
-            .. "&feral_bleed_worthwhile&debuff.rip.down&(combo_points.current>=5|combo_points.current>=3&feral_leveling_rip"
-            .. "|combo_points.current>=4&feral_durable&target.real_ttd=3600)"
+            .. "&feral_bleed_worthwhile&debuff.rip.down&"
+            .. ripPoints
             .. "&energy.lo>=action.rip.cost"
         first[#first + 1] = "ferocious_bite,if="
             .. fighting
@@ -122,9 +132,10 @@ return function(recipe)
             "shred,if=(feral_pull|feral_damage_enemy)&feral_behind&(!action.claw.known|action.claw.disabled)&feral_spell_range"
         recipe.leveling[#recipe.leveling + 1] =
             "claw,if=(feral_pull|feral_damage_enemy&!feral_behind)&feral_spell_range"
-        for _, key in ipairs({ "rake", "rip" }) do
-            addGuard(key, "feral_attack_in_range&(!feral_field|feral_bleed_worthwhile)")
-        end
+        -- The translated last-resort finishers also run in the field. Enforce the field minimums there.
+        addGuard("ferocious_bite", "!feral_field|" .. bitePoints)
+        addGuard("rip", "feral_attack_in_range&(!feral_field|feral_bleed_worthwhile&" .. ripPoints .. ")")
+        addGuard("rake", "feral_attack_in_range&(!feral_field|feral_bleed_worthwhile)")
         for _, key in ipairs({ "dash", "prowl", "elunes_light" }) do
             addGuard(key, "!feral_field|feral_pull&!feral_wants_bear")
         end

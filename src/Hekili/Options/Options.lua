@@ -359,10 +359,10 @@ do
                         separate = false,
                     },
 
-                    defensives = {
+                    defensives = { -- separate by default (owner L1808): a defensive never lands in the rotation's display
                         key = "ALT-SHIFT-T",
                         value = true,
-                        separate = false,
+                        separate = true,
                     },
 
                     potions = {
@@ -376,10 +376,10 @@ do
                         value = true,
                     },
 
-                    interrupts = {
+                    interrupts = { -- separate by default (owner L1808), as Defensives
                         key = "ALT-SHIFT-I",
                         value = true,
-                        separate = false,
+                        separate = true,
                         castRemainingThreshold = 0.25,
                     },
 

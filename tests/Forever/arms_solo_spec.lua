@@ -44,6 +44,9 @@ local function warrior(level, rage, options)
         end,
     })
     assert.are.same({}, H.loadErrors)
+    -- These scenarios assert interrupt and defensive priority in Primary.
+    local toggles = H.Hekili.DB.profile.toggles
+    toggles.defensives.separate, toggles.interrupts.separate = false, false
     local ctl = H.ctl
     ctl.current[6603] = true
     ctl.unitCombat.target, ctl.exists.targettarget, ctl.unitIs.targettarget = true, true, "player"
@@ -536,13 +539,15 @@ describe("the shipped Arms leveling and PvE priority", function()
         end
     end)
 
-    it("shows the leveling interrupt at the start of a normal cast, even with hidden cast timing", function()
+    it("shows the leveling interrupt when the cast is confirmed interruptible and its timing is hidden", function()
         for _, case in ipairs({
             { level = 12, options = { shield = true }, action = "shield_bash" },
             { level = 38, options = { form = 3, instance = "party" }, action = "pummel" },
         }) do
             local H = warrior(case.level, 35, case.options)
             H.Fire("UNIT_SPELLCAST_START", "target", SECRET, SECRET, 77)
+            assert.is_not_equal(case.action, read(H)[1])
+            H.Fire("UNIT_SPELLCAST_INTERRUPTIBLE", "target")
             assert.are.equal(case.action, read(H)[1])
             assert.are.equal(0, H.Hekili.Engine.Output.Primary.recs[1].time)
             H.Fire("UNIT_SPELLCAST_STOP", "target", SECRET, SECRET, 77)
@@ -559,8 +564,9 @@ describe("the shipped Arms leveling and PvE priority", function()
         H = warrior(60, 35, { health = 250, healthstone = true, group = 5, instance = "party" })
         assert.are.equal("healthstone", read(H, 1.6)[1])
 
-        H = warrior(60, 35, { health = 250, healthstone = true, group = 5, instance = "pvp" })
-        assert.is_not_true(read(H, 1.6)[1] == "healthstone")
+        H = warrior(60, 35, { health = SECRET, healthstone = true, group = 5, instance = "pvp" })
+        read(H, 1.6)
+        assert.are.equal(0, H.Hekili.Engine.Output.Primary.healthCues.n)
     end)
 
     it("offers Shield Wall only with a shield and the appropriate stance", function()
@@ -616,7 +622,7 @@ describe("the shipped Arms leveling and PvE priority", function()
         assert.are.equal(0, out.healthCues.n)
 
         local potions = { [118] = 134829 }
-        assert.are.equal("healing_potion", read(warrior(1, 35, { health = 300, potions = potions }), 1.6)[1])
+        assert.are.equal("healing_potion", read(warrior(1, 35, { health = 200, potions = potions }), 1.6)[1])
         H = warrior(12, 35, { health = SECRET, instance = "party", group = 5, potions = potions })
         read(H, 1.6)
         assert.are.equal("healing_potion", H.Hekili.Engine.Output.Primary.healthCues[1].action)

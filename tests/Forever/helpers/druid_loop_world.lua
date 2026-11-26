@@ -147,16 +147,18 @@ local function debuff(key, alsoHit) -- the debuff when its hit (for `key`'s amou
         end
     end
 end
-local catAt = {} -- the Cat entry rule by Furor rank above 0, built once a rank
+local entryAt = { cat_form = {}, bear_form = {} } -- the entry rules by form and Furor rank above 0, built once a rank
 local function shift(key, mult)
     return {
         extra = function(p, _, _, P)
             local R = rules()
             local onEnter = key == "bear_form" and R.enterBear or (key == "cat_form" and R.enterCat or nil)
-            local furor = P.talents and P.talents[17056] or 0 -- the pack's Furor; the Bear entry reads none
-            if key == "cat_form" and furor > 0 then
-                catAt[furor] = catAt[furor] or dw.entryRules("cat_form", furor)
-                onEnter = catAt[furor]
+            -- the pack's Furor, both entries the class file's (owner L1809: Bear's 10 rage at 5/5 only, Cat's share)
+            local furor = P.talents and P.talents[17056] or 0
+            local at = entryAt[key]
+            if at and furor > 0 then
+                at[furor] = at[furor] or dw.entryRules(key, furor)
+                onEnter = at[furor]
             end
             p.shift = { form = FORM[key], dmgMult = mult, onEnter = onEnter }
         end,
@@ -184,6 +186,8 @@ M.OUTCOMES = {
 M.MAP = {
     cat_form = shift("cat_form", 1),
     bear_form = shift("bear_form", 1),
+    aquatic_form = shift("aquatic_form", 1),
+    travel_form = shift("travel_form", 1),
     moonkin_form = shift("moonkin_form", 1),
     claw = { effect = catHit("claw"), points = 1 },
     shred = { effect = catHit("shred"), points = 1 },

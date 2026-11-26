@@ -4,9 +4,8 @@
 -- removes poison, disease and bleed effects and grants immunity to them for 8 s; 180 s, on the GCD), which replaces
 -- `all`'s stock entry (120 s, off the GCD, its buff 65116 absent on Forever: the buff is 20594 itself). A class priority
 -- decides whether to use it for a cleanse or physical mitigation; the spell itself requires no removable debuff.
--- A bleed carries no dispel type, so no `dispellable_bleed` aura can exist. Find Treasure, Mace Specialization and Big Game Hunter have no
--- rotation effect. No resource or cost modifier. Protection (wowsims.com) names it (its low-health line). Unknown for
--- any other race (Engine/Schema/Races.lua).
+-- Bleeds carry no dispel type. Both Protection packs have low-health lines for mitigation.
+-- Unknown for any other race (Engine/Schema/Races.lua).
 
 local race = Hekili:NewRace("Dwarf")
 

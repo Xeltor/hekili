@@ -91,6 +91,9 @@ local function warlock(build, level, known, options)
         rows[#rows + 1] = { spellId = id, expirationTime = ctl.now + 30, applications = 0, sourceUnit = "player" }
     end
 
+    -- These priority fixtures read Primary. Display-specific cases enable separation explicitly.
+    local toggles = H.Hekili.Engine.settings.toggles
+    toggles.defensives.separate, toggles.interrupts.separate = false, false
     H.Hekili:FireToggle("defensives", o.defensives == false and "off" or "on")
     H.Fire("PLAYER_TARGET_CHANGED")
     H.Fire("UNIT_AURA", "player")

@@ -78,6 +78,15 @@ local function add(line)
     extra[#extra + 1] = { before = "templars_bulwark", translated = true, line = line }
 end
 
+local function addHealth(ability, percent, predicate)
+    local action = ability
+    if ability == "healthstone" or ability == "healing_potion" then
+        action = ability .. ",use_off_gcd=1"
+    end
+    add(action .. ",if=health.known&health.pct<=settings." .. ability .. "_health&" .. predicate)
+    add(action .. ",display_below=" .. percent .. ",if=!health.known&" .. predicate)
+end
+
 -- The client paints overlapping health bands in priority order. An available absorb buys time without
 -- surrendering threat or draining mana. Reserve the instant full heal for imminent death.
 add(
@@ -86,11 +95,12 @@ add(
 add(
     "templars_bulwark,use_off_gcd=1,display_below=45,if=toggle.defensives&prot_pal_combat_defense&buff.templars_bulwark.down"
 )
-add("lay_on_hands,display_below=15,if=combat>0&toggle.defensives&prot_pal_emergency_heal")
+local noShield = "(!action.divine_shield.known|!buff.divine_shield.up)"
+addHealth("lay_on_hands", 15, "combat>0&toggle.defensives&prot_pal_emergency_heal&" .. noShield)
 add("hammer_of_justice,display_below=45,if=toggle.defensives&prot_pal_stun_to_heal")
-add("healthstone,use_off_gcd=1,display_below=30,if=toggle.defensives&prot_pal_combat_defense")
-add("healing_potion,use_off_gcd=1,display_below=40,if=toggle.defensives&prot_pal_combat_defense")
-add("divine_shield,display_below=20,if=toggle.defensives&prot_pal_solo_immunity")
+addHealth("healthstone", 30, "toggle.defensives&prot_pal_combat_defense")
+addHealth("healing_potion", 40, "toggle.defensives&prot_pal_combat_defense")
+addHealth("divine_shield", 20, "toggle.defensives&prot_pal_solo_immunity")
 add("divine_protection,display_below=20,if=toggle.defensives&prot_pal_solo_immunity")
 add(
     "hammer_of_justice,if=prot_pal_attack_target&combat>0&toggle.interrupts&debuff.casting.up"
@@ -196,6 +206,7 @@ return {
         retribution_aura = raidSetup .. "&prot_pal_aura_missing",
         seal_of_the_crusader = raidSetup .. "&prot_pal_tanking&!seal_up",
         templars_bulwark = "target.is_dummy&prot_pal_sustained&prot_pal_tanking&toggle.defensives",
+        stoneform = noShield,
         seal_of_fury = "prot_pal_sustained&prot_pal_tanking&!prot_paladin_last_resort",
         judgement = "prot_pal_sustained&prot_paladin_judgement_allowed",
         swift_judgement = "prot_pal_sustained&prot_paladin_judgement_allowed",
@@ -207,4 +218,8 @@ return {
     },
     levelingFirst = preparation,
     extra = extra,
+    settings = {
+        divine_shield_health = { default = 20, desc = "player health threshold, percent" },
+        lay_on_hands_health = { default = 15, desc = "player health threshold, percent" },
+    },
 }

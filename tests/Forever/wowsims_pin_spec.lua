@@ -352,10 +352,8 @@ describe("every pack line within the engine's limits (CN25) #slow", function()
             return s
         end
         local fx = setmetatable({ OUT = FIX }, { __index = ex })
-        if spec == "druid_feral" then
-            fx.recipe = function()
-                return dofile(FIX .. "druid_feral.lua")
-            end
+        fx.recipe = function()
+            return dofile(FIX .. spec .. ".lua")
         end
         local ok, _, text = pcall(apl.render, spec, fx)
         engine.abilitySet = set

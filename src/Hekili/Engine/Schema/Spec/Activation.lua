@@ -157,8 +157,8 @@ function Hekili:SpecializationChanged()
         return
     end
     if currentSpec == 5 then currentSpec = 1 end -- no specialization: the first
-    -- Forever's one pseudo-spec per class: its id keys the legacy profile; its role and primary stat stay the
-    -- simulation's (a spec's role is shown, not simulated: per-spec plan).
+    -- Forever's one pseudo-spec per class: its id keys the legacy profile; its primary stat stays the simulation's,
+    -- its role only without a class pack's spec (below).
     local clientID, clientName, _, _, clientRole, clientStat = GetSpecializationInfo( currentSpec )
 
     if clientID == nil then
@@ -231,7 +231,12 @@ function Hekili:SpecializationChanged()
         state.role[ k ] = false
     end
 
-    if clientRole == "DAMAGER" then
+    -- the active spec's role as its pack declares it (L1715: the client's pseudo-spec answers DAMAGER for a tank tree);
+    -- no spec from a class pack: the client's
+    local role = tree and tree.role
+    if role then
+        state.role[ role ] = true
+    elseif clientRole == "DAMAGER" then
         state.role.attack = true
     elseif clientRole == "TANK" then
         state.role.tank = true
@@ -427,10 +432,10 @@ function Hekili:SpecializationChanged()
 
                 if data and data.name and data.iconID then
                     ability.name = ability.name or data.name
-                    class.abilityList[ k ] = "|T" .. data.iconID .. ":0|t " .. ability.name
+                    class.abilityList[ k ] = ns.AbilityListLabel( ability, data.iconID )
                 end
             else
-                class.abilityList[ k ] = "|T" .. ability.texture .. ":0|t " .. ability.name
+                class.abilityList[ k ] = ns.AbilityListLabel( ability, ability.texture )
             end
         end
     end

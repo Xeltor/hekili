@@ -42,6 +42,10 @@ local function druid(o)
     if o.noTarget then
         ctl.exists.target = false
     end
+    -- These priority fixtures read Primary unless a separate display was requested.
+    local toggles = H.Hekili.DB.profile.toggles
+    toggles.defensives.separate = o.display == "Defensives"
+    toggles.interrupts.separate = o.display == "Interrupts"
     H.Hekili:FireToggle("defensives", o.defensives == false and "off" or "on")
     H.Hekili:FireToggle("movement", o.movement and "on" or "off")
     H.Hekili:FireToggle("interrupts", o.interrupts and "on" or "off")

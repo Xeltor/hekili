@@ -347,8 +347,7 @@ describe("Protection's optional target spreading", function()
                 if health == 1000 then
                     assert.are.equal("bloodrage", action)
                 else
-                    assert.are_not.equal("bloodrage", action)
-                    assert.are.equal("healing_potion", H.Hekili.Engine.Output.Primary.healthCues[1].action)
+                    assert.are.equal("healing_potion", action)
                 end
                 assert.are_not.equal("taunt", action)
                 assert.are_not.equal("recover_threat", action)
@@ -412,9 +411,7 @@ describe("Protection's optional target spreading", function()
         it("preserves emergency defenses while recovering, then resumes damage on a secure pack", function()
             local H = threatPull({ level = 60, health = 180, talents = { [12975] = 1, [23922] = 1 } })
             H.Hekili:FireToggle("defensives", "on")
-            fixture.read(H, 0.2)
-            local primary = H.Hekili.Engine.Output.Primary
-            assert.are.equal("last_stand", primary.healthCues[1].action, "health cue takes precedence over the swap")
+            assert.are.equal("last_stand", fixture.read(H, 0.2), "Last Stand takes precedence over the swap")
             H.ctl.unitHealth.player = 1000
             H.Fire("UNIT_HEALTH", "player")
             H.ctl.threat.nameplate1, H.ctl.unitIs.nameplate1target = 3, "player"

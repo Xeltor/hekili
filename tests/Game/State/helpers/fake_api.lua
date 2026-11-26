@@ -151,6 +151,7 @@ function M.new()
         petPowerType = 0,
         itemCount = {}, -- [itemID] = C_Item.GetItemCount (default 0)
         itemCooldown = {}, -- [itemID] = { start, duration }
+        itemUsable = {}, -- [itemID] = true: C_Item.IsUsableItem answers true (default false)
         -- [index] = UnitStat's value (its first two returns; default 0); .armor UnitArmor's, .block GetShieldBlock's
         stats = {},
         powerMax = {}, -- [powerType] = max
@@ -178,8 +179,10 @@ function M.new()
         mainTank = {},
         encounterInProgress = false,
         isInRaid = false,
-        unitHealth = {}, -- [unit] = UnitHealth (default: health)
-        unitHealthMax = {}, -- [unit] = UnitHealthMax (default: healthMax)
+        -- [unit] = UnitHealth / UnitHealthMax (default: health / healthMax; the player's health SECRET always, its
+        -- maximum in combat, owner L1461, L1710, unless healthPlain: the loop oracle's truth)
+        unitHealth = {},
+        unitHealthMax = {},
         healthPlain = false,
         totems = {},
         traits = nil, -- { config = id, trees = { tree }, nodes = { [node] = info }, entries = {}, defs = {} }
@@ -355,11 +358,13 @@ function M.new()
         end
         return r[1], r[2]
     end
-    local function hidden(unit) -- the player's own health: secret in combat (owner L1461)
-        return unit == "player" and ctl.combat and not ctl.healthPlain
+    -- the player's own health: secret in combat and out (owner L1461; L1710 measured out of combat), its maximum in
+    -- combat only; neither with healthPlain
+    local function hidden(unit, always)
+        return unit == "player" and (always or ctl.combat) and not ctl.healthPlain
     end
     function api.UnitHealth(unit)
-        return ctl.unitHealth[unit] or (hidden(unit) and SECRET) or ctl.health
+        return ctl.unitHealth[unit] or (hidden(unit, true) and SECRET) or ctl.health
     end
     function api.UnitHealthMax(unit)
         return ctl.unitHealthMax[unit] or (hidden(unit) and SECRET) or ctl.healthMax
@@ -820,6 +825,10 @@ function M.new()
         end,
         GetItemSpell = none,
         IsUsableItem = function(id)
+            local known = ctl.itemUsable[id]
+            if known ~= nil then
+                return known == true
+            end
             return (ctl.itemCount[id] or 0) > 0
         end,
         GetItemInfo = function(id)

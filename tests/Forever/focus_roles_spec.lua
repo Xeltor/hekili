@@ -156,7 +156,15 @@ local PACKS = {
     -- re-pin e5a9cd2a2d: the adaptive list puts the upkeep Lacerate and Roar first, the rage dump (Maul) last
     -- re-pin ab0f00e4fc (wowsims #1087): one flat list: the upkeep (2), the Maul rage dump (2: as Heroic Strike, always
     -- tier 2; Fable for the owner 2026-11-17, L1302), then the leveling Maul (2)
-    ["Druid/APLs/Guardian"] = { "demoralizing_roar=2", "lacerate=2", "maul=2", "maul=2" },
+    -- The two field Lacerates refresh a held bleed and establish it on a durable pack target.
+    ["Druid/APLs/Guardian"] = {
+        "demoralizing_roar=2",
+        "lacerate=2",
+        "lacerate=2",
+        "lacerate=2",
+        "maul=2",
+        "maul=2",
+    },
     ["Mage/APLs/Arcane"] = { "arcane_missiles=1" },
     -- Frost (new pack): Cone of Cold on five Winter's Chill stacks and Ice Lance on a Fingers of Frost charge 1, Ice
     -- Barrier kept for Frigid Power 2 (the AoE list's too); Cold Snap a cooldown (none)

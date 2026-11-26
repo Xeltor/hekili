@@ -144,7 +144,7 @@ end
 -- Sample the area on a real cast. New enemies can reuse an older area-only slot while
 -- leaving memory for previously selected targets available.
 function I.StageAreaDebuffs(api, t, ability, area)
-    local facade, plates = ns.Facade, I.Plates
+    local facade, plates, units = ns.Facade, I.Plates, I.Units
     local melee = area.melee and area.melee[facade.KnownRank(area.melee)]
     for index, unit in ipairs(plates.token) do
         if
@@ -157,7 +157,7 @@ function I.StageAreaDebuffs(api, t, ability, area)
             if tokenMode then
                 key = plateID[index] > 0 and plateID[index]
             else
-                key = Plain(api, api.UnitGUID(unit))
+                key = units.ReadGUID(api, units.INDEX[unit])
             end
             if key and key ~= "" and key ~= guid[I.targetSlot] then
                 local _, far = facade.RangeLib(unit, true)

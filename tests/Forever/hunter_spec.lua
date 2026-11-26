@@ -532,7 +532,7 @@ describe("Forever Hunter", function()
                 e.talent.improved_revive_pet = { rank = r, enabled = r > 0 }
                 out[#out + 1] = { ld.run(rp.cast, e), math.floor(ld.run(rp.spend, e) * 100 + 0.5) / 100 }
             end
-            assert.are.same({ { 10, 1 }, { 7, 0.8 }, { 4, 0.6 } }, out)
+            assert.are.same({ { 10, 1 }, { 7, 1 }, { 4, 1 } }, out) -- the cost modifier cuts the whole price
             w.game.known[883], w.game.known[982] = true, true
             local function usable(key, id, u)
                 w.game.usable[id] = u
@@ -712,6 +712,7 @@ describe("Forever Hunter", function()
             end
         end
         assert.are.same({
+            { "improved_revive_pet", false, { -0.2, -0.4 }, 1 },
             { "resourcefulness", false, { -0.3, -0.6 }, 9 },
             { "efficiency", false, { -0.03, -0.06, -0.09, -0.12, -0.15 }, 18 },
         }, mods)
@@ -922,7 +923,8 @@ describe("Forever Hunter priorities", function()
                         e.action == "call_action_list"
                             or pe.LINE[e.action]
                             or cls.abilities[e.action] ~= nil
-                            or racials[e.action],
+                            or racials[e.action]
+                            or pe.SHARED[e.action],
                         where
                     )
                     assert.is_true(not window or cls.windows[e.window_name or e.list_name] ~= nil, where)
@@ -931,7 +933,7 @@ describe("Forever Hunter priorities", function()
                     end
                     for kind, key in (e.criteria or ""):gmatch("(%a+)%.([%w_]+)") do
                         if kinds[kind] then
-                            assert.is_true(kinds[kind][key] ~= nil, where .. ": " .. key)
+                            assert.is_true(kinds[kind][key] ~= nil or pe.SHARED[key], where .. ": " .. key)
                         elseif kind == "pet" then
                             -- `dead`: the engine's pet-unit read (State.lua), Revive Pet's line (L1059)
                             assert.is_true(cls.pets[key] ~= nil or key == "dead", where .. ": pet " .. key)

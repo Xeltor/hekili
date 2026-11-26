@@ -1247,7 +1247,8 @@ kept("C_Spell.GetSpellCastCount", "virtual", zero, "flagged SecretWhenCooldownsR
 kept("C_Spell.GetSpellLossOfControlCooldown", "virtual", nothing, "absent on Forever")
 
 ----------------------------------------------------------------------------------------------------------------------
--- Casts: the player's own are plain [W PR9], the target's secret [W PR8]
+-- Casts: the player's own are plain [W PR9], the target's secret [W PR8]. A target cast is interruptible only once
+-- the client said so: unknown reads not interruptible, so no interrupt is recommended without the fact (L1805).
 
 local CAST_ICON = 136243
 local targetAliasCast
@@ -1278,7 +1279,7 @@ kept("UnitCastingInfo", "hybrid", function(unit, ...)
     if rec then
         local channel, castBarID, start, interruptible = VS.TargetCastFacts()
         if channel == false then
-            return "Casting", "", CAST_ICON, start * 1000, rec.est * 1000, false, castBarID, interruptible == 0, 0
+            return "Casting", "", CAST_ICON, start * 1000, rec.est * 1000, false, castBarID, interruptible ~= 1, 0
         end
     else
         local channel, bar, start, finish, interruptible, spell = targetAliasCast(time)
@@ -1303,7 +1304,7 @@ kept("UnitChannelInfo", "hybrid", function(unit, ...)
     if rec then
         local channel, _, start, interruptible = VS.TargetCastFacts()
         if channel then
-            return "Channeling", "", CAST_ICON, start * 1000, rec.est * 1000, false, interruptible == 0, 0
+            return "Channeling", "", CAST_ICON, start * 1000, rec.est * 1000, false, interruptible ~= 1, 0
         end
     else
         local channel, _, start, finish, interruptible, spell = targetAliasCast(time)
@@ -1977,6 +1978,16 @@ Facade.DebuffCycleBlocked = VS.DebuffCycleBlocked
 -- Scalar evidence from the existing event-driven player aura walk, including untracked harmful effects.
 function Facade.PlayerDebuffByDispel(kind, t)
     return VS.PlayerDebuffByDispel(kind, t or now())
+end
+
+--- (L1805, owner "yes" 2026-11-23: the one new belief read for it) Whether the hidden values of one kind answer now,
+--- each on its own (Families/Player.lua, Sources/Bands.lua VS.Known): Facade.KNOWN_HEALTH the player's health (false:
+--- it reads full), KNOWN_POWER power type `powerType` (false: the model), KNOWN_AURA the hidden-value library's aura
+--- kind. Belief-only, like TargetID: the core's fourth belief read, by the APL conditions `health.known`,
+--- `<power>.known` and `aura.known` alone (Engine/Sim/State.lua). Allocates nothing.
+Facade.KNOWN_HEALTH, Facade.KNOWN_POWER, Facade.KNOWN_AURA = 1, 2, 3
+function Facade.Known(kind, powerType)
+    return VS.Known(kind, powerType)
 end
 
 Facade.Display = {}

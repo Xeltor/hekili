@@ -65,6 +65,9 @@ local function warrior(level, rage, options)
             end
         end,
     })
+    -- These scenarios assert interrupt and defensive priority in Primary.
+    local toggles = H.Hekili.DB.profile.toggles
+    toggles.defensives.separate, toggles.interrupts.separate = false, false
     local ctl = H.ctl
     assert.are.same({}, H.loadErrors)
     ctl.current[6603] = options.autoAttack ~= false

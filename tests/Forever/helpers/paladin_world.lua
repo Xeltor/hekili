@@ -497,4 +497,13 @@ function M.Protection.beforeLogin(_, H)
     H.ctl.threat.target = 3
 end
 
+-- The sustained solo tank gate uses one durable attacker so Protection keeps its shield rotation.
+-- The ordinary solo world and replay fixtures retain their own encounter classification.
+M.ProtectionElite = setmetatable({
+    beforeLogin = function(core, H)
+        M.Protection.beforeLogin(core, H)
+        H.ctl.classification = "elite"
+    end,
+}, { __index = M.Protection })
+
 return M

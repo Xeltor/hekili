@@ -229,7 +229,8 @@ end
 
 local function sealCost(costs, ids)
     return function()
-        return byRank(costs, ids) * sealMult(talent)
+        local c = byRank(costs, ids)
+        return c < 1 and c or c * sealMult(talent) -- a percent of base: its cut is the cost modifier below
     end
 end
 
@@ -374,6 +375,19 @@ spec:RegisterTalents({
 -- The Justice sets (wowsims item_sets.go; the item ids the pin's db.json ships, four pieces each so far): only the
 -- 5-piece bonuses move a recommendation's timing (a hidden aura each, read through set_bonus); the 2- and 4-piece
 -- bonuses are stats, nothing the belief models.
+-- Benediction's -2% a rank and Purifying Power's -10% a rank on the percent-of-base costs (Seal of Justice, Cleanse,
+-- Purify, Judgement, Blessing of Freedom, Righteous Fury): each cost is rounded whole, then cut unrounded (wowsims mana.go
+-- newManaCost, then spell.go ApplyCostModifiers; L1793 item 1). The flat costs take theirs in their own function.
+spec:RegisterCostMod({
+    talent = "benediction",
+    pct = { -0.02, -0.04, -0.06, -0.08, -0.1 },
+    spells = { 20164, 4987, 1152, 20271, 1044, 25780 },
+})
+spec:RegisterCostMod({
+    talent = "purifying_power",
+    pct = { -0.1, -0.2 },
+    spells = { 4987, 1152 },
+})
 spec:RegisterGear("justice_battlegear", 273908, 273909, 273910, 273911)
 spec:RegisterGear("justice_armor", 273912, 273913, 273914, 273915)
 spec:RegisterGear("justice_battleplate", 273916, 273917, 273918, 273919)
@@ -1457,7 +1471,7 @@ end
 -- Purifying Power (429144): -10% a rank on Cleanse and Purify, 8% of base mana.
 local function cleanseCost()
     return function()
-        return 0.08 * (1 - 0.1 * talent.purifying_power.rank) * (1 - 0.02 * talent.benediction.rank)
+        return 0.08
     end
 end
 local function spendsFavor()
@@ -1530,7 +1544,7 @@ spec:RegisterAbilities({
         gcd = "off",
 
         spend = function()
-            return 0.06 * (1 - 0.02 * talent.benediction.rank)
+            return 0.06
         end,
         spendType = "mana",
 
@@ -1801,6 +1815,7 @@ spec:RegisterAbilities({
 
         startsCombat = false,
         known = knows(LAY_ON_HANDS),
+        toggle = "defensives",
 
         now = function()
             capResource("mana", 0)
@@ -1919,7 +1934,7 @@ spec:RegisterAbilities({
         gcd = "spell",
 
         spend = function()
-            return 0.1 * (1 - 0.02 * talent.benediction.rank)
+            return 0.1
         end,
         spendType = "mana",
 
@@ -1998,9 +2013,9 @@ spec:RegisterAbilities({
         spend = benedictionCost(DIVINE_SHIELD_COST, DIVINE_SHIELD),
         spendType = "mana",
 
-        toggle = "defensives",
         startsCombat = false,
         known = knows(DIVINE_SHIELD),
+        toggle = "defensives",
 
         usable = function()
             return not buff.forbearance.up, "forbearance"
@@ -2022,9 +2037,9 @@ spec:RegisterAbilities({
         spend = benedictionCost(DIVINE_PROTECTION_COST, DIVINE_PROTECTION),
         spendType = "mana",
 
-        toggle = "defensives",
         startsCombat = false,
         known = knows(DIVINE_PROTECTION),
+        toggle = "defensives",
 
         usable = function()
             return not buff.forbearance.up, "forbearance"
@@ -2153,7 +2168,7 @@ spec:RegisterAbilities({
             then
                 return 0
             end
-            return 0.3 * (1 - 0.02 * talent.benediction.rank)
+            return 0.3 -- Benediction discounts the rounded cost through RegisterCostMod.
         end,
         spendType = "mana",
     }),
@@ -2197,23 +2212,31 @@ spec:RegisterSelector(
     end
 )
 
+-- (L1808, owner "Setting per line") the health threshold of the packs' Divine Shield (20%) and Lay on Hands (15%)
+-- lines (the recipes' `extra`, the def-int-beyond-wowsims review's defaults): a 1-100 slider on every spec
+spec:RegisterSetting("divine_shield_health", 20, spec:HealthOption("divine_shield"))
+spec:RegisterSetting("lay_on_hands_health", 15, spec:HealthOption("lay_on_hands"))
+-- (owner 2026-11-24) a Dwarf's Stoneform in Protection (wowsims.com) (translator rule 13: a tank's defensive racial) at
+-- or below Protection Warrior's 50%; Protection's own, not a shared setting (rule 25 would put the line in every pack)
+spec:RegisterSetting("stoneform_health", 50, spec:HealthOption("stoneform"), "protection")
+
 -- The priorities, one a spec, written by `make packs` (tools/make_pack.lua) from APLs/packs.lua and APLs/*.simc; edit
 -- those (a wowsims.com pack: its recipe, tools/wowsims/specs/) and run it, never these blocks
 -- (tests/Forever/paladin_spec.lua checks they match).
 spec:RegisterPack(
     "Retribution (wowsims.com)",
-    20261118000,
-    [[Hekili:LR16VTTnq8)wYx8K3sLLDA7YcMcqgkgwg6ckM6NLmTeLnNLenePItam0F77OEz9I02XPjUPFjXMNUh)Uhu3DW2JT)QTLhIJTVBIXKpoE84lnmmST4pUcBBTc5Uenh(qeke(7)I5XKzjCcnkDQ2A6AgjKP7sdhkE0hdOipH4MLqc43gzpRxjZwHDTT(YnF(MpD7DxfVvK2wliEE4C(Wmxv67Q0P8f40PfNnYNgJVhhNo1d7Jsc4PtV5lFoDkCC60MsjHmsybSrRqbips0OAwWi0Qa2OcrOdFrheEWWZbLfJIybay8GptfkNWsNI88Or)e8HL4hz6Pt)eIJUQhJs7FU9RGqwW5RyxnA0CcFrYmbog16rhcYeSD0mdFdd879DV8cDW1gt9jbG)h5kSsM(QymW8me30ffe4KFStaHXpxeOmfhCpySoigJmpc75GsIrP)Dh()fZr9lbxeJVL7)lXBooehXReHefhsVh7WPoH4am(CIVP2z5pJ(cAWJomWtVeRVmIUoAtFuiroGJEoEyLIalSs7NNWWouFFN5UEMJZeFiIeTaf55eJfFK97MvNarzS37m0hpO9dDTjC6WbAC685byDHrle)aT1Kip66SdgRNSAtTVpb((WnkGJk0S5SwsEWzTfDDalGjHJdzDbmNeIbZ)012xGcdXXGr7SogXxCUp1nHveSkvtZhrxKRzASPtuQtKCYjCmRMmYW6XLzwAYvP(L1mUuAayd1PeJrEpQGNEzPWK06HOhCvHqqVZy4WtyhodJce5qWfzHGhmR4afiaaFnCFKGuaz(cUoocnla7nOGAl(QiF2SeF)oubROcoL0IfIfttyrygRmW0G7Mpby4GqYObUlT(dtdKhMUgceQqETsm1EannzGCJMm0375DtPlorKWCMsJyJuBixvy3f0UUqghAe5AZXd)XnpVHd5GI5Qt83OKFH)wzQDRmN2KhOG6XKfTlqTdRUzUwjZzzzMx8dysMKMabIy3CaK9sTVVmF8d0yxcl8K207)Y8jcBwDjG0xyTVxEKRJwVBRum5VtApkEHot1drp8Zt2oDH4)DN(WS2CwzhKP(mn0MsDqOlzseZsZcgd0XnoHH8WXBfzFuBiwrWOAsftfJy0iAgHFGVT6UB9C7KQo3I0DaNMwI6xV31wA9WduMYixN7h(NCi4FYXIFPVWRRf1ll7RVO8AIM3x0PZ8X6FaAxpcPVYL7eqHMrmoU(07zI4kUQtlNVAoS6xl38o6Af2NIaW26ECmdyT1gHexzZeloQrQaCWDzBNQiIz)h2w1YofelwiITvLrAB5gdJohtq2whvLRIuxBoy)TmmvA9GQr3IPwSzBLfDfWg0)fptoMdVKEhoM3VpoMNEzBx3tdMB4Kamxws3xUuPGQEMA26rw98elFux)KJOILt2hGQz(Q0HQMx26vA3svEvQt(EGBwN2t5WbLoECRkzNn21TZovT2PU3U9O5UdP6SArF1Dh7)k(EfqM8Y7DSDVNR179sJ5QyvlC1864pi5ULA6THV64s5pQRD6W036rAFPJyq44JschDELATQUxVDhEalp8jU9qHp5xLw5UZfijBPHVGBn8B3AdFZL)VFnqE5tpDyhRE7yxO4R0gf35kf)MTtX3(zGY7r)UFtEdfNU4szZX1NixGWXgV5Gy1itc4jFmKN4cm39nytYuS8zWF(2Q5(MlpjF6SQFyfQg4uPRvCE3LN23mw7L4KS90CRvgrf2EF7vTHNx12xl0A96d1JXEkof(w)EDC0kpqsuuHJT9oW76u7zl52fbsucFbfId)fEjjGKov7pl(5eLr2()p]]
+    20261126000,
+    [[Hekili:LRvBVTTnq4Fl5lE2BPYYoTzDbvfOdffldDbfZ9ZsMwI2IlsIgIuXXag(3(oQ3mLefTSDtIB7xAT5jE3Z9gfVhh7r2F1EIhIJTVBS54RhnA81MMM2t4RxITNSe5EpAb8Hiui8V)lMhtMLWj0OTt7VIUIrczgU0WbIhDDaf5ju3Sesa)2i7zk1mBj21EYx(WN)WhV9UBI3Ps7j(eppC2(WmxD27MTt5(4TtZxB4CAm(bC82PE45OKa(2PF4lFE7uy5TtRQLeYqbcydxIcqEKOHsiyiAzaByUkmGVyakpyWLGXIrrSaWz8GptfgNW2of55rJ(f4d3JxZm2o9Jio6gfGQ))C7xbL4Z5lz3mC4cc3pzMWpgw7rha6eWoAM5Ctt8RN7(2RmGqBmDojaI)ixbkzglJXWMNH4wUOGaNSLDcim(LIeLLyHhaW6GymYIiSNdkjgT9VBS)FZAOAn4Iy8D7()s8wGdXr8svy5rEGeHDy(eCG3LK5w(yua334(i6QOE5FzPl)DwmmNtIwWmQSfNShPuHascqRDaq4JI8yDtJY7ixH9GGf3bYToaGJxGJCxNkPx)lYSuvyKP9nxmlz(8AsswoqgDzQNXPr4ltyyh685olC9Sg1nOkTDfUUyf4XCwsfRCS6FNguyc155q6dyho1jehGXclvgM8PbRDyqRX94IGKcjKihOZybUsOQSCPPJ0perIe5lNyS4JS3zvUc0wI9ELPXOE1FO3BbRoOxFoDXIaSHa0c13R)ksKhDv6cJGe2gPVpwKa3OXD05nBUOMM7DrDvl7Wc3KWXHSMomNeIb4F(IDFui0OaG2zvmI7F5CQBclpzvyMQpIH4WblZnnYsnYKJpJZzs6i1xpTkZcixw6x0Z4sPbagKLeJrER1ShLBjhs9vi0doBxOOxzoyWzCaNbhjjQHG38ecrW0MduGWb4RGZJeIcil85g4i0SaSxVCP12xP4SZSRlfqrP7uilwOwmnHfHzSkN4R(jaGdkjvgeU6Ron1R9007HeHopxQftFeOF)2CYn9BZ7vUEZs68vefmxOfeBAfdzMc76tBgczC4MJV3A0GFERZReqoOCU(c)nA3ViERT0UwLtDX90i9uQI2NtThuxTwRyZPvzwx9tyrwl3AheIDZCG0xQ99f8XpsJDjSWZAOR(W8XcmRVfO1xy11dpYSrT3TvOMS3j1HMx4MPgHOh)1X7ghu8)nhx0sAW40fsnFQfQlr2jmAz0rRcybZT74gNWqE44DQuL0kQvKmkNuXsZigvYMr4h576UB2pxVOQXPinhWPks0)69MyP2d3tBjt72SB()4dX)hFQ(FRVWRjIuULUglkoMO65fnUz(iJ3axxpcjgu2jGcxgX80UNUIjIl3LSSS9jfWKpwU6z0sn2NJoG9KhWXmyR1OWtCKntW0xLsbyH7sPtmpJz)N2tKQofcZzWYEsjiTN4gdJohtq2toPoxnLU2Ca)1aMoREq9O78PABZEsA2v42G9V6BuG5WBP3tG51DjWC8TTndpv2CLGe4ZfT0QQLkuu5ZiH1tS75iBF03)K5r5SjRZHQW7OSxTFA)uXPQQY9ctjZy6HzPVzCT2gzRhsxIeBQhMx0Kgwv9a6m7oswpCl3GGwHXFtRnGAR8uiAxFDjIRFr7SZUDY(5CQE6naLR7yCq5HuNgbA796(nVVVUl8R)g)D4k)IWXV3XWrj9VYHJUt87lGN922R5kuVAoF)wr67ZTpVRfUQFv9L0)rlNAkz3kXQtRK)KEzuJn9ut0XZDgdshJmBjF04MwsTDVCukFaCkFKKkNguQFlIU67Ait(zKn5No6K)HRdOBdwmQ9jB2B9WE4K9uzA(fIQ59Y18tgzZ)4xc2(WB3nQ(L3LEr55RJP9cYYC1K6ITpS83RUy5W0c3R9rrosQT3)zyJtnC9bpKmCTx8E88D31I5XzZTx(3iLUj31gAfR3KwDDtNRVyunV6zOTnHAWUkg3Re51XlFUvL7puyQZC(z2f3L9JA1bTKf1eyR)RJ0mOQ43pXoprIs4(uip8x47jbKTt7)P8)YatfB))]]
 )
 spec:RegisterPack(
     "Protection (wowsims.com)",
-    20261125002,
-    [[Hekili:TZvupkoos4Fl8chOBoGMUzU(gD0sZPvNU50EJwPEFMGjXaE7KyuStZXPw8B)k7KaX2Xj2a9m7knpS7stsQVQkx5RQYLxwC3IFDXZrioEXxNoz6hV7UPZMmz6IN5h2Hx88ou4lOnWhsrjW)(xYOCCiNqtpUCWE6EgjHnkKMmuCNhIPOiH0wLtI5FjDXQgfmBhoeK0N)5p)tF5RFA3jjU45TKOiCXJHzHTG2NoUKVfFCz53nEnnd)ko74Yi8AuEm)4Yp)l)8XLWxFCPIqYjJfWZgVdfJIiPJpd)y0Uy24sbmc(JrGOJh(baQmuklgmKi4Zub0e2XLOOiA6Fc(Wl4dSrhx(tio6tnOsd(pF5xbHSLZ3X(04XBi8T5RewXyTBDiitqZrRMSEYe8dRdF8(rGBnJUMedUEKulzJ2LHHhEfIpFln(qqmzZw(hIiSDXOdbRWX09ZNn5dK1ZlVRj950nBIXJatdNYiVIz9fwDa4ccwr2eSfJIp(Vne)FE(41Xi22a66gb5rNbjeX4TGIvZ4MHqMq4yAolyDE2bfHUkF96rQxFueDF6zzNGiPC4FKxZI8X8mYQCXfcq5zifeojO1eCC05)uCJbjegJKUPzXgHFLE5YSFVczosx7g9skyGndjd8HIfCd)Kne5O0xeGj9J1FAPxSDqo52tXmwBOnyqpDaFRY6uWuAzd7pON8BZ392aR3vdAC(UHdh2SkJY50aeNdSHFiNHHhzDWMWO531SAZ4OmE597EitVIGr9LR8DGd4SOZzIOrC0BMWMHirbak7g2CiHfJRYjauQbHz5mueo7S(00vVsDQkOPAz6SE9UWP9EYK9EXF9(WADt5Q(MXqPZlTMgMZMp1j8CKF6pmSs3iUiH9YPPyO0JeXJnqIRi8fhhJwfJd2rjmqfbT14sWNXigEu9xCbbYXjqWFglyvE8EuMUYP(UXhNjGTLxjG3gE9GG4GXYZWf(fDemwd9sfEOlvOWxguCjxvbH8HW4TO0iMgG3n78k0tTYhGtWzBWPHhmjBqjW1ebh)gq6scX(AumEEAaeaziy4V5BLbfT61UFIxEnDiGxsGqlX30(AZLJse5vivuaBR4LunXoTlXYOX0asssEkHFObPkUXI2fUzs2Cffe0z(s57Ta)cepW7Rh7aC84SS8DCw)iSm(uKjb8XIe09wrzS(9kE0reiKv83L)5EOnes6DtoDDAoNrIWW3ukjd9QmdZRcVaHMbMrWj8DHRUYMe9DjRiaLHbdlpv5P)T8Onq4Fk3KBtracPx80bzyuKIlLTNSMhClKui8FWHzi5kU(dUjJMNcf3qcFbC31sMNgC65WQ5EdPqJEqPuaqDPwL3mWbQrClR3GbzmFbB8qXuki0eCmg3FpgTtKKH8)Wpn5sCXfcRm0t5kNKqakgI(HgJVyV)fcsHtylfYb2MeDQoT6Lw2oVS3LwoZzkF)kT8kLBR68uNLDegkkqeKxWU5S2FZqaQgrwjPKUjdJJOjkSNAzWBaOYyMe4vnzOg8IlpJg3Vx1viPHi4nqcxS)p9TWlRYHoRgRpoEDauyBmWwwuardQSrneHXyeOVUKrPOUS(M1VLG2qcBS8n)RSBxEgz9HRsD8hunAo3lv0YAKcDOAAWz6zbRTcsYGQ5cflubr5QS5w6p7PRQ)mhQU)jxQUVJKWg9L1CDgNUE79r1VNkdSGZbwoOznwyGrhww0IVxnyvMBrw)OdUUUjzoTyjLPwtn1qZKiWs5hLQG5Y056ocCSSH2de661KRPgdpqUX6uBVyHAEDzHMjOu0tZlJloD3JcPm(fv8Y7R23Cdc7Hf2TUReNcpo)AKiOaEpbs3jEzQ0BObGShIaojbpFYqvl5Edl5(jT6OneTM7g)FPzHewI7g11Ppv4zOinxpPhQYudvzAhUMtikvgyvHJIlcjREhoQSfJr4urMYO3QAYZ8o0sE6nXruEMaI61nwVlgvB9rDt9r1UCm3Hr3COMQLZB84Taap2pYo2Ojr9kfoiOT7O8KKd1cfQ2SCZKRgPo8Lr1u2DtV0jJ3GEgSMs)XBHuASiJvTlKHff2W(7Zh0WffXycb9xMmCyB(dh0zlv3mWm7ELgj(3InLlO8l63RXkbCADYPQDS(k4PjICwWL7KadT2R30ujTUAcKgSDFklYNa7(d0E)4TZIrTiP26jObOTwqsJzAQzNlE(vCgdUzTtRqmHXzYJirXjda(4xLhzIsx6I)bCP6D3U4RZMunT(fpFUh4fphMr44mcc(KdZeQAVgwWbnQDaFSgGQT27lON2TabQ37oQxUzQG4dAiwjE1wPAecpB5sG2mBOPr)3iEwt4ulHIaKpAbeLmyxmcDKYsOa)vnfWdKAVPVZ2s9lbrGcUbrmla(JwS(gBf0fDRPEcDSPWlORqHj830mHA5hfmbNmPAnU3UHuVLDba3nXMtQAcD1LxBBTsR7TIeQoyU(4S6q5(wUyF0y29x63Uu)6GO7bx1pNhDNN6xhuI3n78ZxFqGMbe(m)pjY6uJn4zorgRp5ghDA1hnOetDcsnmVFIJcwD1WUlV2miL4RZDQBZVh4FEaLsvqN9utfMwlhOYGhDuZuMkOeqDgZUbuiSQtq5fcQohNtrsNti9hJzuklKsNR10CmhpPlj6MQZSAlg7uFnwXwFEKsXRtmAt8ADZ5hi6SBvcTERmwLOttdvcJovMnBrDCPwbwzqPsaSvyxT2hSknRtqvkzDgPlFv2J5EkrwNi6Ada8fFBvYDUhuNGsklD6MlS)j3MvRStg9x71rCM7nq544wLW2vJIZUfgQkKDub10BML2WOzLkqhLin9MyZ2a3wdKRmN6AJPY6Ewo)UzGXs71gtx5eK9PGGUNKCBJsUZwpU3wJWfdx(MOP(Oo68PDKJW9EHSSIFtg)SuZTXe31MK4)CPLWDt6)12iRfi8q31K57U6FPtR2Lk9EqNux)rSUNgwu)V9BPXd6jj62J3nX4PLxxgYTr9df9mP4NV0QrDD44sqSLWOJsf9yWGDn1CPAOZJFr1v6HsDbJKU2kCxduxAsUwQSdfS((AysT1A6a1by7V215q4)onfEPvBlvs1Ws83CVofvz88sn06ot0ABhEOJFtMBF7ZDtyOZSTjWxmB3vorFPszlvxBtiXT1G2NeVeC9KuvGBDYj3cKDyGkZ0tm58oixVEYcV91D8aKAJR7Ms7mSUofEjKUMTQfQDRhQGVXNQaP9ONQQMA(D(af4sbPZSL7QtQJR7KiiX2VTf665kBWDk1d98eofI7Z5tW(buWHAz)On29UkZ0YbBqktBKZTM8UUxJl((Y)3aEXpowd)4yn44Hoqg95BYzVqWHSW2i9u5j9a)ooSd8FCygAYqC(Wm0w0NN)Wh44VYak)Yhi1TU25M6)ehyQFnDxxRoA8lHGKwMlxa2sbL4FHFHetoUCW)S8hjg5Lx8)p]]
+    20261126000,
+    [[Hekili:TZvBVnoUr4Fl(lU2OBTvCIttxCoaBXHIUfxxCa5(SLPLOT5fzrbrQK6Ia)BVdPEXIuIsK2oz7bSF42l2uAEEMHKZlKd8YBw(BlFkeXXl)2mVz3FZnZU3ZZB5t8dj4LpLGcEgTf(Jy0E4F)1ukhhWj04JRg9k9vgzpBsaD)yXtEiIIcfsBDgjI)14LRBvWSeCaiPV8lF5N)63(CsLex(0osyio)1WSGoq7ZhxX3HpUQ47MUHMIFbNECviEdklIFC1x(1F54k4RpUsrizKPc4zttqrOqs80tWpfLeXMwiGjWhMaIoA8NaOsrXSiqrcH)MkGMWoUcfgsJ)tWF8m(aBYXv)mIJ(CluA0)(R)giKDCEc7ZtNULW3LTwOft1E0XGmbMJw7TXZdF3MGhUDcywtPBirGPhjzjBsskgE51i(ID0Od(rKT74FkKWsIqh8xJJOVUyU3NiBwu8uEd50TBJWtavdhZiVGzdfATpyc8xt26VdJIo(VAi()8IPBIqSD(0nTcYdwdsaIX7afJQXvdHuHWX0mM)MS0dkcDD2MntuhFsi914tYEpIeZH)toMb5J5PK1zIb8rzPifeQe0gcok80hfpO)EcJrI32UydXVqpFzoCqUmNOZUjphdky7qYaBOycVHDYeICu8ZcWK2X6VT0k2nivM9ymJ1fAJgnqhW3k1ofmLA24HJgi)2SK3gz8PAHXzjJhpUDkJY4uFeNdEd)ugddVYg)TbHlUPDAZ4OuEXZB)sMb5lg1NUYsadWjrNXeRgXHV1e2uej0hqjzC7ljmOCLgbWLQFqAgdfItpXN2g9c5u5IMYPPt86DXN27PNS3l)xVpETUQ(Q(W8qP7xAdniJTyMv4zP)P)W4v6k5lsOVCAmgs9yV41eR947k4qXhsc4)0cgMZbfJnP6X9ZhguNcTiK8cS33NTtyvYfXB5UouhP((CaFoEpSxjL5Vol6vuQUUOUv6(5cw2XoiGuVCq4NHXYsX5MrDeAmL7efURpkKB69ZhYwkiKpSQFhkoKz3er93OCUih6h70hdEpoDloo4G8LU4PpfIRAPUrAPgOOkFhy4o0EqGI9r)oeFIeGDDcLXZI9H9AnC4lvm5gIMBa7FcS2Rxo)z9Qk7OHQEERxZPJZgqqd8tK(8pxv)KeUyT3iz0MOVwgaLLB2PXkVIfkmJgr9j73Nft4hmJTQcoZnfSpmepyEnXTIZ5i5M7fbbDkPazWjiikS9N3WvbKidonnlHZggILB7fPlbwxrwOdwtzSHdYF1jeWrR4ZfF8vOwBs8nEvJtZ4msig(Mcj1GxfPr9IWkqOPGA4xHVnjKuQtIdxqM2lkfdkwwSYB)7zHBbVDX8MBIueGq65VTFkgfQyszVs2W9Vgska(F4GuKCgx)f3MsZIHm4jbpdM7AzSg7x9Ey1emdOVa2u(oaO(OvXddrU1YorMundsl8zCJxkIsbHUhhHXdFfJsezsr(V4h9ohtCUWkw6PmsLe8rrWQFC45B9ptqYnc7OqIEDjrRkgPE9tDhg256NMp3wr7w9txOC7KZZSw2HywcwSip37M1S)QHW6iSSCjP7MumoKUxX7PwENTauXAM9Wwn5snyJlpLgnCq5iK4aeSdKWfhY5qd(Lv9HoVMxFC0gFO6TiWBzEAVTq5gz(geHraFTjIIWWIHeclY5t8HieGbuL7wsaeg4TgJKqjmWVqBdb)ngXW6PlMKLs2C4IOJ7GQ5MZ(cCmmhP4ounm4C9OG1MbjPq2ybIjk)WmvV5goeIhVOdHWIsyF0Msy7jiCJdFO98mQgV7dly4avpWcFoW0bnT1edACmcgyX3RtrOi2ImBslmD97KPAYkpvx1sXRHwthbgs)OGcnNMoL3HVLPn09cH(2MCj5y4aYTMNA3jluZQlt0Cpkg94II1fvp9KakJFwjV8(Y(2lq4vyIDN9KOA5XPTrIffW(eiCNyZuH1qdazne(CYE8cVXQAYTn0KB960q3q0AMB8)HMgqy7TxPUm(uIxdI0E(KoqLznOYSEmnvikjdmRWrr5ljl3dhwuIXeCSisz4BLf518j0cE6SJJWSube1ZBSEvmQ66d6Q6dQv508y0TZG2KwwF66xdaC4q3754rf5RKBGGYUdZ2V)qTLcL3iuZGRncD4Qh1MYUF3l96XR6Wgp51m)GgdO0ireRAdKIfj2W(PfJAzqXAmHG(lEJh3L9WcoBi7MrnJUxYiX)korw)IVy4GwZeWQ5jRY2X4wWQR97KGlojbgAJt70uDADXoqAr3DjTixwypCK2(J3ojg1KK6QMGwG2ycjTgPPMEU8PxWPm4H1AjNicJZK9buE7Va)53K9fuHjD5FhgQE1Tl)2CVYwsz5tNQbE5tbPeooLGG)YIl(S8SgwYbg1nGpudq1s7Df0QtlqG6T2J65RMkiENgILIxTuQwHWXsUeOn3eAAU)BfpJbCQfqraY9garjc2zJqpHSee4VQrahqQ7I(oPl1hcwbk8niwZcG)GbTV1sbTHBTvtOLffEgvfkuH)MMkul(OWtqLkvRW9UvK6LSla4gptgPY7vUU86)EvC76OnDDHsM1JJU7NxNz2FcnMV)xZMx9hxYVE8lENT8Z67N2r(P7bT8HRFdXUn5(rCf3DUKq3fTMj)M59RLVVx)DNSx3LFllyQcPPF)xwUwQ(vJlXupcGPvq5wf5Ux3wtu7fT4AuvxRlzOEicnRYTEMN9ShiR0BbB0Jz017D6AUD3KDb32UKN6bg0xl9(B1QP9IKenfhrzRGB2Pl6o6LKQNqiZ8SGNwB8AcFpriAbEHWk76E72W3autU970LYP87(JXv(l1u9ObnvNM32Vn5not3rTPTbvhtGrS1VEFP4T1NS2HJ4gi6UvlfA9tgWOeTQ5cKWyR)s1UpWiWk9DGeaDhDkf9LxnUrPzSHeKfyQ7X68NLDOncKiR7w6sxa4k(6(LuTPIJ0XkOKYQN60T94iSR1hKi2tsGZRLgvFNhHLDVGe2EYERoSNVIQcPUJc94hxnnTLoDqsGEYnB2vrNnbUPY3x3SjgAnuw)xn6)30)fs91KNUIgYWLec6VXm6QZm6Sljeu9otj7L3RgxfM6cD09N2tmc7pRadZ4xLU5qYCtEI77mhDVnpKWP7S(SoojtDaIeH(ZjZ1lj7CB(dBY07otNcBVhrOb6)XFcH3PhKOFlE)ogRMETPNrAK)qEfuk25ZnBuB71ejiMcy0tQIoCp791eksAy7z22zEDoqQZOdpQnd3x)PiuP52MQSfjS((Qys2AmCGA)G4o76TNw(o1ulsT2uOKY7E0D19YiQs3UizOXtMOZYoCGJFiTbt3xJTurnDtINT3UlSbzKK6CUWr7Md6UXwKG78frEnq2I7NCUEGjRVHL65tMBTVSUTrYgBpnLU9WABtTiH02OvD4A3yp68b3Koc95E9qv1O535(ZXMesV3uSREDDCzn2JeB3owOl3xzlMtjp0Jty1sCxA3hZ97Jf5YEVjV79LMPH(eskttoN7m4DDRgx89f)0rS8hDj0p6sil7Hh5Qpxdo7ecwef2u1HQ(jDa)E6Di(p6nO2ueR7nOUw954pwow(ltJYVwosUzkqzPTQ(plon5xBp1LYXg)65iDlZLta7Oaj(N4NjrKJRg9pk(Hfto8Y)h]]
 )
 spec:RegisterPack(
     "Holy Shock (wowsims.com)",
-    20261118000,
-    [[Hekili:9AvyVTTnq0Fl9lDwyUsYPTzbbvdifbdjdzbbq5ZsIM8KfNPfniPINbc0V9D0YwMYww1biTiajm3D89osE37uYKKNtIzedK84fHxC5KjtUkmmmj2SEjKeVKqNtMHlkjlWFFNuSUolUqsNxNnALCLMVq7tLl8SHUwijmlCtR4cZ9Ljt7fz9sGMe)0npCZT3)41kWO4tRmCzzsCbNXGM9bA6q8DDDMPaQZ2AlixQGxavDgdYjvctD2np9qDgAUoRlkv8aBgOdwseegVmWjdcilf6Gcm(uTnCF8)9r8fEJr(uKsTappmCT0YpxxNrymz5VHlMdR1(1z3smKR7jVg9p3)mcsHXSuFDqWmUPOAQ9OeCqOEiMy6tMgMhgcFjNE1N9XBxLmNlWNac1MOA)Lka38uIjIseI0gZPcU2m2(wfzn8cMSPeTMpReyPKkfP(VpA))Euq)iqjAZ(D)VvSzWcO00cruRPXvAivMNNoJYIM0gGfz8pavrS))4CjTshDrh)NMzniakEzJliIX88OrJAc03AaPlvXNvyazLUe0A)5LYvLF8dtRYZprevl9ED0Op8Jr51barbli8s93IMe69XZcS2GCVm26JkLcgUORVTC8NrdIoEz79wtbNs7dsahp)SPhB3Md9ZFJR3qc455wo5aIRzg)fEjKMtErQ6wRUPU6nE5qyR7H0nQlUwjlwakBwVcFvl2w83q4o(6gIVTSpk8v7zVGuYs3Dn0Aa1Ta2Nc9VOd)W)jvuUEX(E7(79JCe62yWMln9lh6bBv2J2j0bI29QG6WPuvLMWa1Ei7Z7XW2PjpQ3359YgjXO8Og38bduSchA7CNJHeT(4MjCqjzQayjFFNckohQp2sI3qhYqIb)jE74K(WXPqY6Sf32BiC)im9tUB)EhoF8ZhSdQIBafNKe)UiaEMkGVVsGdQb(RseCavWFnYGdPd(oie6uCDWu1MwK0MVHRNMeSQ7lNOo1jBSH91ZShWvXTtj8B9jWk2Aj(YbZpBW2O(Jt37mSM7zj66WAxuABGNytIRorQUtNUryP97VgsIAWhY(v5hu05hwxCSmFt2EkNNH8Q7aa3xKbht0W6joHdq6HdYoMWEg1LS9qsQmf2Y17G5Cbh)K9)A7xKVXDY)d]]
+    20261126000,
+    [[Hekili:9Ev7UTTnu0NL(NmBSmjz3USUGQbKHIHMHUGaO8BjrtELfNPffePsMbc0Z(U0swIsww1EiRiajmxE55C4x3dv4IWNcdyene(WsVL3SyXYB888cd07YHWGCcDdzn2iJSf)9xKIDvXbPs6MQ4zViFrX3QCOYTZnPUtijmdCRk5c99zHRgfzvoqddE8UVE3NV)HBlaDbFvPMlZcds5mgupoqrNIVBRI1PqvCtm3ezb8muufZGesPqxfF3JFTkgdxf3hLsURrbk3CIGW4zUwkWLKluUPy(rkt6o4)7G4lMFnYxbjtjW5ddBln8ZvvXegtM9dyJnWoLtv8NjAYTJORz)19pHGKQ15QBDDxZ1PLRmtf3bPohXeLpzLxINh8He6hFVdU6wit4cClGqncv5Kxa4Gxr0(uIqevhosWv6Rn7v(MapJInIOu81zalIuwqQ(ZJg)p67oocuIs3n6)UKTg2cz6wi8z8N5zaUsXbb7AEIFkqe6uNnzYxYUQ5FYP6p5RaTMNTw50Bir1P0ciQebzxekIusgtDEiApIgaVcxS0r42Bek4I1qgD3(EUA27QzQVmQr)13TQmjzqpL5ZTvxn8kTmdUUubrYKKO1uM)IZtQwdFKPUjcMwuU0e5)k(DimcfT7H9r3ofk(hGwq2RHejTu5VSx)N(OIceafVDGnicJINnRz52eaPlQGVovdYsvgOunZK6L9XZax(FDw7M2eO86eGuaBj8m1N8x4n)QZcS2KSxmA6JkLcg2OFFnC8B(tIoUyp)sLGvTObcWQN)VPhRpUbgN)6UUabmV)nQoqSd3ClmH8SS44Bcx6IdHTBes3BhyhLSfRwyu9l4UAAZH)AcpWx)uCmh799E1m3n1FIoSm0ganAa2p55SSh)W)ilOC12UIXJxS23YzAFaJwQVVmSh8QshANOWT)HDf04mIwuQimOOdYX69yy7Dj3F095UYgHbOFMch8GxaykCOmpu4yiXOpS)jjqgzLayH)(blp8HdJXwyWE6qgc14pbn()tHtVA8Oik4AOGtWNF8nlXoM)fYks(4uz7oDzm9M5RDkJnJSF)azBDvZS81onSCUUSzXXwEgA)WfqBNH2LZ8rMHgY)5ZK827nMbDZj2FTDb6Ds8HFzWi60(BIT4z6l(2AmoPZ43lRXj8g)(yooL74BG9O1HRbV1QUWzu9NInsPt8u3hpX5ul1ys7xpZ7a2(W9ocFPBbglydXl8MuGMS3N2Ws3wupTx8zzgBrBFuAVcVyVkovv9dg41ooTFj1uEotUxAIFS9)u(kF7Jgh7)xR2t15z47A)Ya7TKjF)qnRNygobPdFHZXeoYBGcBMKKsDQ5e7xGnCbh)47)O5BR33D4)c]]
 )
 
 -- The hand-built lists the wowsims.com priorities replaced: a saved choice of one falls back to its spec's default.

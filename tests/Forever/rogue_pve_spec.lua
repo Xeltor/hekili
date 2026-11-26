@@ -144,10 +144,12 @@ describe("Rogue PvE priorities", function()
 
     it("offers Evasion when taking melee pressure and a potion at low health", function()
         assert.are.equal("evasion", pick(rogue("Combat", 8, { defensives = true })).actionName)
-        assert.are.equal(
-            "healing_potion",
-            pick(rogue("Combat", 8, { defensives = true, health = 300, potion = true })).actionName
-        )
+        local o = { defensives = true, health = 300, potion = true }
+        assert.are.equal("evasion", pick(rogue("Combat", 8, o)).actionName)
+        o.settings = { healing_potion_health = 40 }
+        assert.are.equal("healing_potion", pick(rogue("Combat", 8, o)).actionName)
+        o.health, o.settings = 200, nil
+        assert.are.equal("healing_potion", pick(rogue("Combat", 8, o)).actionName)
         assert.are.equal(
             "sinister_strike",
             pick(rogue("Combat", 8, { defensives = true, group = 5, threat = 0 })).actionName

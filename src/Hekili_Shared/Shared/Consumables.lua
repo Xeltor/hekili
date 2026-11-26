@@ -1,14 +1,29 @@
 -- Hekili_Shared/Shared/Consumables.lua
 -- The consumables every class shares on Forever (shared-content spec §4.3), through Engine/Schema/Shared.lua into `all`: the
 -- `potion` action and auras core reads by name, the Healthstone from Forever's items (DB2 1.60.1.70338: the five
--- ranks and their Improved Healthstone variants), and the healing, mana and energy consumables as their own actions.
--- The generic `potion` verb has no configured buff potion. Healing is simulated only when the APL picks the item.
--- Neither `potion` nor the Healthstone has a `now`: the belief sees only spell casts (neither names a use spell), and a
--- Healthstone's heal is health, which the belief does not track (spec §4.3). A mana refill names its use spell (below).
+-- ranks and their Improved Healthstone variants), the healing potions (L1808), the mana and energy consumables as their
+-- own actions, and the on-use items that restore mana. No potion is registered for the `potion` verb, nor flask or
+-- food: the default priorities leave them out.
+-- Neither `potion`, the Healthstone nor the healing potion has a `now`: the belief sees only spell casts (none names a
+-- use spell), and a heal is health, which the belief does not track (spec §4.3). A mana refill names its use spell
+-- (below).
 
 local C_Item = Hekili.Client.C_Item
 local GetItemCount, IsUsableItem = C_Item.GetItemCount, C_Item.IsUsableItem
 local UnitLevel, PlayerHealthFraction = Hekili.Client.UnitLevel, Hekili.Client.PlayerHealthFraction
+local L = Hekili:GetLocale("Hekili_Shared")
+
+-- An item's name as the player's client shows it (architecture section 9: names the client translates come from
+-- the client): its item data, plain (W PR13), read once here; `fallback` (the shared content's string) while the
+-- client has not cached the item. One plain item stands for every rank: 5509 is "Healthstone", 929 "Healing
+-- Potion" (the wowsims pin's db.json).
+local function itemName(id, fallback)
+    local name = C_Item.GetItemInfo(id)
+    if type(name) == "string" and name ~= "" then
+        return name
+    end
+    return fallback
+end
 
 local class = Hekili.Class
 local state = Hekili.State -- upvalue: Hekili setfenv's ability functions to `state`, where the name `state` is not a key
@@ -130,8 +145,8 @@ shared:RegisterStateExpr("has_healthstone", function()
 end)
 
 shared:RegisterAbility("healthstone", {
-    name = "Healthstone", -- l10n: verbatim
-    listName = "|T538745:0|t |cff00ccff[Healthstone]|r",
+    name = itemName(5509, L["Healthstone"]),
+    listName = "|T538745:0|t |cff00ccff[" .. itemName(5509, L["Healthstone"]) .. "]|r",
     cast = 0,
     cooldown = RECOVERY_ITEM_COOLDOWN,
     gcd = "off",
@@ -167,27 +182,55 @@ shared:RegisterAbility("healthstone", {
     end,
 })
 
--- The six standard Forever healing potions, strongest first. Their use levels and
--- average heals are from the Forever item tooltips. They share a two-minute cooldown.
-local HEALING_POTIONS = { 13446, 3928, 1710, 929, 858, 118 }
-local POTION_LEVEL = { [13446] = 45, [3928] = 35, [1710] = 21, [929] = 12, [858] = 3, [118] = 1 }
-local POTION_HEAL = { [13446] = 1400, [3928] = 800, [1710] = 520, [929] = 320, [858] = 160, [118] = 80 }
+-- (L1808, owner "Setting per line") the Healthstone line's player-health threshold, on every spec: the translator puts
+-- the line in every pack (wowsims's Protection threshold, 30%)
+shared:RegisterSetting("healthstone_health", 30, shared:HealthOption("healthstone"))
+
+-- Item IDs, use levels and average heals from the Forever potions' tooltips and pinned WoWSims item data.
+-- Restored is placed after Major using its typical endgame heal. Combat and Perishable share their ranks' effects.
+local HEALING_POTIONS = { 13446, 282011, 3928, 18839, 1710, 929, 268883, 858, 268882, 118, 268881 }
+local POTION_LEVEL = {
+    [13446] = 45,
+    [282011] = 1,
+    [3928] = 35,
+    [18839] = 35,
+    [1710] = 21,
+    [929] = 12,
+    [268883] = 12,
+    [858] = 3,
+    [268882] = 3,
+    [118] = 1,
+    [268881] = 1,
+}
+local POTION_HEAL = {
+    [13446] = 1400,
+    [3928] = 800,
+    [18839] = 800,
+    [1710] = 520,
+    [929] = 320,
+    [268883] = 320,
+    [858] = 160,
+    [268882] = 160,
+    [118] = 80,
+    [268881] = 80,
+}
 
 local function healingPotion()
     local level
     for _, item in ipairs(HEALING_POTIONS) do
         if GetItemCount(item) > 0 then
             level = level or UnitLevel("player") or 0
-            if level >= POTION_LEVEL[item] and IsUsableItem(item) then
+            if level >= POTION_LEVEL[item] and IsUsableItem(item) == true then
                 return item, true
             end
         end
     end
-    return HEALING_POTIONS[#HEALING_POTIONS], false
+    return 118, false
 end
 
 shared:RegisterAbility("healing_potion", {
-    name = "Healing Potion", -- l10n: verbatim
+    name = itemName(929, L["Healing Potion"]),
+    listName = "|T136243:0|t |cff00ccff[" .. itemName(929, L["Healing Potion"]) .. "]|r",
     cast = 0,
     cooldown = RECOVERY_ITEM_COOLDOWN,
     gcd = "off",
@@ -204,10 +247,15 @@ shared:RegisterAbility("healing_potion", {
     end,
 
     handler = function()
-        gain(POTION_HEAL[healingPotion()], "health")
+        local potion = healingPotion()
+        local amount = potion == 282011 and 0.30 * health.max or POTION_HEAL[potion]
+        gain(amount, "health")
         setCooldown("major_mana_potion", RECOVERY_ITEM_COOLDOWN)
     end,
 })
+
+-- the healing potion line's threshold, on every spec (rule 25 puts the line in every pack): 25%, the review's value
+shared:RegisterSetting("healing_potion_health", 25, shared:HealthOption("healing_potion"))
 
 -- The mana and energy consumables (C12), best first: item IDs from ItemSparse (DB2 1.60.1.70338); each cooldown from
 -- wowsims/forever's db.json (MIT, a reference only): the potion's own 2 min category, and the 2 min category the rune,

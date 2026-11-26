@@ -31,6 +31,7 @@ local KIT = {
     cone_of_cold = { { 120, 8492, 10159, 10160, 10161 }, 555, 10, "spell" },
     ice_lance = { { 1312002, 400640, 1240044, 1240045, 1240046, 1240047 }, 160, 8, "spell" },
     ice_barrier = { { 11426, 13031, 13032, 13033 }, 480, 30, "spell" },
+    ice_barrier_defensive = { { 11426, 13031, 13032, 13033 }, 480, 30, "spell" }, -- (L1808) the same spell, Defensives
     cold_snap = { { 12472 }, 0, 600, "off" },
     blizzard = { { 10, 6141, 8427, 10185, 10186, 10187 }, 1400, 0, "spell" },
     frost_nova = { { 122, 865, 6131, 10230 }, 145, 25, "spell" },
@@ -135,7 +136,7 @@ describe("Forever Mage", function()
             )
             assert.are.equal("function", type(a.known), key)
         end
-        assert.are.equal(36, n)
+        assert.are.equal(37, n)
         for _, key in ipairs({ "arcane_power", "presence_of_mind", "combustion", "cold_snap" }) do
             assert.are.equal("cooldowns", w.abilities[key].toggle, key)
         end
@@ -217,7 +218,8 @@ describe("Forever Mage", function()
             e.buff = buffs(n > 0 and { arcane_blast = n } or {})
             out[#out + 1] = near(ld.run(ab.spend, e))
         end
-        assert.are.same({ 0.15, 0.3, 0.45, 0.6, 0.75 }, out) -- +100% a charge (hotfix 113554, wowsims 5508974417)
+        -- the fraction as declared; +100% a charge (hotfix 113554, wowsims 5508974417) is a per-stack cost modifier
+        assert.are.same({ 0.15, 0.15, 0.15, 0.15, 0.15 }, out)
         assert.is_true(ab.spendBase) -- every one a fraction of base
         -- 18 s from the first charge, never refreshed (hotfix 113554, wowsims 5508974417; the DB2 70707 says 15 s)
         assert.are.same(
@@ -470,6 +472,7 @@ describe("Forever Mage", function()
             ["clearcasting unless missile_barrage"] = { -1, 1, { 5143 } },
             missile_barrage = { -1, 1, { 5143 } },
             -- Arcane Wrath too: wowsims's mask (0x9000 of word 1 covers its 0x8000), its log's 513.5 = 395 x 1.3
+            arcane_blast = { 1, false, { 400574 } },
             arcane_power = {
                 0.3,
                 false,
@@ -814,7 +817,10 @@ describe("Forever Mage priorities", function()
             for list, entries in pairs(p.lists) do
                 for i, e in ipairs(pe.flat(entries)) do
                     local where = p.name .. " " .. list .. " " .. i
-                    assert.is_true(cls.abilities[e.action] ~= nil or shared[e.action] or pe.LINE[e.action], where)
+                    assert.is_true(
+                        cls.abilities[e.action] ~= nil or shared[e.action] or pe.LINE[e.action] or pe.SHARED[e.action],
+                        where
+                    )
                     for kind, key in (e.criteria or ""):gmatch("(%a+)%.([%w_]+)") do
                         if kinds[kind] then
                             assert.is_true(kinds[kind][key] ~= nil or shared[key], where .. ": " .. key)

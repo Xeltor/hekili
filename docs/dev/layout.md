@@ -140,6 +140,8 @@ the class's `loop_<class>_spec.lua` keeps the boot checks and the 3-fight `#slow
 its slowest file: `druid_harness_spec.lua`'s seven `#druid` scenarios (345 s under the gate's load), then
 `loop_warrior_spec.lua` (#loop and #party, 292 s) and Feral (303 s); `make gate` 694 s, `make check` 246 s here. One
 spec file at one tag: `.lua/bin/busted --tags=druid tests/Forever/loop_druid_feral_spec.lua`.
+`make gate` then runs the same tags again under the gated shipped arm (DEVELOPMENT.md "Two arms gate"), in the same
+lock hold: 643 s more here (2026-11-23, its body measured record-only).
 `make gate-ab` (the gate once per providers arm, provider arms recorded in `.ab/`, never failed) and `make cdv-coverage`
 (the Cooldown Manager coverage report, dev-only) are described in `docs/dev/providers-ab.md`, with the two
 experimental options and their Snapshot audit lines.
@@ -181,11 +183,12 @@ flicker 1.71/min, oracle 0.56; L24 0.908, 3.31/min, oracle 2.16), and Protection
 
 The flicker columns (the flicker ledger, `tests/Game/harness/flicker.lua`; what counts and the cause classes: the
 headless loop design §5.1). `flicker X/min (oracle Y)` stays where it was: the first icon's A->B->A within 3 ticks,
-excused when B was pressed or, under the jitter rule (L1762 round 2), when the change to B follows a fact at its poll
-(`flicker.changes`: the ledger's facts below, plus a crossing of the belief's power band that the belief follows) and
-neither that poll nor the return's is stale (the band crossed and the belief lies outside it). The oracle's takes the
-world's facts only. Before the ledger's fields comes `flicker press-only X (oracle Y) excused [press n; avoid n; aura
-n; target n; band n; verdict n]`: the count under the old press-only rule, and our flips the facts excused. The
+excused when B was pressed or, under the jitter rule (L1762 round 2, L1791), when the change to B and the return to A
+each follow a fact at their own poll (`flicker.changes`: the ledger's facts below, plus a crossing of the belief's
+power band that the belief follows; an aura edge's late light at the next poll is not a second fact) and neither poll
+is stale (the band crossed and the belief lies outside it). The oracle's takes the world's facts only. Before the
+ledger's fields comes `flicker press-only X (oracle Y) excused [press n; avoid n; aura n; target n; band n; verdict
+n]`: the count under the old press-only rule, and our flips the facts excused, by the change's fact. The
 ledger's fields come last on every line (after a replay's decision fields, before `; hold on`), for
 run A over every displayed slot (queue positions 1-3 and the focus entry): `dips` and `flashes` per minute (our
 presses' left out), `top [cause n; cause n]` over them, `p90 length` (ticks), `retracted R/min (oracle R')` (ready, then
@@ -198,7 +201,9 @@ follow them, unjustified only: `now dips D flashes F swaps S retracted R/min (or
 come `facts [target n; aura n; verdict n]`, the slot-1 changes those facts excused. A fact here is a death or
 retarget, an aura edge the earlier cause classes shadowed, and in an arm with the viewer on two late facts: an aura
 edge one poll before the change (a Cooldown Manager light), and the first change within 1.5 s of a miss of our press
-(the CDM verdict; a ranged auto shot's miss is not one). A band crossing the belief follows is a fact too. Last come `next D/F/R/W` (slots 2-3) and `focus D/F/R/W`, both reported only. The
+(the CDM verdict; a ranged auto shot's miss is not one). A band crossing the belief follows is a fact too. A dip's
+return needs its own fact as well (L1791): a cause class or a fact at the return's poll, the verdict included; the
+late light of the change's own aura edge is not one. Last come `next D/F/R/W` (slots 2-3) and `focus D/F/R/W`, both reported only. The
 20-fight Arms line's tail (forever-flicker, before the rule):
 
 ```
@@ -422,7 +427,7 @@ Their worlds take the export's whole talent string; the Turret worlds stand at 1
 with two one-handers (its live bars at 11 yd, R63, `W.SurvivalMeleeRanged`). At the re-pin ab0f00e4fc (Pre-BiS gear),
 replay decisions on-GCD: 1.000 (55), 0.983 (60), 1.000 (55), 1.000 (81); the 20-fight lines (seeds 1-20 / 21-40 /
 41-60), with each world's pool and regen from its log, read held while ready 239 / 237 / 241, 203 / 225 / 219, 253 /
-253 / 255 and 280 / 285 / 290, flicker 0 (Beast Mastery Turret 0.02; rows in `pack_gate.FLICKER`: floors at the worst of the three seed sets).
+253 / 255 and 280 / 285 / 290, flicker 0 (Beast Mastery Turret 0.02; rows in `pack_gate.FLICKER`: since batch 5 each floor is the seeds 1-20 reading, the one rule of L1814).
 The held ticks are the near-cost edge (a dry pool at a cost, our estimate a few mana under the truth), plus, in the
 Beast Mastery and Survival Turret worlds, Rapid Fire behind an Aimed Shot paid at the cast's end, its wait paced from
 the belief's floor at an unpinned fight-opening pool.

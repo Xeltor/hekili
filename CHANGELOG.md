@@ -9,9 +9,6 @@
 - Rogues can enable Continuous Combat for Slice and Dice between ordinary pulls and choose poison reminders independently for each hand.
 - Rogue racial cues cover learned damage boosts, observed control breaks and cleanses, Stoneform against physical pressure, and safe out-of-combat recovery. Tactical detection, movement and corpse-dependent abilities remain manual when their use cannot be established from the API.
 
-- A priority that compares a resource with more than 8 different exact values now shows a warning on its Source tab: Hekili can watch only 8 of them exactly, so those conditions use the nearest 1% instead.
-
-
 ### Changed
 
 - Hekili waits for tracked debuff attempts to resolve before recommending the same effect on that enemy again. Attributed misses preserve earlier applications, and verified NPC immunities apply to later spawns.
@@ -22,17 +19,6 @@
 - Protection suggests a learned Reckless Swings only at low Rage, with readable health of at least 75%, an active autoattack and an elite or boss in melee range.
 - Rogue cleave cues require confirmed engaged enemies in melee range, and Evasion can recognize another enemy attacking while the selected target casts. Group Feint also covers taking full aggro.
 - Rogue stun suggestions use configurable spacing between your own attempts (30 seconds by default). Temporary stun immunity is retried after a bounded delay; this does not track other players' diminishing returns.
-
-- Arcane, Fire, Frost and Frostfire Mage, Shadow Priest and Affliction Warlock (wowsims.com): the priorities now suggest cutting a channel early where the reference rotation does, such as Evocation once your mana is nearly full, or Wrack once a damage-over-time effect needs reapplying.
-- Channel cut suggestions now come at the channel's tick and stay up until pressed; changing target decides the cut again for the new target.
-- Rogue and Feral/Guardian Druid: the recommendation refreshes the moment a combo point is gained or spent, so the finisher shows without waiting for the next poll.
-- Custom priorities: `target.health.pct` and the other target health values now follow the target's health in whole-percent steps, instead of reading 100 until an ability that needs a low-health target became usable. They read no lower than 2 while the target is alive, and 100 for a moment after you change target. If the game offers no reading, they work as before.
-- Custom priorities: a line that reads target health no longer adds a "target health is secret" warning when the priority loads.
-- Custom priorities: `health.pct` and the other player health values now follow your health in whole-percent steps, instead of reading 100. A line that reads them no longer adds a warning when the priority loads. If the game offers no reading, they read 100.
-- Arms and Fury Warrior, Rogue, Warlock, Balance and Feral Druid: Hekili Forever now estimates how long your target will live. When it counts one enemy, it can save some cooldowns for the end of the fight, skip bleeds and damage-over-time spells on a target about to die, and suggest finishing moves earlier. With several enemies, or before it has an estimate, it plans for a long fight as before; after a pull or a target change there is no estimate until the target has lost health for a few seconds (longer on a long fight), so one big hit is not taken for the target's pace. The estimate can be well off early in a fight and near its end.
-- Custom priorities: `fight_remains` follows that estimate with one enemy; `target.time_to_die` and `target.time_to_pct_<N>` follow it with any number of enemies. With no estimate they read as unknown (3600 seconds), as before.
-- Energy, rage and mana: where the game allows it, Hekili now reads the 1% step the amount is in and corrects its estimate with it, which also counts rage from hits you take. When the game says an ability is usable or not, that still wins.
-
 
 ### Fixed
 
@@ -50,17 +36,86 @@
 - Reckless Swings no longer assumes all 20 bonus Rage arrives immediately when cast. Its per-swing bonus remains unmodelled until the client reconciles the resource estimate.
 - Rogue forecasts include Initiative's guaranteed opener points. Ghostly Strike can lead into an eligible Ambush, and Shank can restore Energy at five combo points when it advances a finisher without wasting points.
 - Eureka now uses the learned spell ID for the player's class instead of the Warrior variant for every Gnome.
-- When the game hides enemy identities, as in dungeons, your debuffs on an enemy are still remembered when its nameplate appears late, or drops out and returns while you target it. With no nameplate, your target's low health is still read from an ability usable only below a health threshold, and range checks keep updating.
-- A stacking debuff (such as Sunder Armor) used on one enemy just before you change target now adds its stack to that enemy's own count, not the new target's, so its stack count is right when you target it again.
-- An enemy the game reports dead and then alive again while you still target it no longer reads 0 health until you change target.
-- Protection Warrior: when the game hides who attacked you (expected in dungeons), a dodge, parry or block now sets when the Revenge window ends, so Revenge is not recommended past it.
-- A `/reload` while you channel a spell no longer raises an "Unknown buff: cast" error, and the rest of that channel is predicted again.
 
 ### Known issues
 
-- When a channel cut is suggested, the ability shown is chosen as if the channel were still running, so an ability that waits for the channel to end is not suggested there. An ability that becomes ready just after a channel tick can be suggested as a cut where the reference rotation would recast the channel. Something that changes just before a channel tick can delay the cut suggestion to the next tick, or keep a cut shown after its reason has passed, and right after a channel starts a cut can be suggested between ticks.
-
 ### Upgrade notes
+
+## v0.12.1
+
+_Released 2026-11-25_
+
+This release fills the remaining translation gaps for Simplified Chinese, German, Spanish and French.
+
+### Core and display
+- Simplified Chinese: the forecast window note about a separate display's longer Forecast Period extending the resource forecast is now translated, thanks to dodoels.
+- Simplified Chinese: the priority editor's Condition and Display section headers are now translated.
+- Simplified Chinese: the snapshot help is now translated and matches the current English text.
+- Simplified Chinese: the health warning on custom priority lines and the Healing Potion name are now translated.
+- German, Spanish, French and Simplified Chinese: the priority editor warning shown when a priority compares more exact values than Hekili can watch is now translated.
+- German, Spanish, French and Simplified Chinese are now fully translated throughout Hekili.
+
+## v0.12.0
+
+_Released 2026-11-25_
+
+Hekili Forever v0.12.0 adds low-health defensive suggestions for every class with their own sliders, a time-to-live estimate for several specializations, early channel cuts, and many fixes to how hits and misses are tracked.
+
+### Druid
+- Balance, and Feral outside Bear Form: Barkskin is suggested once your health is under 50%, in any form.
+- Guardian, and Feral in Bear Form: Barkskin and Frenzied Regeneration are back as low-health defensives, and the two Barkskin sliders each name their form.
+- Feral and Guardian: the recommendation refreshes the moment a combo point is gained or spent, so finishers show without waiting.
+- Feral: a Rip or Rake that misses while a white swing lands at the same moment is now usually seen as missed, so Ferocious Bite or Shred is far less often suggested as if the bleed were up.
+- Feral: a builder such as Rake counts as landed when your combo points rise, so a landed Rake is no longer suggested again and a missed one comes back within about half a second.
+### Hunter
+- Deterrence is suggested once your health is under 35%.
+### Mage
+- Ice Block is suggested once your health is under 15%.
+- Arcane, Fire, Frost and Frostfire (wowsims.com): Evocation is now cut early once your mana is nearly full, as the reference rotation does.
+### Paladin
+- All specializations: Divine Shield is suggested under 20% health, and Lay on Hands under 15% but not while Divine Shield is up.
+- Protection (wowsims.com): a Dwarf's Stoneform is suggested under 50% health with its own slider, and waits while Divine Shield is up.
+### Priest
+- Power Word: Shield on yourself is suggested once your health is under 50%.
+- Dwarf: Desperate Prayer is suggested under 40% health, and its slider shows only for a Dwarf.
+- Shadow (wowsims.com): Mind Flay is now cut early where the reference rotation does.
+### Rogue
+- Evasion is suggested once your health is under 50%.
+- The recommendation refreshes the moment a combo point is gained or spent, so finishers show without waiting.
+- A builder such as Sinister Strike counts as landed when your combo points rise and as missed when they do not, even when a white swing is dodged at the same moment.
+- Relentless Strikes' energy is counted only when certain (5 combo points with all 5 ranks), and no longer when the finisher misses or is dodged or parried.
+### Warlock
+- Death Coil is suggested as a defensive once your health is under 35%.
+- Affliction (wowsims.com): Wrack is now cut early once a damage-over-time effect needs reapplying.
+- Summoning a demon with Fel Domination up no longer expects too low a mana cost.
+### Warrior
+- Protection (wowsims.com): Last Stand, Shield Wall, Shatter Curse and Healthstone are back as low-health defensives, and a Dwarf's Stoneform is suggested under 50% health without waiting for a poison or disease.
+- Protection: when the game hides who attacked you, as in dungeons, a dodge, parry or block now sets the Revenge window, so Revenge is not suggested past it.
+- Fury: rage from Reckless Swings, or from an auto attack just before Execute, is no longer counted twice, so abilities light up before you can afford them less often.
+- A white swing that was dodged, parried or missed no longer counts as rage still to come.
+### Core and display
+- Every built-in priority suggests your Healthstone under 30% health and a healing potion under 25%, in the Defensives display, only while Hekili can read your health in combat.
+- Each low-health defensive has its own slider in the specialization's priority settings; health is read in 1% steps, so a suggestion shows once your health is under the setting.
+- Healing potions from Minor to Major, plus Restored and Perishable, are under the Defensives toggle and share their cooldown with the Major Mana Potion; their names and the Healthstone's follow your game's language.
+- The Defensives and Interrupts displays are now separate by default, so a defensive or an interrupt never takes the main display's place.
+- Evasion, Divine Shield, Divine Protection, Lay on Hands, Deterrence, Mana Shield, Shadow Ward, Fire Ward, Frost Ward, Pummel and Counterspell now follow their toggle; Death Coil, Ice Barrier and Earth Shock used as a defensive or interrupt have their own ability list entry, with the same keybind and button glow.
+- Protection Warrior, Protection Paladin and Guardian are now treated as tanks: outside dungeons, an enemy hitting you in melee can count toward the enemy count before you attack it.
+- Arms and Fury Warrior, Rogue, Warlock, Balance and Feral now estimate how long a lone target will live, and can save cooldowns for the end of the fight, skip bleeds and damage-over-time spells on a dying target, and use finishers earlier.
+- With several enemies, or for the first few seconds on a new target, they plan for a long fight; switching back to an enemy whose nameplate stayed shown resumes its estimate, a sudden burst of damage can blank it for a second, and it can be well off early and late in a fight.
+- Energy, rage and mana: where the game allows, Hekili reads the 1% step your amount is in and corrects its estimate, including rage from hits you take.
+- Mana costs given as a percent of base mana (Power Infusion, Shadowform, druid forms, some seals, totems and others) can differ by under a point from before.
+- A missed or dodged instant such as Rake is noticed within about half a second and suggested again; when the Cooldown Manager shows a debuff missed, the next suggestion appears at once, and a debuff it shows landed is no longer taken away by another attack's miss.
+- When the game hides enemy identities, as in dungeons, your debuffs are remembered when a nameplate appears late or returns, your target's low health is still read without a nameplate, and range checks keep updating.
+- After you change target, a stacking debuff such as Sunder Armor or a cast-time spell already on its way counts on the enemy it was used on; an enemy reported dead and then alive no longer reads 0 health.
+- Channel cut suggestions come at the channel's tick and stay until pressed, a target change decides them again, and a /reload mid-channel no longer raises an "Unknown buff: cast" error.
+- Custom priorities: player and target health now follow health in whole-percent steps instead of reading 100, with no load warnings; target health reads at least 2 while alive and 100 briefly after a target change.
+- Custom priorities: a line that tests your health without first checking that Hekili can read it gets a one-time chat warning, and a priority comparing a resource with more than 8 exact values gets a warning on its Source tab.
+- Custom priorities: interrupt lines now wait for the game to say a cast can be interrupted, which has not been seen yet, so they will rarely light up; fight length and target time-to-die values follow the new estimate, and tanks can check whether they hold an enemy's attention.
+### Known issues
+- During a channel, the cut suggestion is chosen as if the channel were still running: an ability that waits for the channel to end is not shown, and one ready just after a tick may be suggested where the reference rotation would recast the channel.
+- A cut suggestion can come a tick late, stay after its reason has passed, or appear between ticks right after a channel starts.
+### Upgrade notes
+- Every profile now shows defensives and interrupts in their own displays. To put them back in the main display, turn off "Show in Separate ... Display" under the Defensives and Interrupts toggles.
 
 ## v0.11.0
 

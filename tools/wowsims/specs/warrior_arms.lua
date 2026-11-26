@@ -162,7 +162,10 @@ return require("tools.wowsims.warrior_dps")({
             before = "call_action_list",
             line = "pummel,if=" .. interrupt,
         },
-        { before = "call_action_list", line = "healthstone,use_off_gcd=1,display_below=30,if=" .. pveCombat },
+        {
+            before = "call_action_list",
+            line = "healthstone,use_off_gcd=1,display_below=30,if=!health.known&" .. pveCombat,
+        },
         { before = "call_action_list", line = "shield_wall,display_below=25,if=" .. pveCombat .. noLastStand },
         {
             before = "call_action_list",
@@ -183,7 +186,9 @@ return require("tools.wowsims.warrior_dps")({
         {
             -- Icy Veins advises keeping a healing potion ready for dangerous leveling pulls.
             before = "call_action_list",
-            line = "healing_potion,use_off_gcd=1,display_below=40,if=" .. pveCombat .. "&(level<60|arms_open_world)",
+            line = "healing_potion,use_off_gcd=1,display_below=40,if=!health.known&"
+                .. pveCombat
+                .. "&(level<60|arms_open_world)",
         },
         {
             before = "call_action_list",

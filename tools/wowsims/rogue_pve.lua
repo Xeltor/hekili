@@ -27,6 +27,7 @@ local function addPvE(recipe)
         "The sustained raid damage priority follows the pinned WoWSims build.",
         "Poison reminders and each hand's preference have their own Rogue settings. Stealth is suggested for outdoor pulls with a usable opener.",
     }
+    recipe.settings = { evasion_health = { default = 50, desc = "player health threshold, percent" } }
     recipe.levelingFirst = {
         "will_to_survive,if=rogue_pve_context&!stealthed.all&rogue_stunned",
         "will_of_the_forsaken,if=rogue_pve_context&!stealthed.all&rogue_forsaken_control",
@@ -111,12 +112,17 @@ local function addPvE(recipe)
             .. points
             .. ">=2"
     )
-    add("healthstone,use_off_gcd=1,display_below=30,if=combat>0&rogue_pve_target&!stealthed.all")
-    add("healing_potion,use_off_gcd=1,display_below=40,if=combat>0&rogue_pve_target&!stealthed.all")
+    add("healthstone,use_off_gcd=1,display_below=30,if=!health.known&combat>0&rogue_pve_target&!stealthed.all")
+    add("healing_potion,use_off_gcd=1,display_below=40,if=!health.known&combat>0&rogue_pve_target&!stealthed.all")
     add("stoneform,display_below=65,if=combat>0&rogue_pve_context&rogue_danger&!stealthed.all&buff.stoneform.down")
-    add("evasion,use_off_gcd=1,if=rogue_pve_target&rogue_danger&!stealthed.all&solo&" .. noGhostlyStrike)
+    add("evasion,use_off_gcd=1,if=rogue_field&rogue_danger&!stealthed.all&solo&" .. noGhostlyStrike)
     add(
-        "evasion,use_off_gcd=1,display_below=65,if=rogue_pve_target&rogue_danger&!stealthed.all&!solo&"
+        "evasion,use_off_gcd=1,if=health.known&health.pct<=settings.evasion_health"
+            .. "&(!rogue_field|!solo&rogue_danger)&!stealthed.all&"
+            .. noGhostlyStrike
+    )
+    add(
+        "evasion,use_off_gcd=1,display_below=65,if=!health.known&rogue_field&rogue_danger&!stealthed.all&!solo&"
             .. noGhostlyStrike
     )
     add("feint,if=" .. meleePvE .. "&!solo&!stealthed.all&rogue_high_threat&debuff.casting.down")

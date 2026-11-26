@@ -99,6 +99,13 @@ describe("shared content", function()
             self.exprs[key] = fn
         end
         _G.Hekili = { State = { race_token = "BloodElf" }, Class = { specs = { [0] = all }, file = "WARRIOR" } }
+        function _G.Hekili.GetLocale() -- the English table: a key answers itself (AceLocale's silent enUS)
+            return setmetatable({}, {
+                __index = function(_, k)
+                    return k
+                end,
+            })
+        end
         debuffs, bags, controls = {}, {}, {}
         playerLevel, unusableItems = 60, {}
         ns = {
@@ -119,6 +126,7 @@ describe("shared content", function()
                     IsUsableItem = function(id)
                         return not unusableItems[id]
                     end,
+                    GetItemInfo = function() end, -- no item cached: the shared content's own names
                 },
                 C_LossOfControl = {
                     GetActiveLossOfControlData = function(i)
@@ -382,16 +390,20 @@ describe("shared content", function()
         local a = all.abilities
         for key, want in pairs({ major_mana_potion = { 17531, 1800, 450 }, demonic_rune = { 16666, 1200, 300 } }) do
             assert.are.equal(a[key], a[want[1]], key) -- the use spell's success is the item's cast
-            local got = {}
+            local got, cds = {}, {}
             local env = {
                 gain = function(...)
                     got[#got + 1] = { ... }
                 end,
-                setCooldown = function() end,
+                setCooldown = function(...)
+                    cds[#cds + 1] = { ... }
+                end,
             }
             setfenv(a[key].now, env)()
             setfenv(a[key].handler, env)()
             assert.are.same({ { want[2], "mana", want[3] }, { want[2], "mana" } }, got, key)
+            local sharedCooldown = key == "major_mana_potion" and "healing_potion" or "healthstone"
+            assert.are.same({ { sharedCooldown, 120 } }, cds, key)
             assert.are_not.equal(a[key].now, a[key].handler, key) -- the belief rejects a `now` that is its handler
         end
     end)
@@ -520,6 +532,28 @@ describe("shared content", function()
         bags = { [9421] = 1 }
         assert.is_false(all.exprs.has_healthstone())
         assert.is_false(hs.usable())
+    end)
+
+    it("selects eligible potion variants and forecasts the Restored potion's percentage heal", function()
+        load({ "Consumables" })
+        local potion = all.abilities.healing_potion
+        playerLevel, bags = 12, { [13446] = 1, [18839] = 1, [268883] = 1, [268882] = 1 }
+        assert.are.equal(268883, potion.item())
+        unusableItems[268883] = true
+        assert.are.equal(268882, potion.item())
+
+        local gained
+        setfenv(potion.handler, {
+            health = { max = 2000 },
+            gain = function(amount, resource)
+                gained = { amount, resource }
+            end,
+            setCooldown = function() end,
+        })
+        bags[282011] = 1
+        assert.are.equal(282011, potion.item())
+        potion.handler()
+        assert.are.same({ 600, "health" }, gained)
     end)
 
     it(

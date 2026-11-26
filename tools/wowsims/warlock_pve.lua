@@ -9,6 +9,9 @@ local function addPvE(recipe)
     local dungeonTrash = field .. "&warlock_dungeon_trash"
     local dotBudget = name == "Affliction" and "&warlock_dungeon_dot_budget" or ""
     local leech = "combat>0&warlock_defensive_target&toggle.defensives&warlock_spell_in_range"
+    local itemRecovery = "combat>0&warlock_alive&!warlock_hard_controlled"
+    recipe.settings = recipe.settings or {}
+    recipe.settings.death_coil_defensive_health = { default = 35, desc = "player health threshold, percent" }
     local finishWithDirectDamage = "warlock_short_pull&warlock_target_low"
 
     recipe.notes = {
@@ -24,17 +27,20 @@ local function addPvE(recipe)
         "will_of_the_forsaken,if=warlock_alive&warlock_forsaken_control",
         "escape_artist,if=warlock_alive&warlock_movement_control&!warlock_hard_controlled&buff.escape_artist.down",
         "shatter_curse,if=warlock_alive&!warlock_hard_controlled&buff.dispellable_curse.up&buff.shatter_curse.down",
-        "healthstone,use_off_gcd=1,display_below=30,if=combat>0&warlock_alive&!warlock_hard_controlled",
-        "healing_potion,use_off_gcd=1,display_below=40,if=combat>0&warlock_alive&!warlock_hard_controlled",
+        "healthstone,use_off_gcd=1,if=health.known&health.pct<=settings.healthstone_health&" .. itemRecovery,
+        "healthstone,use_off_gcd=1,display_below=30,if=!health.known&" .. itemRecovery,
+        "healing_potion,use_off_gcd=1,if=health.known&health.pct<=settings.healing_potion_health&" .. itemRecovery,
+        "healing_potion,use_off_gcd=1,display_below=40,if=!health.known&" .. itemRecovery,
         "rapid_regeneration,use_off_gcd=1,display_below=60,if=warlock_can_recover&buff.rapid_regeneration.down",
         "cannibalize,if=warlock_cannibalize_corpse&buff.cannibalize.down&mana.hi<0.65*mana.max",
         "cannibalize,display_below=65,if=warlock_cannibalize_corpse&buff.cannibalize.down",
-        "death_coil,display_below=40,if=" .. leech,
-        "death_coil,display_below=65,if=" .. leech .. "&(moving|warlock_pvp_pressure)",
+        "death_coil_defensive,if=health.known&health.pct<=settings.death_coil_defensive_health&" .. leech,
+        "death_coil_defensive,display_below=40,if=!health.known&" .. leech,
+        "death_coil_defensive,display_below=65,if=" .. leech .. "&(moving|warlock_pvp_pressure)",
         "shadow_ward,if=combat>0&warlock_alive&warlock_recent_shadow_damage&buff.shadow_ward.down",
         "soul_link,if=warlock_alive&(combat>0|warlock_can_prepare)&buff.soul_link.down",
         "drain_life,display_below=65,if=" .. leech .. "&warlock_drain_healing_display&!moving",
-        "death_coil,display_below=65,if=" .. leech,
+        "death_coil_defensive,display_below=65,if=" .. leech,
         "health_funnel,display_pet_below=55,if=combat=0&warlock_funnel_available",
         "life_tap,if=warlock_can_prepare&warlock_life_tap_safe&mana.hi<0.65*mana.max",
         "summon_felhunter,if=warlock_can_summon&warlock_pvp_instance&buff.fel_stamina.down",

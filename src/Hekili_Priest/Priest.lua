@@ -150,7 +150,9 @@ end
 -- Shadowform and Shadowguard; wowsims's Smite log: 252 = 280 x 0.9 at 3/3).
 local function agile(values, ids)
     return function()
-        return (values[knownRank(ids)] or values[1]) * (1 - perRank(MENTAL_AGILITY, talent.mental_agility.rank))
+        local c = values[knownRank(ids)] or values[1]
+        -- a percent of base is rounded whole first; its cut is the cost modifier below (L1793 item 1)
+        return c < 1 and c or c * (1 - perRank(MENTAL_AGILITY, talent.mental_agility.rank))
     end
 end
 
@@ -163,7 +165,7 @@ local IMPROVED_HEALING = { 0.05, 0.1, 0.15 }
 local function price(values, ids, agility, healing, warding)
     return function()
         local c = values[knownRank(ids)] or values[1]
-        if agility then
+        if agility and c >= 1 then -- a fraction's cut is the cost modifier (see agile)
             c = c * (1 - perRank(MENTAL_AGILITY, talent.mental_agility.rank))
         end
         if healing then
@@ -282,6 +284,15 @@ spec:RegisterResource(
         base = 1376, -- a fraction cost is of base mana (wowsims's priest base mana at 60, base_stats_auto_gen.go)
     }
 )
+
+-- Mental Agility's cut on the percent-of-base costs (Shadowform, Power Infusion, Dispel Magic, Cure and Abolish
+-- Disease, Elune's Grace): the cost is rounded whole, then cut unrounded (wowsims mana.go newManaCost, then spell.go
+-- ApplyCostModifiers: 20% of 1376 = 275, x 0.9 = 247.5; L1793 item 1). Flat costs take it in their own function.
+spec:RegisterCostMod({
+    talent = "mental_agility",
+    pct = { -MENTAL_AGILITY[1], -MENTAL_AGILITY[2], -MENTAL_AGILITY[3] },
+    spells = { 15473, 10060, 527, 528, 552, 2651 },
+})
 
 -- The cost modifiers, each on the class mask's (or school's) registered rank-1 IDs: Shadowform's -50% on Shadow spells
 -- (DB2 15473 effect 3: aura 72 misc 32, the school; wowsims's Shadow log: Mind Blast 175 = 350 x 0.5), Inner Focus's
@@ -589,7 +600,7 @@ spec:RegisterAbilities({
         gcd = "spell",
 
         spend = function()
-            return 0.4 * (1 - perRank(MENTAL_AGILITY, talent.mental_agility.rank))
+            return 0.4
         end,
         spendType = "mana",
 
@@ -834,7 +845,7 @@ spec:RegisterAbilities({
         gcd = "off",
 
         spend = function()
-            return 0.2 * (1 - perRank(MENTAL_AGILITY, talent.mental_agility.rank))
+            return 0.2
         end,
         spendType = "mana",
 
@@ -908,6 +919,12 @@ local function utility(ids, costs, o)
         a.now = selfBuff(o.buff)
         a.handler = selfBuff(o.buff)
     end
+    a.toggle = o.toggle
+    if o.race then -- a race-locked spell: known only to that race (state.race: the client's race token, as race packs)
+        a.known = function()
+            return state.race[o.race] == true and knownRank(ids) > 0
+        end
+    end
     return a
 end
 
@@ -971,7 +988,9 @@ spec:RegisterAbilities({
         combat = true,
     }),
     fade_spell = utility(FADE, { 40, 75, 125, 175, 225, 275 }, { cooldown = 30, agile = true, buff = "fade_buff" }),
-    desperate_prayer = utility(DESPERATE_PRAYER, nil, { cooldown = 600 }),
+    -- owner L1808: "Desperate Prayer is exclusive to dwarf priests" (Forever: wowsims's priest spell data, the DB2
+    -- rows; the live Cooldown Manager catalog is filtered); a self-heal, under Defensives
+    desperate_prayer = utility(DESPERATE_PRAYER, nil, { cooldown = 600, toggle = "defensives", race = "dwarf" }),
     dispel_magic = utility(DISPEL_MAGIC, { 0.18, 0.18 }, { agile = true }),
     cure_disease = utility({ 528 }, { 0.15 }, { agile = true }),
     abolish_disease = utility({ 552 }, { 0.15 }, { agile = true }),
@@ -1075,18 +1094,29 @@ spec:RegisterSetting("prefer_starshards", false, {
     width = "full",
 }, "shadow")
 
+-- (L1808, owner "Setting per line") the health threshold of the packs' Power Word: Shield (50%) lines (the recipes'
+-- `extra`, the def-int-beyond-wowsims review's defaults): a 1-100 slider on every spec
+spec:RegisterSetting("power_word_shield_health", 50, spec:HealthOption("power_word_shield"))
+-- Desperate Prayer's line (Dwarf priests only; the review's 40%, its proposed value): every spec, shown to a Dwarf
+-- alone (the race its `known` reads)
+local prayer = spec:HealthOption("desperate_prayer")
+prayer.hidden = function()
+    return state.race.dwarf ~= true
+end
+spec:RegisterSetting("desperate_prayer_health", 40, prayer)
+
 -- The priorities, written by `make packs` (tools/make_pack.lua) from APLs/packs.lua and APLs/*.simc; edit those and
 -- run it, never this block (tests/Forever/priest_spec.lua checks it matches). Each pack's .simc is generated from its
 -- wowsims recipe (`make wowsims-packs`, tools/wowsims/specs/priest_*.lua).
 spec:RegisterPack(
     "Shadow (wowsims.com)",
-    20261122000,
-    [[Hekili:9E17VnQrq0)wYxCn9s5h2PxDJoxPw1w1u1E6ujFEXlSlMngyr7UeRifXF7D21C4fme7EjxZhIW7mZBM5XSZtGcq3Jcjyff9Xf(lEFqWIf(((Oq1tvuuyfozhEl8qjUa(FygMW33Sz(E(EjRq6MWlC0E9uoht0ifxZYv3vIIhfuzfnbf(P)5UFl8(BLgWqHzmcHEicQmzIKCBZgvgTzt7zEPCb9rQOzdHMIRZvnB(5p9xnBGJB20bqnZtNrPxLGrLkpsL0txGePNc(nRCRR5NUpi5LoxdPqGlL5qDtGN56uYKnBWecV8BGh2rFs62S5xXk8TJukZ)77UhajtPQK365TLPYQJ1vV3axDamHkgh7N67tVjnz1sxGff8uwoWY4efJxkDReui4ySA9bQABnwqUMLU(Q460uxRdDRRMDiQENURKVVS5ppbV3T2RGvsIIZXsvN92Sa1yXWKOpdYrNRaaeSyxKeNiyPSeQoG5f4sSBo)dR1VSNz(vvIksFYnlCSdMMxxsLr5STzQRRL0iEAA02eY6adqTTITxh6LzZbNCf0cmRu(H1(ZMFvV2oApxqIQaRh8)zc1QlSS2cXpToW35iie6J8AbmwevLJ3wtBbz(8x0(S2KCIv7K88zWiHZZHsCe7DOSYr)xpASwq3HFbc0y)Rf1T6)bMB1xhIlMkKuXoW5(KNTpAdmfTqoTleAbVKLejG50P9Qa)axePVoevX1hoTRdj7Rt5j1Y1lm3hN6fYG7LdOHXG4eQQpeJSByqTrOyvMTrwzjvezs1GXXdPVFxQWcanbrQlkjvP3eBwpLcGC06XXRJvu7Gv3BDllDVVVX5KUjnh)K5MXNNMSk42bji9p6gyBaM9UAk3DMkhLkQquxPIGSLMZ5I5l)ULFBsggqipQTg9S7lDCUjqh8oFx)aN1l7XvfWmO5D3jH0UDhfckksW0aT2CMujnI7huiHh)OrSNwIJZPe0V8zLgqxUBlpke2OdTadJchrbaPGSmbi9veSb6mkdAqxoauRHiDz3LeBnHEP4TtZ48B(UerJx)UpTQXB22pnhFZLYXgzJrz3xJGY551lqr51tRREJz1V)cz1JAo6OE)fgvNkKoOF4cdYwxsh3QlmUtuQ0b)Jdc2A)W0ksdxTC0ik0SfvVgbapW)SOpIyLDN234a0NAF3rvdJBtTr7ejpJ3x6QklnJUYkWGWWlID5Rt6ZMi(IeipNcPPogo62JE0Am92b8Ft68f1onzF4vaBPtGW(Y0ohRj0jB4vNokxRV2BSBCDwKEsjS7lOoVyQ5lWMsn9SF02lPZ2B41uw4AvgxGc)d6owod(q0FV97mnMr)7d]]
+    20261123001,
+    [[Hekili:9IvuZnQnq4Fl5fx7EPa2o9QBMqNPDA70056n3uYZGLbHrNbeJKiEYm3WV9UsqaHaITtUR5Hm2A1(TR(0QD)g7V0)bFViKa7)XvoRE)YLRw74S03t8ub23RafEaTh(qokd(VxckIESA78J0JCsg3kKMTqURNsPOijs7kjPI7Z93nkO8cCOV3N(37)dVhULRaZ3lHefHR9aZdNii3wTvKGR22SMDmLHFeZQ2gHJrLPIQT)6N(q1wy5QTTausSLrKBxWiyUWoQGBltWiUTa(ojFVL6RwFMtZxCnecgkNNc5De8zQmKeE1wuuen)7GpCa)e3QA7VJeOBhjvM)p3)aasIquWV12EprKuUtM92gBDbGjKXODoXoo4BId3S2cyrgnMKcSmkuqO5CRcggCEhs4wtv7lrSORjXUxTRmo2sBrRYIz1E1B1d50J5v)9a8ENRDgjpkyxkIlAT7wqpIzbhPSOaEcbNQIvcgLksQHAwZxkcf35YXcjdcWA6wq92AbgchCZwGzaXguWqpHzNhYMEncW1RWf0C81LCCanooyFyK7YZlcAUpb4W2ckOYvET43HWiHO(6cQlYmVyLRb3R9yre7qahfYiXKqS0H5zOCKvk9o3voooZuFdYGa5k3SAHUZ40YCmpiLSprm8OmVP8rFxnhS5WMSy4mejNFNRZS5x1RuR(MVaSwV)VeH1ofAwBG4xCx6SOdKi8J0sMIJsr7lXnGmF(lAFwtqgyvpiF5eyesPPqkoI9wu2Sq(xpASKHpGEbcuz)Bf1T5)bMBZ3gIBhMXXSdWM7tE67rAGiWz8P3seoJMtcdyLMV413vg6ZuwG85WOpEh(cSJSVoMgwYDxPEpo1fIX7sdAymigqv9HyK(Xg5weg1V1bjphAjQcLr5yD47FkfigGglIltQUE3mCmasN1UYRUmQPWQ9wxZs799nlgCAItrpPEz8C1Kwc3uibH)rRL6gGAVRMA7lMkg5cmJvwicGOfNsPS5R)H1FFyccqinOjhT1pxs)ScHtW7CSCwUWDDpUkdQbv3DdCPzIQVhmfNdMm03Ks4cUsqvTQe4JFujWcNJ2LIJ8)TNNUdJ7nhB67bn2HtcbbAIo5KLPM66lGCAIqAop9YI4etJLbCTra1khLeqBcOnU9YI9W50YWEZfe2UPWxEKhmbxg8FCcsUB6TEGgzYUeK3p1nvVj96aDIj(sq)PZKw0N13leppk7TRf40t0ohXaV9zAs1aF1MQj54nNlhRKdmk7(wekCAE9muk82P1nFLz1F(mz1oTesVw6CMU1kVq5LzJ5P8sxXHYrZ2Rt54arikVn7vQ1JyA1gMTx6m67PMqkB6lr3SL4q0hriI(zTVrd0NQNxNIa12MQR2a5mQDFUTR00d0Mwlviy(ySnETYA0jIxL4NtP(rLhMLV9OhP(HE9bUmzrVOUi1qFZxb6YIac71PlASdHmytPQrPDQxz3a4v5SVSsXR9xK4LekP9lAm1e1t(JG8sQI6v8QsluPiHcQJ(l8bskPA78)S53Trz2))(]]
 )
 spec:RegisterPack(
     "Smite (wowsims.com)",
-    20261118000,
-    [[Hekili:Ls17Vnnmq0)w4lWQOk)AJXufzsGaeBcMMW7ZoXj(CJzP2w2oRQFj)TZ5SUUMU2XauLQSU7DV3L7E20u6nucN5b6vzjzNMMMEwsscL4xzakXWQVLnhpOylW)jlKEOV8OL6Lo5cxuTEXKaOvTAgpquvNS1FHIwTxoDgOMsU(Nx8fYnZ4sxT00kviVnsohUVkWvVFDM1x6BWGRJfl0w4oW2xYbbRR13x(XR)EFjgUV8H67KXbnDXgReC(yUXfhArUl2fGu4XOs18OHGr)YPvtMI6yzkxl2)C8SoOR01xY4CT6n4HBHvUO(YpZ8Sz7PFo6hxCdssJ3BCZIJNl9nDvHpH4DGob5eBBwvIijboruF2Xr400QfYwCOWQ9sTYfzSawCfZNB0lbBHuj6CyMPDoOqlefZR55P9xUgFURrR9JtovkYxWuSitTVOv)H80Kn4FBECJUDvHqAHPcDDNlplG)OxXHQoHiAt2OoZRhXswYK)FAoFV0O03Xgk)XAnDwJ2nuEa8DqbOGf4E988JhrGRHX1llwQT8cdtQ2UDEOB2fdY62uyaftvdHkUpy06irwGXxnsTGr6jd4SKNGP)skb36Hv3o3lALoVB4E49wz84vd3lrnRAbo9tuYw7ZqY1Ud8ovyBtj1wubRKrj7SNPEuSD46rW)XTZWs(r12aJsggQbUrbo(FxGZFrcCYocmcEWRmsZxONjq87oyN)moLTN(JtoURp9aD9AV02QTpxwGI3FakgCuhCTNnS2p7zR1J)iBEB5VXYn(zObIqQyD(gTLs(gCRSvIpd(11VYnKM(7]]
+    20261123001,
+    [[Hekili:LAvxpUPoq0Fl9LTB0ncij7TFeTSs9Q2R6UQD1QY(mGdEi4gITLTzJYl8BVJH8bqGUjTksroJpZ5mm2Njeoj85WakXaHpo1B67Mmz6mpVjHbMTsimqsswrwIl4K143bRzgOm(6nInA2ATtIy9ilOT5cc1s0IcwU5EE4IE5ulHKWGN(X9Fj455uMoHjZzCK3mgLc1zb6K(1zEzSjddUlMBQqbVaQYykKskYnLXF6PVvgJHlJ3NFbZ1QP2vQyG24sLAxBjs1UAlKidgLXx6uf05NAbF0yuhfHRZX6NIRfwDz6YycLk4VfxSc2QDkJ)mXqM3t9C93V)zKKmJrQN76UKzYkwyFeC7aDeYjw2KfEPEEWnPjFyMd2nvIuwo2uijgMGRDKkatEbX4lfBaveJNwOXDgxOHirAA0YeQ)KYh2HFhQncfnsNXGC6ywQFgqYnzoR4In8R29dzI5wFnySDauMUPfvd7aX)JVlE6ibf2yIKkYwqDEm3nREiUoI2i4q7hRZtHgPpa5iSiPWCsB785)id9iHotimNY8AcNyPkkxCR)eVwfLiFBuktbJtfjfA)Pw8x)gkSOin15WUofYRAXYuVr)90CxV0WfVqQs)yUYcLuORs3c(fic4WA0lDN)SrTBaeQyt91hjHXBwo7RMUyqwBsHe4eEcyZOoOZUiokGq32snR59Kg8uVtWu(qya60S2LoZIYzAJUA2x94dC5JvZcrnxKd0W)BVdeTKDTgHbjkKDfJGZUE1Bpd5ScnynnGKD9mxMId44ScoRJGnUZABahkGgwQlt7t9IwzV5cK9Ot7Yv(exQv8)9mfVYf3uZo(xlxVRdxhb)QUUkZBJh19WcdQml2ldOaV)pxG7olb(Wax5omdOLMN5SalXFCWk)3mbOz3V9MTRAS7pG5SEirt56B8rfhdzWRMvm4b)0Qd(jdzvRt2GFco8x19nnzOBDT)x9kIqQifMmbA7)kSILZW3Q4)39sdvBh(Rd]]
 )
 
 -- Spirit Tap (15270, 5 ranks: 20-100% chance; wowsims talents_shadow.go applySpiritTap): its buff after a kill that

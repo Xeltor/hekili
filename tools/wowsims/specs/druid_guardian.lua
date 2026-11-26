@@ -30,7 +30,8 @@
 -- pin's replay was 0.923 (117) with 14.65/min flicker (off-GCD Maul alternation; oracle 0.00).
 -- Worked (Task 7g): the bear's 11.25 rage a white swing and a crit's 8.65 more; Primal Fury's 5 on our crits (16959) as
 -- the strikes' `onCrit`.
--- The translator omits numeric combat health reads. The shared Feral recipe restores both defenses with display health bands.
+-- The health settings on Frenzied Regeneration and Barkskin use readable health bands. The shared Feral recipe
+-- also offers Classic health cues during combat when no band is available.
 -- Sim-setup difference (ruling L16): wowsims's sim starts in Dire Bear Form (its pre-pull) and its list never shifts, so out of form
 -- the list showed nothing; the `bear_form` line (the Feral APL's own cat_form pattern) never fires in the replay.
 local groupMelee = "feral_group_enemy&feral_spell_range"
@@ -55,7 +56,7 @@ return require("tools.wowsims.feral_pve")({
     },
     -- player-facing lines of the in-game description
     notes = {
-        "Defensives offers Barkskin and rage-funded Frenzied Regeneration at low health.",
+        "Defensives offers Barkskin and rage-funded Frenzied Regeneration at their configured health thresholds. Classic can show these cues when your health is unreadable.",
     },
     -- a tank: the raid's tank (the target swings at it) and presets.ts:55-69's healing model (apply_defaults.ts:108-125)
     tank = true,
@@ -75,13 +76,23 @@ return require("tools.wowsims.feral_pve")({
     -- by role (docs/dev/wowsims-packs.md): Maul a rage dump as Heroic Strike, always tier 2, every line (owner ruling
     -- 2026-10-22 extended to Guardian, Fable for the owner 2026-11-17); Lacerate (every line) and Demoralizing Roar at 2
     focus = { maul = 2, lacerate = 2, demoralizing_roar = 2 },
-    -- In a group the spell can confirm melee reach even when the distance bracket spans five yards.
+    -- The spell can confirm melee reach even when the distance bracket spans five yards.
+    -- Self-defensives also remain available during combat regardless of the selected enemy's range.
     heldRangeEvidence = {
         ["target.within5"] = {
-            primal_bite = "(" .. groupMelee .. "|buff.berserk.up&feral_bear_contact&feral_spell_range)",
+            barkskin = "feral_defense",
+            primal_bite = "("
+                .. groupMelee
+                .. "|(action.berserk.known&buff.berserk.up&feral_bear_contact&feral_spell_range))",
             lacerate = groupMelee,
             maul = groupMelee,
         },
+    },
+    guard = { barkskin = "buff.barkskin.down" },
+    -- The Feral extension puts this self-defensive before Barkskin when it can be funded.
+    condition = { frenzied_regeneration = false },
+    settings = {
+        frenzied_regeneration_health = { default = 25, desc = "player health threshold, percent" },
     },
     maintenance = { demoralizing_roar = { setting = "maintain_demoralizing_roar", orWhen = "feral_defensive_roar" } },
     leveling = {},

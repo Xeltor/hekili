@@ -112,8 +112,8 @@ I.auraOurs = ours
 -- record whose CDM stops answering UP (UNKNOWN, a hidden viewer, the leaf off, a target change) is clamped to HOLD
 -- once.
 -- LAT (cdm-facts item 3, L448; was the 1.0 s guess D9): the measured Cooldown Manager latency with a margin. Cast to
--- light p50 15 ms, p99 27 ms, max 109 ms of 110 casts (L448), a 100-120 ms tail and one 323 ms Rip light (L361); light
--- to dark at the modelled expiry within 50 ms (L361: Enrage, Rake, Moonfire, Roots). LAT = 0.35 s covers the worst
+-- light p50 15 ms, p99 27 ms, max 109 ms of 110 casts (L448), a 100-120 ms tail and one 323 ms debuff light (L361);
+-- light to dark at the modelled expiry within 50 ms (L361: four auras, buffs and debuffs). LAT = 0.35 s covers the worst
 -- light seen with ~25 ms to spare and every dark at expiry seven times over. It feeds HOLD and REFRESH_LAG only (the
 -- verdict's W0 is the owner's 0.5 s, below). HOLD has three uses: hold()'s threshold (a CDM open gets its remaining
 -- time only past HOLD, else LONG), rule 4's debounce (lit HOLD past the model's expiry; the 50 ms dark evidence is
@@ -778,6 +778,14 @@ function I.AuraVerdictClosed(k, t, ap)
         local u = k > I.AURA_UNIT and 2 or 1
         P.Silent(k - (u - 1) * I.AURA_UNIT, u)
     end
+end
+
+--- (L1810 F4b) Whether target record j's Cooldown Manager item lit since castT (UP, its state changed at or after the
+--- cast: dark before it, so a refresh proves nothing): our cast of it landed. Allocates nothing.
+function I.AuraLitSince(j, castT)
+    local F = I.presence and I.presence.fact
+    local k = I.AURA_UNIT + j
+    return F ~= nil and F.state[k] == I.UP and (F.t[k] or 0) >= castT
 end
 
 --- Our cast's avoid undo closed target record j (Families/Now.lua) at t; castT the undone cast's time, preE the

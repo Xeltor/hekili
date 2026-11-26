@@ -247,6 +247,36 @@ function M.powerLine(run)
     )
 end
 
+--- (L1805) The "health" row of driver `st`'s run: the player-health band's holds begun and readings dropped this fight
+--- (Families/Player.lua I.healthHolds, I.healthSnaps), the Defensives-toggle abilities shown first in Primary in combat
+--- (ticks) and pressed, and (L1808) the combat ticks the Defensives display showed one (the driver presses Primary only).
+function M.healthLine(run, st)
+    local VI = st.H.ns.VirtualStateInternal
+    local abilities = st.H.Hekili.Class.abilities
+    local function shielded(key)
+        local a = key and abilities[key]
+        return a and a.toggle == "defensives" or false
+    end
+    local shown, pressed = 0, 0
+    for n = 1, run.combat do
+        if shielded(run.ours[n]) then
+            shown = shown + 1
+        end
+    end
+    for key, k in pairs(run.pressedBy) do
+        if shielded(key) then
+            pressed = pressed + k
+        end
+    end
+    return ("holds %d snaps %d defensives shown %d pressed %d in Defensives %d"):format(
+        (VI and VI.healthHolds or 0) - st.holds0,
+        (VI and VI.healthSnaps or 0) - st.snaps0,
+        shown,
+        pressed,
+        run.defShown or 0
+    )
+end
+
 --- An order arm's extra cycles (ab.lua `midPoll`, re-review H3): `after` s into each delay knobs k make (observer.delays).
 function M.newMidPolls(after, k, us)
     return { after = after, k = k, us = us, seen = 0, at = {} }
@@ -358,6 +388,10 @@ M.TICK = 0.2 -- 5 Hz, the in-game combat rate (D1); o.hz = 10 the option
 -- A poll at t owns the world's events due up to t + TIE: a float sum (a swing chain's 170.0000000000002) lands on its
 -- poll, paid before that poll's press and fed at it (L1281 a); under replay.EPS, a log line's place in its timestamp
 M.TIE = 1e-9
+-- One client frame per wowsims timestamp (L1793): event times within this of the last one fed share a frame. A replay
+-- puts a timestamp's lines replay.EPS (1e-6) apart (up to 30 lines in the checked-in logs, so chained, not a window) and
+-- its timestamps 0.01 s apart (the log's grain); far under observer.FRAME (1e-4) and a real frame (~16 ms)
+M.SAME_FRAME = 1e-5
 M.REACT = 0.05 -- a first icon whose wait is at most this is shown as ready: pressed
 
 --- Ready while short (the owner's rule, dim never promote): an icon pressed as ready with the truth before the press
@@ -436,12 +470,23 @@ end
 
 -- Fires the client events `obs` releases up to world time `t` into instance `H`, each at its own time (base + t);
 -- a cooldown's start, an aura's expiry, a totem's start and our cast bar (ms) move to the instance's clock.
-local function feed(H, obs, t, base, sink)
+-- Each event time is its own client frame (L1793), times within M.SAME_FRAME of the last one fed sharing it (one
+-- wowsims timestamp): a frame (headless.frame) runs after one time's events, before the next time's, and after the
+-- last time's unless the poll's cycle covers it (its own frame). `sub`: a step inside the poll (step's world walk);
+-- the last time's frame is left open and returned, for the next stop's feed (`open`) to run or join. A staged cast thus
+-- folds before a later time's Direct row.
+local function feed(H, obs, t, base, sink, sub, open)
     local s = obs.s
     local first, last = obs.step(t + M.TIE) -- the poll's tie, as step runs the world (M.TIE)
     local ctl = H.ctl
+    local prev = open
     for i = first, last do
-        ctl.now = base + math.min(s.t[i], t) -- a tied event at the poll: the instance's clock never steps back
+        local at = base + math.min(s.t[i], t) -- a tied event at the poll: the instance's clock never steps back
+        if prev and at > prev + M.SAME_FRAME then
+            headless.frame(H, prev)
+        end
+        prev = prev and prev > at and prev or at
+        ctl.now = prev
         local ev = s.ev[i]
         if ev:byte(1) == 64 then -- "@"
             local a1, a2, a3, a4 = s.a1[i], s.a2[i], s.a3[i], s.a4[i]
@@ -460,6 +505,12 @@ local function feed(H, obs, t, base, sink)
         else
             H.Fire(ev, s.a1[i], s.a2[i], s.a3[i], s.a4[i], s.a5[i])
         end
+    end
+    if sub then
+        return prev
+    end
+    if prev and prev + M.SAME_FRAME < base + t then
+        headless.frame(H, prev)
     end
 end
 M.feed = feed -- a spec with its own ticks over a world (a fight past a kill: tests/Forever/kill_rows_spec.lua)
@@ -592,6 +643,15 @@ local function firstGcd(H)
     return false
 end
 
+-- scenarios.world's first mob: the only one whose health is the fight's (the others 1e9)
+local function firstMob(W)
+    for _, e in ipairs(W.ents) do
+        if e.kind == "mob" then
+            return e
+        end
+    end
+end
+
 --- One run of fight `seed`: the instances in `drivers` (each { H, plain }) stepped on one world in lockstep, the
 --- first one's first icon pressed, each press resolved from the run's truth instance (the oracle when it is driven,
 --- else the first driver). `o`: duration (combat seconds [180]), mobHealth, hz [5], react [REACT], reaction
@@ -657,6 +717,7 @@ function M.run(L, seed, o, drivers)
         ticks = 0,
         presses = 0,
         pressedBy = {},
+        defShown = 0, -- (L1808) combat ticks the Defensives display showed an icon (M.healthLine)
         refused = {},
         unmatched = {},
         raises = 0,
@@ -746,8 +807,16 @@ function M.run(L, seed, o, drivers)
         -- time to die (Targets.lua) answers from it
         if bands and arm.ttd and not ctl.ttdRig then
             ctl.ttdRig = ttd_rig.install(d.H, ctl.lhv)
+        elseif bands and arm.ttd then
+            ttd_rig.newFight(ctl.ttdRig) -- the last world's plates are gone (ttd_rig.lua)
         end
-        d.H.Hekili.bandOff = not bands
+        -- lib-absent (ab.lua): the switch on, neither library in this instance's LibStub
+        local absent = arm.libAbsent and not d.plain or false
+        if absent then
+            local stub = rawget(d.H.env, "LibStub")
+            assert(stub.libs["LibHiddenValues-1.0"] == nil and stub.libs["LibTimeToDie-1.0"] == nil, "lib-absent")
+        end
+        d.H.Hekili.bandOff = not (bands or absent)
         d.H.Hekili:ProvidersChanged()
         local VI = d.H.ns.VirtualStateInternal
         if VI and VI.def then -- (loop_spec's fake drivers have no belief)
@@ -763,7 +832,7 @@ function M.run(L, seed, o, drivers)
             -- layout: the client's data-loaded event, once (as at login; later fights reuse the frames and the map)
             d.H.Fire("COOLDOWN_VIEWER_DATA_LOADED")
         end
-        ctl.combat, ctl.form, ctl.stealthed = false, L.form, false
+        ctl.form, ctl.stealthed = L.form, false
         if aw.followCycle then -- option D's arms (ab.lua; every other arm leaves all this at the defaults)
             -- Recommend Target Swaps per the arm, the enemy plates shown and counted (the spec's default Enemy Range
             -- Radius: 30 yd for a ranged spec; past 10 yd only plates in combat count, L644), and the observer's
@@ -837,6 +906,12 @@ function M.run(L, seed, o, drivers)
         -- its length), or the instance keeps believing the last fight's (a self-buff or a long cooldown of run A
         -- carried into run B, a different world)
         ctl.now = base
+        if ctl.combat then
+            -- A fight can end while another enemy is still alive, including when it kills the player.
+            -- The fresh world starts out of combat, where the empty aura list can clear old records.
+            ctl.combat = false
+            d.H.Fire("PLAYER_REGEN_ENABLED")
+        end
         if d.plain then -- two world lines (run A's, run B's): its last read is the other world's, its gain to this one's
             -- first read no regen, yet a measurement over the 30 s gap (the Protection oracle's 18.12 for a world's 17.38)
             local res = d.H.ns.VirtualStateInternal.res
@@ -866,6 +941,9 @@ function M.run(L, seed, o, drivers)
             lhv = bands and ctl.lhv or nil, -- a bands arm's driver: its fake library (M.bandCheck)
             dropAt = bands and arm.bandDrop and wo.pull + arm.bandDrop or nil, -- bands-drop: the capability lost then
             ttd = bands and arm.ttd and ctl.ttdRig or nil, -- a ttd arm's driver: the library's rig (ttd_rig.poll)
+            -- (L1805) the player-health band's holds and snaps before this fight (M.healthLine)
+            holds0 = VI and VI.healthHolds or 0,
+            snaps0 = VI and VI.healthSnaps or 0,
         }
     end
     local errors0 = {}
@@ -926,7 +1004,50 @@ function M.run(L, seed, o, drivers)
             return endAt - ctl.now
         end
     end
+    -- (L1814) a ttd arm's plain instances answer the true time left (fix1_helper's truth override), so the arm measures
+    -- what our estimate costs, not the oracle's blindness: the killable mob's health over the rate it fell at in this
+    -- world's calibration (o.ttdRate: M.truthRate, by the driving side), no more than the fight's cap leaves. Our driver
+    -- keeps the library's estimate. shortcut: the rate is a mean, so the answer is near the kill, not on it (the truth
+    -- arm's median error 2-13 s, batch 4); replace it if that error nears the library's.
+    local rate = not R and arm.ttd and o.ttdRate
+    if rate then
+        local perS, mob = drivers[1].plain and rate.B or rate.A, firstMob(W)
+        local function left()
+            return math.max(0, math.min(mob.health / perS, W.stopAt - math.max(W.t, M.PULL)))
+        end
+        for i, st in ipairs(steps) do
+            if st.plain then
+                ttd[i], st.H.Hekili.GetGreatestTTD = st.H.Hekili.GetGreatestTTD, left
+            end
+        end
+    end
     local function step(tc) -- the world to `tc`, every instance fed and cycled
+        for _, st in ipairs(steps) do -- a viewer arm: the last poll's lagged lights land now, before this poll's events
+            -- (one poll late, I-B; the walk below feeds the @viewer ops it queues, L1793 I1)
+            if st.layout and st.H.ctl.viewer.pending[1] then
+                st.H.ctl.ViewerFlush()
+            end
+        end
+        -- each world event time before the poll its own client frame (L1793): the world to it, then every instance's
+        -- observer and feed, so an answer reads the world as of its time (a due one, usableDelay late, stops it too);
+        -- a stop's frame waits in st.open, joined by the next stop or the poll within M.SAME_FRAME (one timestamp)
+        while true do
+            local T = W.q[1] and W.q[1].t
+            for _, st in ipairs(steps) do
+                local d = st.obs.due()
+                T = d and (not T or d < T) and d or T
+            end
+            if not T or T >= tc then
+                break
+            end
+            T = math.max(T, W.t) -- an answer already due answers now: the world's clock never steps back
+            W.run(T)
+            -- shortcut: a viewer arm's layout events still land at the poll (below); give them their own time here if a
+            -- viewer arm's numbers hinge on their order against these events
+            for _, st in ipairs(steps) do
+                st.open = feed(st.H, st.obs, T, st.base, st.sink, true, st.open)
+            end
+        end
         W.run(tc + M.TIE)
         W.t = tc
         if ledger or hold then -- the events the ledger and the hold read
@@ -940,10 +1061,11 @@ function M.run(L, seed, o, drivers)
         end
         for i, st in ipairs(steps) do
             local lay = st.layout
-            if lay then -- a viewer arm (outside the sampled bytes): the last poll's lagged lights land now (one poll
-                -- late, I-B), then the layout's own events up to this poll
-                if st.H.ctl.viewer.pending[1] then
-                    st.H.ctl.ViewerFlush()
+            if lay then -- a viewer arm (outside the sampled bytes): the walk's last frame, if before this poll's
+                -- time, then the layout's own events up to this poll (the lagged lights landed at the step's top)
+                if st.open and st.open + M.SAME_FRAME < st.base + tc then
+                    headless.frame(st.H, st.open)
+                    st.open = nil
                 end
                 while lay[st.li] and lay[st.li][1] <= tc do
                     local e = lay[st.li]
@@ -951,7 +1073,8 @@ function M.run(L, seed, o, drivers)
                     st.li = st.li + 1
                 end
             end
-            feed(st.H, st.obs, tc, st.base, st.sink)
+            feed(st.H, st.obs, tc, st.base, st.sink, nil, st.open)
+            st.open = nil
             if st.dropAt and tc >= st.dropAt then -- bands-drop (ab.lua): the capability lost mid-fight
                 st.lhv:SetAvailable("unavailable", "error")
                 st.dropAt = nil
@@ -1197,6 +1320,9 @@ function M.run(L, seed, o, drivers)
             if out.count > 0 and out.recs[1].focus then
                 run.focus = run.focus + 1
             end
+            if steps[1].H.Hekili.Engine.Output.Defensives.count > 0 then
+                run.defShown = run.defShown + 1
+            end
             run.pressed[n] = R and {} or pressedKey -- the driver's own press this tick; a replay's casts (loop.flips)
             if R then
                 run.theirs[n] = R.next(t)
@@ -1242,6 +1368,10 @@ function M.run(L, seed, o, drivers)
     -- the out-of-combat gap: each instance's clock moves past the fight, after the last tick's own events (a kill by
     -- this tick's press, and the combat end it brings: else the next fight starts in combat for the instance); our cast
     -- still running ends there (fix 31 G3: its start would be the next fight's GCD anchor), after the last tick's metrics
+    run.ahead = 0 -- the answers' look-ahead (observer.lua obs.ahead): step's world walk keeps it within M.TIE
+    for _, st in ipairs(steps) do
+        run.ahead = math.max(run.ahead, st.obs.ahead)
+    end
     W.endCasts(us)
     -- a kill's combat end comes 1 s on (observer.COMBAT_END): fed up to it, on the tick grid (a clock off the grid
     -- reorders the next fights' float sums: Feral's flicker 2.12 -> 2.34 with the gap ending at the kill + 1 s)
@@ -1294,6 +1424,10 @@ function M.run(L, seed, o, drivers)
         end
         if st.ttd then
             ab.check(true, "ttd", M.ttdRow(run.ttd, W.killAt, seed, content.PACK))
+        end
+        if i == 1 and not st.plain and not R then -- (L1805) the record-only "health" row, every arm's
+            local who = tostring(st.H.ctl.class) .. " " .. tostring(st.H.Hekili.State.spec.key)
+            ab.record("health", ("%s arm %s seed %d %s"):format(who, armName, seed, M.healthLine(run, st)))
         end
         if i == 1 and run.power.n > 0 then -- the record-only "power" row: every arm's, a replay's too (re-review H4)
             local who = tostring(st.H.ctl.class) .. " " .. tostring(st.H.Hekili.State.spec.key)
@@ -1425,8 +1559,8 @@ end
 -- in [t_i, t_i+1), B excused only if cast before the tick after it showed; nil: no presses). Owner rule
 -- 2026-10-26: a show-then-press within one tick is not jitter (a proc at a hard cast's landing, pressed at once).
 -- The jitter rule (L1762 round 2): `why` (flicker.changes: by tick, the fact a first-icon change follows, "stale" or
--- false; nil: presses only) also excuses a flip whose change to B follows a fact, unless that tick or the return's is
--- stale; `by` (optional) counts the excused ones by fact.
+-- false; nil: presses only) also excuses a flip whose change to B and return to A each follow a fact (L1791: a return
+-- needs its own), neither stale; `by` (optional) counts the excused ones by the change's fact.
 local function flips(seq, n, press, why, by)
     local f = 0
     for i = 1, n - 2 do
@@ -1436,11 +1570,12 @@ local function flips(seq, n, press, why, by)
         if type(p) == "table" then
             pressed = p[b]
         else
-            pressed = press and (p == b or press[i + 2] == b)
+            -- an empty slot (false) is never a press: false also means "no press" (L1791)
+            pressed = press and b and (p == b or press[i + 2] == b)
         end
         if seq[i] ~= b and seq[i + 2] == seq[i] and not pressed then
-            local w = why and why[i + 1]
-            if w and w ~= "stale" and why[i + 2] ~= "stale" then
+            local w, r = why and why[i + 1], why and why[i + 2]
+            if w and r and w ~= "stale" and r ~= "stale" then
                 if by then
                     by[w] = (by[w] or 0) + 1
                 end
@@ -1501,6 +1636,57 @@ local function blank()
     return m
 end
 
+M.TRUTH_SEEDS = 4 -- M.truthRate's calibration fights (fix1_helper's seeds 1-4)
+local truthRates = setmetatable({}, { __mode = "k" }) -- by content, then arm/mobHealth/duration/others
+
+--- (L1814) A ttd arm's truth: the killable mob's health lost a second, { A = run A (ours driving), B = run B (the
+--- oracle) }, over M.TRUTH_SEEDS fights on a fresh boot of `content` under `o`'s arm (o.mobHealth, o.duration and
+--- o.others: a party's damage on the target counts), the rows they would write dropped; one calibration a content,
+--- arm, health, duration and party. nil where the mob cannot die (health 1e8 or more: the fight ends at its cap, and
+--- both sides answer the unknown, 3600).
+function M.truthRate(content, o)
+    local health = o.mobHealth or content.WORLD.mobHealth
+    if health >= 1e8 then
+        return nil
+    end
+    -- each arm drives its own rate A (live-like review M1)
+    local key = (o.arm or ab.arm())
+        .. "/"
+        .. health
+        .. "/"
+        .. (o.duration or 180)
+        .. "/"
+        .. table.concat(o.others or {}, ",")
+    local byKey = truthRates[content] or {}
+    truthRates[content] = byKey
+    if byKey[key] then
+        return byKey[key]
+    end
+    local lost, secs = { A = 0, B = 0 }, { A = 0, B = 0 }
+    local check, record = ab.check, ab.record
+    ab.check, ab.record = function() end, function() end -- the calibration's rows are not the arm's
+    local ok, err = pcall(function()
+        local L = M.new(content)
+        for seed = 1, M.TRUTH_SEEDS do
+            local a, b = M.fight(
+                L,
+                seed,
+                { trace = false, mobHealth = health, duration = o.duration, others = o.others, arm = o.arm }
+            )
+            for side, r in pairs({ A = a, B = b }) do
+                local mob = firstMob(r.W)
+                lost[side] = lost[side] + mob.healthMax - mob.health
+                secs[side] = secs[side] + r.combat * M.TICK
+            end
+        end
+    end)
+    ab.check, ab.record = check, record
+    assert(ok, err)
+    assert(lost.A > 0 and lost.B > 0 and secs.A > 0 and secs.B > 0, "no damage in the calibration")
+    byKey[key] = { A = lost.A / secs.A, B = lost.B / secs.B }
+    return byKey[key]
+end
+
 --- `n` fights (seeds 1..n, from `o.seed0` + 1) on `L`'s boot: run A and run B each, tallied (§5.1). The first fight
 --- runs traced when `o.trace` is unset (one per scenario: the facade's secret passthroughs), and adds no cpu sample
 --- (the debug pass's cost is not runtime). Returns the tally; its
@@ -1510,7 +1696,13 @@ function M.tally(L, n, o)
     local m = blank()
     local lo = { tick = 1 / (o.hz or 5), react = o.react or M.REACT }
     -- our ledger's late facts (L1762) where the arm's viewer is on, as loop.run turns it on: the driver only
-    local lv = { tick = lo.tick, react = lo.react, viewer = ab.ARMS[o.arm or ab.arm()].viewer }
+    local arm = ab.ARMS[o.arm or ab.arm()]
+    local lv = { tick = lo.tick, react = lo.react, viewer = arm.viewer }
+    -- (L1814) a ttd arm's plain oracle answers the true time left (M.run): the world's calibrated rate, once
+    local ttdRate = o.ttdRate
+    if ttdRate == nil and arm.ttd then
+        ttdRate = M.truthRate(L.content, o)
+    end
     if o.hold == nil then
         m.hold = M.HOLD
     else
@@ -1525,7 +1717,7 @@ function M.tally(L, n, o)
     end
     for f = 1, n do
         local seed = (o.seed0 or 0) + f
-        local po = setmetatable({ trace = o.trace == nil and f == 1 or o.trace }, { __index = o })
+        local po = setmetatable({ trace = o.trace == nil and f == 1 or o.trace, ttdRate = ttdRate }, { __index = o })
         local a, b = M.fight(L, seed, po)
         m.fights = m.fights + 1
         for i = 1, a.combat do

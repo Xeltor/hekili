@@ -80,6 +80,12 @@ local function newState(class, race)
         unpack = unpack,
         class = class,
         race_token = race,
+        -- State.lua's race table: the token's key true, any other false (a race-locked spell's `known`)
+        race = setmetatable({ [(race or ""):lower()] = true }, {
+            __index = function()
+                return false
+            end,
+        }),
         timeToInterrupt = noop,
         this_action = false,
         args = {},
@@ -145,6 +151,7 @@ local function newState(class, race)
         "closeWindow",
         "resetResource", -- the belief's own verb (Families/Now.lua): a `now`'s only
         "capResource", -- shared by the belief and simulated handlers; no aura side effects
+        "mayGain", -- the belief's own verb (Families/Now.lua): a `now`'s only
     }) do
         s[verb] = noop
     end
@@ -236,7 +243,7 @@ function M.load(classToken, race)
     class.kit = false
     strict(class, "class")
     local state = newState(class, race)
-    local client = { SECRET = {}, isUnit = {}, exists = {} }
+    local client = { SECRET = {}, isUnit = {}, exists = { target = false } }
     local env = { errors = {}, loadErrors = {}, class = class, state = state, client = client }
     local hekili = { Class = class, State = state }
     function hekili:GetLocale()
@@ -297,6 +304,7 @@ function M.load(classToken, race)
                 return 0
             end,
             GetItemSpell = noop,
+            GetItemInfo = noop, -- no item cached: Hekili_Shared's own names (Consumables.lua itemName)
             IsUsableItem = function()
                 return true
             end,
@@ -338,6 +346,34 @@ function M.load(classToken, race)
         GetNumGroupMembers = function()
             return 0
         end,
+        InCombatLockdown = function()
+            return client.combat == true
+        end,
+        UnitAffectingCombat = function(unit)
+            return unit == "player" and client.combat == true
+        end,
+        IsMounted = function()
+            return false
+        end,
+        UnitOnTaxi = function()
+            return false
+        end,
+        PlayerEatingOrDrinking = function()
+            return false
+        end,
+        IsSwimming = function()
+            return false
+        end,
+        IsOutdoors = function()
+            return true
+        end,
+        GetUnitSpeed = function()
+            return 0
+        end,
+        GroupRole = function()
+            return "NONE"
+        end,
+        RangeLib = noop,
         GetCVar = noop,
         ObservedStat = ns.VirtualState.ObservedStat,
         PlayerHealthMaximum = function()
@@ -349,6 +385,7 @@ function M.load(classToken, race)
         TargetMemoryKey = noop,
         TargetMemoryPlate = noop,
         TargetInPlayerCombat = noop,
+        UnitHasObservedDebuff = noop,
         IsInInstance = function()
             return false, "none"
         end,
@@ -393,6 +430,9 @@ function M.load(classToken, race)
             return client.exists[u]
         end,
         UnitIsDeadOrGhost = function()
+            return false
+        end,
+        UnitIsDead = function()
             return false
         end,
         UnitCanAttack = function()
@@ -515,6 +555,8 @@ function M.abilitySet(classToken, race)
     local set = merged(base)
     -- stateExprs: the kit's state expressions (the translator's autoTimeToNext reads which hand clocks the kit has)
     set.talents, set.racial, set.stateExprs = base.class.kit.talents, {}, base.class.kit.stateExprs
+    -- the shared content's settings ({ key, value, option }, registration order): translator rule 25's lines
+    set.sharedSettings = base.ns.sharedSettings
     for _, r in ipairs(race and { race } or base.races) do
         local env = race and base or M.load(classToken, r)
         local t = merged(env)

@@ -143,7 +143,7 @@ I.OnBuild(function(def, now)
                 expires = 0,
                 stacks = 0,
                 written = 0,
-                observed = -math.huge,
+                resolved = -math.huge,
             }
         end
         undo[s] = saved
@@ -262,6 +262,14 @@ I.On(Obs.Read, function(o, t)
         -- first in this drain (the polls stage after the cast's event was logged), is another application and stands
         -- (Fable 5.2 review M1; F3's pattern). Only a close that happened is counted (Sources/Auras.lua).
         if U.exp0[u][j] > 0 and U.applied[u][j] == o.b then
+            if u == 2 then
+                local slot = I.curSlot
+                local entry = undo[slot][j]
+                if entry.ability ~= 0 and entry.applied == o.b and (slot ~= 0 or entry.swap == I.curSwapN) then
+                    -- Release this application's retry gate even if the ticket still awaits attribution of a late row.
+                    entry.resolved = math.max(entry.resolved, entry.cast)
+                end
+            end
             set(u, j, 0, 0, 0, t, "observed", Obs.Read)
             I.AuraVerdictClosed(o.a, o.t, o.b)
         end
@@ -301,7 +309,7 @@ I.On(Obs.Read, function(o, t)
                 or count > U.stacks[u][j]
                 or (entry.ability ~= 0 and expires > entry.expires + I.SAME_FRAME)
             then
-                entry.observed = o.t
+                entry.resolved = o.t
             end
         end
         set(u, j, expires, applied, count, t, "observed", event)
@@ -398,9 +406,9 @@ local function debuffWas(s, j, t)
     return 0, 0, 0
 end
 
-function I.DebuffObserved(j, guid, cast)
+function I.DebuffResolved(j, guid, cast)
     local s = I.DebuffSlot(guid)
-    return s and undo[s][j].observed >= cast
+    return s and undo[s][j].resolved >= cast
 end
 
 -- A cast writes to its pinned slot; only the current target's auras have a live delta or CDM record.
@@ -450,26 +458,59 @@ I.On(Obs.AreaDebuff, function(o, t)
     end
 end)
 
-function I.DebuffUndo(guid, ability, cast, t)
-    local s
+local function debuffCastSlot(guid, ability, cast)
     if type(guid) == "string" and guid ~= "" then
-        s = I.DebuffSlot(guid)
-    else
-        s = I.CastSlot(ability, cast) or I.curSlot
+        return I.DebuffSlot(guid)
     end
-    if not s or s < 0 or U.n < 2 then
+    return I.CastSlot(ability, cast) or I.curSlot
+end
+
+-- A confirmed landing still owns the modelled aura after a foreign miss row. Move its application
+-- off the cast's stamp so a compatibility miss hook cannot discard it.
+function I.DebuffReanchor(guid, ability, cast, t)
+    local s = debuffCastSlot(guid, ability, cast)
+    if s ~= I.curSlot or U.n < 2 then
         return
     end
     for j = 1, U.nAura do
         local entry = undo[s][j]
+        local seen = U.rec[2][j].last.observed
+        if
+            entry.ability == ability
+            and entry.cast == cast
+            and (s ~= 0 or entry.swap == I.curSwapN)
+            and entry.applied == U.applied[2][j]
+            and U.exp0[2][j] > t
+            and not (seen.t >= entry.written and seen.event == Obs.Read)
+        then
+            set(2, j, U.exp0[2][j], t, U.stacks[2][j], t, "modelled", Obs.Landed, true)
+            entry.applied = t
+        end
+    end
+end
+
+-- Restore a cast's previous target records. Reports whether a new Cooldown Manager light proves it landed.
+function I.DebuffUndo(guid, ability, cast, t, pointConfirmed)
+    local s = debuffCastSlot(guid, ability, cast)
+    if not s or s < 0 or U.n < 2 then
+        return false
+    end
+    local lit, changedCurrent = false, false
+    for j = 1, U.nAura do
+        local entry = undo[s][j]
         if entry.ability == ability and entry.cast == cast and (s ~= 0 or entry.swap == I.curSwapN) then
             entry.ability = 0
+            if pointConfirmed then
+                entry.resolved = math.max(entry.resolved, cast)
+            end
             local expires = entry.expires > t and entry.expires or 0
             if s == I.curSlot then
+                lit = lit or I.curSwapT < cast and I.AuraLitSince(j, cast)
                 local seen = U.rec[2][j].last.observed
                 if U.applied[2][j] == entry.applied and not (seen.t >= entry.written and seen.event == Obs.Read) then
-                    local was = U.exp0[2][j]
+                    local was, wasStacks = U.exp0[2][j], U.stacks[2][j]
                     set(2, j, expires, entry.previous, entry.stacks, t, "modelled", Obs.Avoided, true)
+                    changedCurrent = changedCurrent or was ~= expires or wasStacks ~= entry.stacks
                     if expires == 0 then
                         I.AuraUndone(j, cast, entry.expires, t)
                     end
@@ -486,6 +527,10 @@ function I.DebuffUndo(guid, ability, cast, t)
             end
         end
     end
+    if pointConfirmed and changedCurrent and not lit then
+        D.full[2] = true -- like a viewer verdict, a confirmed miss releases the stale countdown
+    end
+    return lit
 end
 
 -- A hit of a listed kind spends one stack of each `consumedBy` player aura believed up (a modelled sample at the hit),
@@ -563,7 +608,7 @@ I.On(Obs.TargetGone, function(o)
         for j = 1, U.nAura do -- all four (review m2): a reused slot's load must bring no old mob's stacks
             memExp[s][j], memApplied[s][j], memStacks[s][j], memInst[s][j] = 0, 0, 0, 0
             undo[s][j].ability = 0
-            undo[s][j].observed = -math.huge
+            undo[s][j].resolved = -math.huge
         end
         if s == I.curSlot then
             load(0)

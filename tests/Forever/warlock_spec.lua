@@ -32,6 +32,7 @@ local KIT = {
     rain_of_fire = { { 5740, 6219, 11677, 11678 }, 1185, 0, "spell" },
     hellfire = { { 1949, 11683, 11684 }, 1300, 0, "spell" },
     death_coil = { { 6789, 17925, 17926 }, 600, 120, "spell" },
+    death_coil_defensive = { { 6789, 17925, 17926 }, 600, 120, "spell" }, -- (L1808) the same spell, Defensives
     conflagrate = { { 1293817, 1293818, 17962, 18930, 18931, 18932 }, 255, 10, "spell" },
     shadowburn = { { 17877, 18867, 18868, 18869, 18870, 18871 }, 365, 15, "spell" },
     searing_pain = { { 5676, 17919, 17920, 17921, 17922, 17923 }, 168, 0, "spell" },
@@ -142,7 +143,7 @@ describe("Forever Warlock", function()
             )
             assert.are.equal("function", type(a.known), key)
         end
-        assert.are.equal(47, n)
+        assert.are.equal(48, n)
         assert.are.equal("cooldowns", w.abilities.amplify_curse.toggle)
         for _, key in ipairs({
             "summon_imp",
@@ -310,10 +311,8 @@ describe("Forever Warlock", function()
         })
         assert.are.equal(340, ld.run(A.corruption.spend, e)) -- outside the mask
         e = env({ master_summoner = 2 })
-        assert.are.same(
-            { 0.48, 0.6 },
-            { near(ld.run(A.summon_imp.spend, e)), near(ld.run(A.summon_succubus.spend, e)) }
-        )
+        -- the fraction as declared: Master Summoner's cut is a cost modifier on the rounded whole (percent_cost_order_spec)
+        assert.are.same({ 0.8, 1 }, { near(ld.run(A.summon_imp.spend, e)), near(ld.run(A.summon_succubus.spend, e)) })
     end)
 
     it("forecasts the learned rank of targeted Fear in custom lists", function()
@@ -569,16 +568,16 @@ describe("Forever Warlock", function()
         local A = w.abilities
         local e = env({ master_summoner = 2 })
         e.buff = buffs({ fel_domination = 1 })
-        assert.are.same({ 0.5, 0.1 }, {
+        assert.are.same({ 0.5, 1 }, { -- the cost cuts are cost modifiers (percent_cost_order_spec)
             near(ld.run(A.summon_imp.cast, e)),
             near(ld.run(A.summon_succubus.spend, e)),
         })
         e = env({})
         e.buff = buffs({ fel_domination = 1 })
-        assert.are.same({ 4.5, 0.4 }, {
+        assert.are.same({ 4.5, 0.8 }, {
             near(ld.run(A.summon_imp.cast, e)),
             near(ld.run(A.summon_imp.spend, e)),
-        }) -- 10 - 5.5 s; 0.8 x (1 - 0.5)
+        }) -- 10 - 5.5 s; the 0.8 as declared
         e = env({})
         e.summonPet, e.dismissPet = function() end, function() end
         ld.run(A.summon_imp.handler, e)
@@ -1235,7 +1234,10 @@ describe("Forever Warlock priorities", function()
             for list, entries in pairs(p.lists) do
                 for i, e in ipairs(pe.flat(entries)) do
                     local where = p.name .. " " .. list .. " " .. i
-                    assert.is_true(cls.abilities[e.action] ~= nil or shared[e.action] or pe.LINE[e.action], where)
+                    assert.is_true(
+                        cls.abilities[e.action] ~= nil or shared[e.action] or pe.LINE[e.action] or pe.SHARED[e.action],
+                        where
+                    )
                     for kind, key in (e.criteria or ""):gmatch("(%a+)%.([%w_]+)") do
                         if kinds[kind] then
                             assert.is_true(kinds[kind][key] ~= nil or shared[key], where .. ": " .. key)

@@ -98,7 +98,7 @@ files["src/Hekili/UI/UI.lua"] = { globals = { "p" } } -- upstream's stray global
 -- The names a class file's `now` function reads in VirtualState's context (src/Hekili/Game/State/Families/Now.lua).
 local nowEnv = {
     "gain", "spend", "applyBuff", "applyDebuff", "removeBuff", "removeDebuff", "addStack", "removeStack", "setCooldown",
-    "summonTotem", "summonPet", "dismissPet", "reduceCooldown", "level", "resetResource", "capResource",
+    "summonTotem", "summonPet", "dismissPet", "reduceCooldown", "level", "resetResource", "capResource", "mayGain",
     "talent",
     "buff", "debuff", "knownRank", "stat", "swingBase", "healthMax", "now", "combat", "rage", "energy", "mana", "focus",
     "runic_power", "totem", "action", "settings", "haste", "instant", "cast_start", "cast_id", "target",
@@ -134,6 +134,7 @@ files["src/Hekili_Druid/Druid.lua"] = { globals = druidEnv }
 local rogueEnv = {
     "energy", "combo_points", "cooldown", "combat", "class", "interrupt", "stealthed", "expose_due", "window", "closeWindow",
     "off_hand", "level",
+    "mayGain", -- the belief's verb (Families/Now.lua): read in the finishers' `now` only (Relentless Strikes)
 }
 for _, k in ipairs(stateEnv) do
     rogueEnv[#rogueEnv + 1] = k
@@ -146,7 +147,7 @@ for _, k in ipairs(stateEnv) do
 end
 files["src/Hekili_Paladin/Paladin.lua"] = { globals = paladinEnv }
 -- The Shaman's further `state` names.
-local shamanEnv = { "totem", "summonTotem", "combat", "instant", "cast_start", "nextMH", "nextOH", "mainhand_speed", "offhand_speed" }
+local shamanEnv = { "totem", "summonTotem", "combat", "instant", "cast_start", "nextMH", "nextOH", "mainhand_speed", "offhand_speed", "interrupt" }
 for _, k in ipairs(stateEnv) do
     shamanEnv[#shamanEnv + 1] = k
 end
@@ -200,10 +201,11 @@ files["tests/LibHiddenValues/"] = {
 files["src/LibTimeToDie/"] = {
     not_globals = { "print" }, -- a pure API: no chat output
     read_globals = {
-        "CreateFrame", "GetTime", "GetLocale", "geterrorhandler", "UnitCanAttack", "UnitExists", "issecretvalue",
+        "CreateFrame", "GetTime", "GetLocale", "geterrorhandler", "UnitCanAttack", "UnitExists", "UnitIsUnit",
+        "issecretvalue",
     },
 }
 files["tests/LibTimeToDie/"] = {
     std = "+busted",
-    read_globals = { "LibStub", "GetTime" },
+    read_globals = { "LibStub", "GetTime", "UnitIsUnit" },
 }

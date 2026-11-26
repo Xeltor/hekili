@@ -110,6 +110,45 @@ describe("the A/B harness", function()
         assert.is_nil(ab.ARMS.default.observe)
     end)
 
+    -- (L1814, Fable batch 4 I1) the gated arm players run: the addon's defaults, every switch on
+    it("the shipped arm: bands, time to die and the Cooldown Manager on; it writes its row and asserts", function()
+        assert.are.same({
+            outcomes = "default",
+            presence = "router",
+            viewer = true,
+            layout = "fixture",
+            bands = true,
+            ttd = true,
+            bandKnobs = { plateBands = true }, -- as the ttd arm (L1841)
+            gate = true,
+        }, ab.ARMS.shipped)
+        assert.are.same(ab.providers("viewer-fixture"), ab.providers("shipped"))
+        for name, arm in pairs(ab.ARMS) do -- every other arm stays record-only
+            assert.are.equal(name == "shipped" or nil, arm.gate, name)
+        end
+        -- luacheck: ignore 122 (io.open stands in, as the recorded row's test: no suite's file is written)
+        local open, wrote = io.open, {}
+        local fh = {}
+        function fh.write(_, ...)
+            wrote[#wrote + 1] = table.concat({ ... })
+        end
+        function fh.close() end
+        finally(function()
+            io.open = open
+        end)
+        io.open = function()
+            return fh
+        end
+        assert.has_no.errors(function()
+            ab.check(true, "x", "fine", "shipped")
+        end)
+        assert.has_error(function()
+            ab.check(false, "x", "line", "shipped")
+        end)
+        io.open = open
+        assert.are.same({ "x\tok\tfine\n", "x\tMISS\tline\n" }, wrote) -- the row first, so the arm's file keeps it
+    end)
+
     it("the verdict arms (verdict spec §5), each with edgestats and a -novd twin that differs only by novd", function()
         local names = {
             "viewer-reshuffle",
@@ -165,6 +204,12 @@ describe("the A/B harness", function()
         assert.are.equal(20, ab.ARMS["bands-drop"].bandDrop)
         assert.is_true(ab.ARMS["bands-drop"].bands)
         assert.is_nil(ab.ARMS.default.bands)
+    end)
+
+    it("the lib-absent arm (L1805): the default's providers, no bands, both libraries missing", function()
+        assert.are.same(ab.providers("default"), ab.providers("lib-absent"))
+        assert.is_true(ab.ARMS["lib-absent"].libAbsent)
+        assert.is_nil(ab.ARMS["lib-absent"].bands)
     end)
 
     it("the observer's bands firings are added events only: the rest of the stream is today's", function()

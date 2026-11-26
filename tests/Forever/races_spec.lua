@@ -562,9 +562,9 @@ describe("race packs in VirtualState's now context", function()
     end
 end)
 
--- Stoneform's class priority owns cleanse/mitigation policy; the shared spell imposes no cleanse requirement.
+-- Stoneform's class priority owns cleanse and mitigation policy; the shared spell has no aura gate.
 describe("the Dwarf's Stoneform through the engine", function()
-    it("keeps Protection's existing cleanse policy in its priority without a shared buff requirement", function()
+    it("has no aura gate and reads no unknown aura", function()
         local headless = require("Game.harness.headless")
         local ww = require("Forever.helpers.warrior_world")
         local c = ww.Protection.character()
@@ -574,16 +574,7 @@ describe("the Dwarf's Stoneform through the engine", function()
         local a = H.Hekili.Class.abilities.stoneform
         assert.is_table(a)
         assert.is_nil(a.buff)
-        local found
-        for _, list in pairs(H.Hekili.DB.profile.packs["Protection (wowsims.com)"].lists) do
-            for _, entry in ipairs(list) do
-                if entry.action == "stoneform" then
-                    found = entry
-                end
-            end
-        end
-        assert.is_table(found)
-        assert.is_truthy(found.criteria:find("buff.dispellable_poison.up||buff.dispellable_disease.up", 1, true))
+        assert.is_nil(a.debuff)
         for _, k in ipairs(H.Hekili.ErrorKeys) do
             assert.is_nil(k:find("Unknown buff", 1, true), k)
         end

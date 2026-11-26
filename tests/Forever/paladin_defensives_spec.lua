@@ -78,8 +78,11 @@ describe("Protection Paladin defensive decisions", function()
     it("can bubble with the learned immunity when fighting alone outside", function()
         for _, spell in ipairs({ protection, bubble }) do
             local key = spell == bubble and "divine_shield" or "divine_protection"
-            local H = paladin(spell == bubble and 40 or 6, 500, { known = { spell, strike } })
+            local H = paladin(spell == bubble and 40 or 6, 500, { known = { spell, strike }, health = secret })
             assert.are.equal(20, healthCue(H, key))
+            H.ctl.unitHealth.player = 190
+            H.Fire("UNIT_HEALTH", "player")
+            assert.are.equal(key, read(H))
         end
     end)
 
@@ -102,7 +105,7 @@ describe("Protection Paladin defensive decisions", function()
             { defensives = false },
             { prepull = true },
         }) do
-            o.known = { bubble, protection, strike }
+            o.known, o.health = { bubble, protection, strike }, secret
             local H = paladin(45, 500, o)
             if o.pet then
                 H.ctl.exists.pet = true
@@ -121,6 +124,11 @@ describe("Protection Paladin defensive decisions", function()
             end
             assert.is_nil(healthCue(H, "divine_shield"))
             assert.is_nil(healthCue(H, "divine_protection"))
+            H.ctl.unitHealth.player = 190
+            H.Fire("UNIT_HEALTH", "player")
+            local pick = read(H)
+            assert.are_not.equal("divine_shield", pick)
+            assert.are_not.equal("divine_protection", pick)
         end
     end)
 end)

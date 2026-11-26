@@ -93,6 +93,10 @@ function M.paladin(level, mana, options)
         local buffs = ctl.auras.player.HELPFUL
         buffs[#buffs + 1] = { spellId = id, expirationTime = ctl.now + 30, applications = 1, sourceUnit = "player" }
     end
+
+    -- These priority fixtures read Primary. Display-specific cases enable separation explicitly.
+    local toggles = H.Hekili.Engine.settings.toggles
+    toggles.defensives.separate, toggles.interrupts.separate = false, false
     H.Hekili:FireToggle("defensives", o.defensives == false and "off" or "on")
     H.Hekili.Engine.settings.specs[H.Hekili.State.spec.id].cycle = o.swaps == true
     H.Fire("PLAYER_TARGET_CHANGED")

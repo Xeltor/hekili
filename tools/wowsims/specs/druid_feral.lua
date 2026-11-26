@@ -97,4 +97,10 @@ return require("tools.wowsims.feral_pve")({
         rake = 2,
     },
     leveling = {},
+    extra = {
+        { first = true, line = "barkskin,if=health.known&health.pct<=settings.barkskin_cat_health&buff.barkskin.down" },
+    },
+    settings = {
+        barkskin_cat_health = { default = 50, desc = "player health threshold, percent" },
+    },
 })

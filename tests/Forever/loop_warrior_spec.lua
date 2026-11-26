@@ -24,6 +24,43 @@ describe("headless Arms", function()
         assert.are.same({}, H.errors)
         assert.are.same({}, headless.unexpected(H, "run"))
     end)
+
+    it("forecasts Rage from the observed opening swing while its combat-log row is pending", function()
+        local H = headless.new({ character = ww.character(), pack = ww.PACK })
+        local ctl, st = H.ctl, H.Hekili.State
+        ctl.inRange.target, ctl.level.target, ctl.power[1] = true, 60, 3
+        H.Fire("PLAYER_TARGET_CHANGED")
+        assert(headless.cycle(H, ctl.now + 0.2))
+        ctl.combat = true
+        H.Fire("PLAYER_REGEN_DISABLED")
+        assert(headless.cycle(H, ctl.now + 0.2))
+        st.reset("Primary")
+
+        local function nextRageSwing()
+            for i = 2, st.rage.fcount do
+                local slice = st.rage.forecast[i]
+                if slice.e == "mainhand" then
+                    return slice.t
+                end
+            end
+        end
+
+        local speed = st.mainhand_speed
+        local opening = st.combat + speed
+        assert.are.near(opening, nextRageSwing(), 1e-6)
+        local observed = opening - 0.3
+        ctl.now, ctl.power[1] = observed, 15
+        H.Fire("PLAYER_SWING", speed, 0)
+        H.Fire("UNIT_POWER_FREQUENT", "player", "RAGE")
+        assert(headless.cycle(H, observed + 0.05))
+        st.reset("Primary")
+
+        assert.are.equal(0, st.swings.mh_actual)
+        assert.are.equal(0, st.swings.mh_pending)
+        assert.are.equal(15, st.rage.actual_lo)
+        assert.are.near(observed + speed, nextRageSwing(), 1e-6)
+        assert.are.same({}, H.errors)
+    end)
 end)
 
 describe("the Warrior world mapping", function()

@@ -476,17 +476,25 @@ describe("ns.Facade", function()
         assert.are.same({ 0, 0, 0, 0 }, { Facade.GetUnitSpeed("target") })
         assert.are.same({ 2, nil }, { Facade.UnitAttackSpeed("target") })
         -- (border batch 2) the player's main and off (slot 2 stays `off`), then the swing of each hand the game paid
-        -- that the floor has not, the parry-haste pull and the swing it was taken from
-        local pending, pull = VS.SwingPending, VS.SwingPull
+        -- that the floor has not, the parry-haste pull and its swing, then each hand's latest swing in this combat
+        local pending, pull, last, start = VS.SwingPending, VS.SwingPull, VS.LastSwing, I.combatT
         VS.SwingPending = function(hand)
             return hand == 1 and 7.5 or 0
         end
         VS.SwingPull = function(hand)
             return hand == 1 and 0.4 or 0, hand == 1 and 7.5 or 0
         end
-        assert.are.same({ 7.5, 0, 0.4, 7.5 }, { select(3, Facade.UnitAttackSpeed("player")) })
+        VS.LastSwing = function(hand)
+            return hand == 1 and 7.5 or 6
+        end
+        I.combatT = 5
+        assert.are.same({ 7.5, 0, 0.4, 7.5, 7.5, 6 }, { select(3, Facade.UnitAttackSpeed("player")) })
+        I.combatT = 7
+        assert.are.same({ 7.5, 0, 0.4, 7.5, 7.5, 0 }, { select(3, Facade.UnitAttackSpeed("player")) })
+        I.combatT = 0
+        assert.are.same({ 7.5, 0, 0.4, 7.5, 0, 0 }, { select(3, Facade.UnitAttackSpeed("player")) })
         assert.are.equal(2, select("#", Facade.UnitAttackSpeed("target"))) -- another unit: no trailing values
-        VS.SwingPending, VS.SwingPull = pending, pull
+        VS.SwingPending, VS.SwingPull, VS.LastSwing, I.combatT = pending, pull, last, start
         assert.are.equal(7, select("#", Facade.UnitDamage("player")))
         -- (batch 1 review) GetShieldBlock has a row: stat("GetShieldBlock") in a pack no longer answers zeros
         assert.are.equal(0, Facade.GetShieldBlock()) -- secret: Stat()'s cache, nothing read yet

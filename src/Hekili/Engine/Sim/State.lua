@@ -6891,8 +6891,8 @@ do
         -- (border batch 2) the one swing read, before the resource forecasts: the speeds are stored below, where they
         -- always were (a forecast at the reset keeps the previous pass's speeds, as before); after them each hand's
         -- pending swing (GAP AK: the forecast's, read here so the reset's forecast sees this pass's), the parry-haste
-        -- pull and the swing it was taken from (below)
-        local mhSpeed, ohSpeed, mhPending, ohPending, pull, pullFrom = UnitAttackSpeed( "player" )
+        -- pull and its swing, and the latest swings observed in this combat.
+        local mhSpeed, ohSpeed, mhPending, ohPending, pull, pullFrom, observedMH, observedOH = UnitAttackSpeed( "player" )
         state.swings.mh_pending, state.swings.oh_pending = mhPending or 0, ohPending or 0
         pull, pullFrom = pull or 0, pullFrom or 0
 
@@ -6981,14 +6981,21 @@ do
             state:ForecastSwingbasedResources()
         end
 
-        -- Forever E8: until the fight's first swing lands, anchor the swings at the combat start as StartCombat does.
+        -- Forever E8: until the first swing's combat-log row lands, use the observed cadence or StartCombat's default.
         if state.combat > 0 and state.swings.mh_actual == 0 then
-            state.swings.mh_pseudo = state.combat
-            -- a pull taken before this fight's first swing (from: 0 or an older fight's swing; CombatEnd clears it)
-            -- moves the combat-start anchor; nextMH stays 0 as E8 has it
-            if pull > 0 and pullFrom < state.combat then state.swings.mh_pseudo = state.combat - pull end
+            -- Usability can account for the first PLAYER_SWING before its row arrives. Forecast from that swing so
+            -- its gain cannot appear again at the nominal first-swing time.
+            local observed = observedMH and observedMH > state.combat and observedMH or nil
+            state.swings.mh_pseudo = observed or state.combat
+            if pull > 0 and ( observed and math.abs( pullFrom - observed ) < 0.001
+                or not observed and pullFrom < state.combat ) then
+                state.swings.mh_pseudo = state.swings.mh_pseudo - pull
+            end
             -- review R3: only until the off hand's own first swing row lands (it may swing before the main hand)
-            if state.offhand_speed > 0 and state.swings.oh_actual == 0 then state.swings.oh_pseudo = state.combat + state.offhand_speed / 2 end
+            if state.offhand_speed > 0 and state.swings.oh_actual == 0 then
+                state.swings.oh_pseudo = observedOH and observedOH > state.combat and observedOH
+                    or state.combat + state.offhand_speed / 2
+            end
             state:ForecastSwingbasedResources()
         end
 

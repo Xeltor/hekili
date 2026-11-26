@@ -589,14 +589,21 @@ hybrid("UnitSpellHaste", function(unit)
 end, "secret in combat [W PR2, PR4]; SpellHaste()")
 
 -- After the player's main and off (slot 2 stays `off`: Engine/Sim/State.lua and Events.lua select it): the swing of
--- each hand the game paid that the believed floor has not (0 none; GAP AK), then the parry-haste pull and the swing it
--- was taken from. Another unit: nothing.
+-- each hand the game paid that the believed floor has not (0 none; GAP AK), the parry-haste pull and its swing,
+-- then the current combat's latest PLAYER_SWING anchors. Another unit: nothing.
 local function swingTail(unit)
     if unit ~= "player" then
         return
     end
     local pull, from = VS.SwingPull(1)
-    return VS.SwingPending(1), VS.SwingPending(2), pull, from
+    local main, off = VS.LastSwing(1), VS.LastSwing(2)
+    local start = I.combatT
+    return VS.SwingPending(1),
+        VS.SwingPending(2),
+        pull,
+        from,
+        start > 0 and main >= start and main or 0,
+        start > 0 and off >= start and off or 0
 end
 
 hybrid(
@@ -613,7 +620,7 @@ hybrid(
         end
         return main, nil
     end,
-    "secret in combat [SU PR2]; SwingSpeed(); then each hand's pending swing, the parry pull and its swing (border batch 2)",
+    "secret in combat [SU PR2]; SwingSpeed(); then pending swings, parry pull and its swing, and observed anchors",
     2,
     swingTail
 )

@@ -46,7 +46,8 @@ local DISPLAYS = { "Interrupts", "Defensives", "Cooldowns", "Primary", "AOE" }
 -- widened in both runs (M.widen), every display computed (each subscribed, the toggles separate, the mode dual): a
 -- display following one whose passes ran (AOE after Primary, the next Update's Interrupts after AOE) starts from
 -- whatever reset it gets. Every Update of both instances appends one
--- string of every display's records. With `need`, a passive subscriber on Primary and on AOE declares the need.
+-- string of every display's records and live health cues. With `need`, a passive subscriber on Primary and on AOE
+-- declares the need.
 -- Returns the Update strings, how many records carried an alternative, per display how many Updates computed it, and
 -- how many Updates read the player's health and computed Defensives while it was read.
 local function run(need, seed, fights)
@@ -94,6 +95,11 @@ local function run(need, seed, fights)
                         withAlts = withAlts + 1
                     end
                 end
+                if p.healthCues then
+                    for i = 1, p.healthCues.n do
+                        parts[#parts + 1] = "cue " .. dump(p.healthCues[i])
+                    end
+                end
             end
             seen[#seen + 1] = table.concat(parts, ";")
             return r
@@ -123,12 +129,10 @@ function M.invariant(seed, fights)
         )
     )
     for _, d in ipairs(DISPLAYS) do
-        -- Interrupts aside: no kick in the Arms priority, so it is not walked (Core.lua packHasLine, L1808); Defensives
-        -- below: its every line needs health.known, walked only while the player's health is read (def-2 review, CPU)
-        assert.is_true(d == "Interrupts" or d == "Defensives" or computed[d] > 100, d .. " was not computed")
+        assert.is_true(computed[d] > 100, d .. " was not computed")
     end
-    -- (def-2c re-review Minor 6) Defensives is exempt only while the health is unread: never walked then, and walked
-    -- while it is read (an Update that yields mid-walk publishes no version, so not every read Update counts)
+    -- Arms has interrupt and defensive lines that can run without a health reading. The health-only skip is exercised
+    -- separately with a guarded priority in defensive_displays_spec.lua.
     print(
         ("Defensives: %d computed, %d while read, of %d read Updates"):format(
             computed.Defensives,
@@ -136,8 +140,8 @@ function M.invariant(seed, fights)
             read.updates
         )
     )
-    assert.are.equal(read.defensives, computed.Defensives, "Defensives computed while the health was unread")
-    assert.is_true(read.updates == 0 or read.defensives > 0, "Defensives not computed while the health was read")
+    assert.is_true(computed.Defensives > read.defensives, "Defensives did not run while health was unread")
+    assert.is_true(read.updates == 0 or read.defensives > 0, "Defensives did not run while health was read")
     assert.are.equal(0, offAlts)
     assert.is_true(onAlts > 0, "no record carried an alternative: the passes never ran")
     assert.are.equal(#off, #on)

@@ -7338,15 +7338,17 @@ do
 end
 
 
--- Per-prediction memos of IsKnown and of IsDisabled's static prefix (wiped by Hekili:ResetSpellCaches at every
--- GetNextPrediction and state.reset): an ability's `known` may depend only on the spellbook, talents and gear.
-local knownCache, knownReason = {}, {}
+-- Per-prediction memos of IsKnown and of IsDisabled's static prefix, invalidated at every GetNextPrediction
+-- and state.reset. Retain the IsKnown keys across predictions: deleting sparse numeric keys can resize a Lua
+-- table repeatedly when neighboring display walks query different spells.
+local knownCache, knownReason, knownAt = {}, {}, {}
 local disabledCache, disabledReason, disabledStrict, disabledStrictReason = {}, {}, {}, {}
-ns.SpellCaches = {
-    known = knownCache, knownReason = knownReason,
+local spellCaches = {
+    known = knownCache, knownReason = knownReason, knownAt = knownAt, knownGeneration = 0,
     disabled = disabledCache, disabledReason = disabledReason,
     disabledStrict = disabledStrict, disabledStrictReason = disabledStrictReason,
 }
+ns.SpellCaches = spellCaches
 
 local function computeKnown( sID )
     local original = sID
@@ -7435,7 +7437,7 @@ local function computeKnown( sID )
 
 end
 
--- Cached by the ability's numeric ID (nil: not computed; a nil answer is stored as false).
+-- Cached by numeric ability ID for this prediction. A nil knowledge answer is stored as false.
 function state:IsKnown( sID )
     local id = sID
     if type( id ) ~= "number" then
@@ -7445,12 +7447,12 @@ function state:IsKnown( sID )
     end
 
     local known = knownCache[ id ]
-    if known ~= nil then return known, knownReason[ id ] end
+    if known ~= nil and knownAt[ id ] == spellCaches.knownGeneration then return known, knownReason[ id ] end
 
     local reason
     known, reason = computeKnown( sID )
     if known == nil then known = false end
-    knownCache[ id ], knownReason[ id ] = known, reason
+    knownCache[ id ], knownReason[ id ], knownAt[ id ] = known, reason, spellCaches.knownGeneration
     return known, reason
 end
 

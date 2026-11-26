@@ -3,8 +3,8 @@
 -- the nearest, as the game does: upstream 18a464037f; then spell.go ApplyCostModifiers `float64(cost) x
 -- PercentModifier`; L1793 item 1). A class file therefore declares the fraction
 -- as it is and the cut as a talent cost modifier (the engine rounds, then cuts, in both layers); a `spend` that folds
--- the cut into the fraction would be rounded after it. Two checks per class file: no fraction `spend` moves with any
--- talent rank or with any aura up at two stacks, and each cut is a cost modifier on the spell with the values below
+-- the cut into the fraction would be rounded after it. Two checks per class file: in combat no fraction `spend` moves
+-- with any talent rank or with any aura up at two stacks, and each cut is a cost modifier with the values below
 -- (an aura's: `aura:<key>`; `perStack` multiplies its pct by the stacks).
 local ld = require("Forever.helpers.load_druid")
 
@@ -101,11 +101,12 @@ describe("a percent-of-base cost is rounded before its talent cut", function()
         local name, class, sites = case[1], case[2], case[3]
         local w = ld.load(nil, "src/Hekili_" .. name .. "/" .. name .. ".lua", class)
 
-        it(name .. ": no percent-of-base spend moves with a talent rank or an aura", function()
+        it(name .. ": no in-combat percent-of-base spend moves with a talent rank or an aura", function()
             local checked = 0
             for key, a in pairs(w.abilities) do
                 if a.spend ~= nil then
                     local e0, e2 = ld.env(w), ld.env(w)
+                    e0.combat, e2.combat = 1, 1
                     e2.talent = setmetatable({}, {
                         __index = function()
                             return { rank = 2, enabled = true }
@@ -307,5 +308,41 @@ describe("percent-of-base costs under two cuts at once, through the engine", fun
                 end
             end
         end
+    end)
+end)
+
+describe("Righteous Fury's resurrection perk", function()
+    it("is free before the pull and uses its rounded Benediction cost in combat", function()
+        local H, w, t = engine("PALADIN", "Paladin", { [20101] = 5 })
+        local I, VS, S = H.ns.VirtualStateInternal, H.ns.VirtualState, H.Hekili.State
+        local ability = I.ab.bySpell[w.abilities.righteous_fury.id]
+        local base = I.basePow[I.ab.slot[ability]]
+        local combatCost = math.floor(0.3 * base + 0.5 + 1e-6) * 0.9
+        local aura = w.auras.the_quick_and_the_dead.id
+        H.ctl.auras.player.HELPFUL[1] = {
+            spellId = aura,
+            duration = 60,
+            expirationTime = t + 60,
+            applications = 1,
+            sourceUnit = "player",
+        }
+        H.Fire("UNIT_AURA", "player")
+
+        for _, inCombat in ipairs({ false, true }) do
+            if inCombat then
+                H.ctl.combat = true
+                H.Fire("PLAYER_REGEN_DISABLED")
+            end
+            t = t + 0.2
+            assert.is_true(headless.cycle(H, t))
+            VS.Drain(t)
+            S.reset("Primary", true)
+            assert.are.equal(inCombat, VS.InCombat())
+            assert.is_truthy(VS.Aura("player", aura, t))
+            local expected = inCombat and combatCost or 0
+            assert.is_true(math.abs(I.CostOf(ability) - expected) < 1e-6)
+            assert.is_true(math.abs(S.action.righteous_fury.cost - expected) < 1e-6)
+        end
+        assert.are.same({}, H.errors)
     end)
 end)

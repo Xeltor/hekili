@@ -25,8 +25,9 @@ local PET, FOE, STRANGER = "Pet-1", "Creature-1", "Creature-9"
 local FRIEND_FLAGS = 0x10 -- COMBATLOG_OBJECT_REACTION_FRIENDLY
 local HITS = { "updateTarget", "trackDebuff", "storeDamage", "updateMinion", "eliminateUnit" }
 
-local function boot(beforeLogin)
-    local H = headless.new({ character = ww.character(), pack = ww.PACK, beforeLogin = beforeLogin })
+local function boot(content, beforeLogin)
+    content = content or ww
+    local H = headless.new({ character = content.character(), pack = content.PACK, beforeLogin = beforeLogin })
     assert.are.same({}, H.loadErrors)
     H.Hekili.UpdateDamageDetectionForCLEU(H.Hekili)
     H.I, H.L = H.ns.VirtualStateInternal, H.ns.VirtualStateInternal.Log
@@ -283,7 +284,7 @@ describe("the combat-log handler", function()
         it("is no missed cast of ours for a legacy missable ability", function()
             local id, aura = 990601, "fixture_missable"
             local spec
-            H = boot(function(hk)
+            H = boot(ww, function(hk)
                 -- Abilities with a now handler use the belief's cast outcome. Exercise the compatibility hook with
                 -- an explicit legacy ability so the fixture does not depend on how a class models its debuffs.
                 spec = hk.Class.specs[0]

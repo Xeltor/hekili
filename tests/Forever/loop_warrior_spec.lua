@@ -248,18 +248,20 @@ describe("the headless Arms loop", function()
         L = loop.new(ww)
     end)
 
-    it("shows the precombat queue checkpoint C1 compares: no Battle Shout, a hostile target, no rage", function()
+    it("shows the precombat queue checkpoint C1 compares: no Battle Shout, a hostile raid target, no rage", function()
+        local raid = loop.new(ww.Raid)
         local first
-        loop.run(L, 1, {
-            duration = 0,
+        loop.run(raid, 1, {
+            duration = 0, -- run the prepull window only
             react = -1, -- watch, press nothing
             on = function(_, steps, t)
-                if not first and steps[1].q.name[1] then
+                if t < loop.PULL and not first and steps[1].q.name[1] then
                     local q = steps[1].q
-                    first = { t, q.name[1], q.name[2], q.name[3] or "none" }
+                    first = { t, q.name[1], q.name[2] or "none", q.name[3] or "none" }
                 end
             end,
-        }, { { H = L.us } })
+        }, { { H = raid.us } })
+        assert.is_not_nil(first, "expected a queue before the raid pull")
         print(("\nC1 headless precombat queue at %.1f s: %s %s %s"):format(unpack(first)))
         assert.are.same({ "bloodrage", "battle_shout", "none" }, { first[2], first[3], first[4] })
     end)

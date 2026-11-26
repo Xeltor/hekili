@@ -803,8 +803,7 @@ do
 
 
     function Hekili:ResetSpellCaches()
-        twipe( caches.known )
-        twipe( caches.knownReason )
+        caches.knownGeneration = caches.knownGeneration + 1
         twipe( caches.disabled )
         twipe( caches.disabledReason )
         twipe( caches.disabledStrict )

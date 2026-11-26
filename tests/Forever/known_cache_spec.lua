@@ -17,7 +17,7 @@ local function shadow(H)
         if type(id) ~= "number" then
             id = abilities[id] and abilities[id].id
         end
-        if id == nil or c.known[id] == nil then
+        if id == nil or c.knownAt[id] ~= c.knownGeneration or c.known[id] == nil then
             return isKnown(self, sID)
         end
         local k, r = isKnown(self, sID)

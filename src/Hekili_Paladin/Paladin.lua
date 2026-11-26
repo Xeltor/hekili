@@ -1348,8 +1348,12 @@ end
 -- The time to the next main-hand swing (Hekili_Warrior/Warrior.lua's, after Hekili's Classic profile): the swing gap
 -- Consecration and Exorcism wait for.
 spec:RegisterStateExpr("mainhand_remains", function()
-    -- out of combat no swing runs (nextMH is 0): anchor it at this evaluation, or its phase free-runs with the clock
-    local mh = (nextMH == 0 and combat == 0) and now or nextMH
+    local mh = nextMH
+    if mh == 0 then
+        -- Before the first swing row, the engine anchors the hand at combat start. Outside combat there is no swing.
+        local anchor = state.swings.mainhand
+        mh = combat > 0 and anchor > 0 and anchor or now
+    end
     if now == query_time then
         local real = mh - now
         return real > 0 and real or 0

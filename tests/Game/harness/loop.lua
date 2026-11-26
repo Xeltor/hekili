@@ -906,12 +906,6 @@ function M.run(L, seed, o, drivers)
         -- its length), or the instance keeps believing the last fight's (a self-buff or a long cooldown of run A
         -- carried into run B, a different world)
         ctl.now = base
-        if ctl.combat then
-            -- A fight can end while another enemy is still alive, including when it kills the player.
-            -- The fresh world starts out of combat, where the empty aura list can clear old records.
-            ctl.combat = false
-            d.H.Fire("PLAYER_REGEN_ENABLED")
-        end
         if d.plain then -- two world lines (run A's, run B's): its last read is the other world's, its gain to this one's
             -- first read no regen, yet a measurement over the 30 s gap (the Protection oracle's 18.12 for a world's 17.38)
             local res = d.H.ns.VirtualStateInternal.res
@@ -1383,6 +1377,12 @@ function M.run(L, seed, o, drivers)
     for i, st in ipairs(steps) do
         feed(st.H, st.obs, tEnd, st.base, st.sink)
         st.H.ctl.now = st.base + tEnd
+        if st.H.ctl.combat then
+            -- The sampled world is over, even if an attacker outlived the player. Close the reused client at this
+            -- world's clock so the next world starts after the full gap, outside the engine's combat resume window.
+            st.H.ctl.combat = false
+            st.H.Fire("PLAYER_REGEN_ENABLED")
+        end
         if not headless.cycle(st.H, st.H.ctl.now) then
             run.raises = run.raises + 1
         end

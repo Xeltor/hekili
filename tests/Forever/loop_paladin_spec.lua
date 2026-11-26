@@ -48,6 +48,10 @@ describe("the Paladin loop worlds", function()
         assert.are.equal(0, first.us.health)
         assert.is_true(first.us.target.health > 0)
         assert.are.equal(1, first.pressedBy.retribution_aura)
+        for _, driver in ipairs(drivers) do
+            assert.is_false(driver.H.ctl.combat)
+            assert.is_false(driver.H.ns.VirtualState.InCombat())
+        end
 
         loop.run(L, 2, {
             duration = 1,
@@ -57,6 +61,12 @@ describe("the Paladin loop worlds", function()
                         local VS = st.H.ns.VirtualState
                         assert.is_false(VS.InCombat())
                         assert.is_nil(VS.Aura("player", aura, st.base + t))
+                    end
+                elseif t == loop.PULL then
+                    for _, st in ipairs(steps) do
+                        assert.is_true(st.H.ns.VirtualState.InCombat())
+                        local fresh = st.base + t - 0.01
+                        assert.is_true(math.abs(st.H.Hekili.State.combat - fresh) < 1e-6)
                     end
                 end
             end,

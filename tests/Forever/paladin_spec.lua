@@ -1042,6 +1042,21 @@ describe("Forever Paladin through the engine", function()
         fight({ [20375] = 1 }, true, true) -- Seal of Command without Unsealed Wrath: both (wowsims's conditions)
     end)
 
+    it("projects the first main-hand swing from the pull before a swing row arrives", function()
+        local at = H.ctl.now + 1
+        H.ctl.now, H.ctl.combat = at, true
+        H.Fire("PLAYER_REGEN_DISABLED")
+        assert.is_true(headless.cycle(H, at + 0.2))
+        local st = H.Hekili.State
+        st.reset("Primary", true)
+        assert.are.equal(0, st.nextMH)
+        local anchor = st.swings.mainhand
+        assert.is_true(anchor > 0)
+        st.advance(0.2)
+        local expected = st.mainhand_speed - (st.query_time - anchor)
+        assert.is_true(math.abs(st.mainhand_remains - expected) < 1e-6)
+    end)
+
     -- (plan "Open after Day 4", the mana bound; central fix 8) Mana is secret even out of combat, so nothing measures it:
     -- the belief assumes a fresh boot at rest, the bound too (`mana.pct` full), until a measurement says less (a short
     -- answer below it).

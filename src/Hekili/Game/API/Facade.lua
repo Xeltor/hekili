@@ -659,7 +659,7 @@ kept("UnitInRange", "virtual", inRangeUnknown, "secret always [W PR7]; no signal
 local LRC_UNDER_MAP = true
 local realUnitGUID = resolve("UnitGUID")
 local lrc -- the library; false: absent
-local function rangeLib(unit)
+local function rangeLib(unit, fresh)
     if lrc == nil then
         if not I.api then
             return nil
@@ -671,8 +671,8 @@ local function rangeLib(unit)
         return nil
     end
     local age -- nil: the library's 0.1 s cache
-    if unit == "target" then
-        -- maxCacheAge 0: the belief's poll stamps the answer with its own time, so never take the library's old one
+    if fresh or unit == "target" then
+        -- A belief poll or a cast snapshot timestamps the answer, so bypass the library's old one.
         age = 0
     elseif not LRC_UNDER_MAP then
         local g = realUnitGUID and realUnitGUID(unit) -- secret: tested next
@@ -1502,10 +1502,12 @@ local PASSTHROUGH = {
     { "IsInInstance", "plain [W sweep 2026-10-16]" },
     { "IsInRaid", "plain [W sweep 2026-10-16]" },
     { "IsMounted", "plain [W sweep 2026-10-16]" },
+    { "IsOutdoors", "outdoor location flag; no secret return documented on Forever" },
     { "IsPlayerSpell", "plain [W sweep 2026-10-16]" },
     { "IsResting", "plain [W sweep 2026-10-16]" },
     { "IsSpellKnown", "plain [W sweep 2026-10-16]" },
     { "IsSpellKnownOrOverridesKnown", "plain [W sweep 2026-10-16]" },
+    { "IsSwimming", "player swimming flag; no secret return documented on Forever" },
     { "SecureCmdOptionParse", "plain [W sweep 2026-10-16]" },
     { "SpellIsSelfBuff", "plain [W sweep 2026-10-16]" },
     { "UnitAffectingCombat", "plain in combat [W PR14; gate spike]" },

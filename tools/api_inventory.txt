@@ -140,12 +140,14 @@ IsInGroup	passthrough
 IsInInstance	passthrough
 IsInRaid	passthrough
 IsMounted	passthrough
+IsOutdoors	passthrough
 IsPassiveSpell	virtual
 IsPlayerSpell	passthrough
 IsResting	passthrough
 IsSpellKnown	passthrough
 IsSpellKnownOrOverridesKnown	passthrough
 IsStealthed	hybrid
+IsSwimming	passthrough
 IsUsableSpell	hybrid
 LibRangeCheck.GetRange	hybrid
 RangeLib	hybrid

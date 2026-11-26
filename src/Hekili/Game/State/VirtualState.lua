@@ -20,6 +20,7 @@ VS.Obs = {
     -- and below 0 from an event: -1 - the target swap serial when staged (test c == 1, never c ~= 0)
     CastStart = 2, -- a: ability index; b: the cast's end
     CastSuccess = 3, -- a: ability index; b: its cost priced when heard; c: the cast ID's place in its IDs (0 unpriced)
+    -- guid: 0 when an area debuff's selected target is confirmed outside the cast radius
     CastStop = 4, -- a: ability index (failed or interrupted)
     Read = 5, -- a: resource slot or aura index (c: ReadOf); b: the exact value (amount; aura time remaining)
     Cooldown = 6, -- a: ability index; b: 1 ready / 0 not (the plain isActive flag); c: 1 the GCD flag edge
@@ -76,6 +77,7 @@ VS.Obs = {
     -- high end (health in fractions 0-1, power in points; b > c unknown): a live hidden-value band, re-asserted every
     -- drain (Sources/Bands.lua, integration design 2.1-2.2); read by Families/Resources.lua (r >= 1), TargetHealth.lua
     -- (-1) and Player.lua (0)
+    AreaDebuff = 45, -- a: ability index; b: nearby enemy's memory slot; c: that slot's generation at the cast
 }
 
 --- What a `PlayerHit` observation reports (its `a`), and each kind's name (the `taken` and `consumedBy` keys): a WOUND

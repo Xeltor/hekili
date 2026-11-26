@@ -25,11 +25,11 @@ local Plain, Stage, Direct = S.Plain, S.Stage, S.Direct
 -- under Map (the GUID secret) the ID its plate bears (a number: never equal to a GUID, so the two key spaces cannot
 -- collide; a friendly target read plain under Map is keyed by its GUID); "" free; false: an orphan, the current
 -- target's slot that no plate's ID finds (I.targetID still names it; forgotten at the next swap unless adopted).
-local guid, used, generation = {}, {}, {}
+local guid, used, generation, areaOnly = {}, {}, {}, {}
 local goneN = {} -- by memory slot: its TargetGone logs and rebuilds, so a cast's pin outlives no forgetting (L1734)
 local nextGeneration = 0
 for s = 1, I.TARGET_CAP do
-    guid[s], used[s], generation[s], goneN[s] = "", 0, 0, 0
+    guid[s], used[s], generation[s], goneN[s], areaOnly[s] = "", 0, 0, 0, false
 end
 
 local function bumpGeneration(s)
@@ -115,25 +115,64 @@ I.targetSwapN = 0 -- each swap's serial; Families/Auras.lua copies it at the fol
 local answer = {} -- by ability index: this poll's plain answer (true, false, or 0 for none)
 I.rangeAnswer = answer -- Families/Now.lua's action.<key>.in_range reads it
 
-local function slotFor(g, t)
+local function slotFor(g, t, spare)
     local free, oldest = 0, 1
     for s = 1, I.TARGET_CAP do
         if guid[s] == g then
-            used[s] = t
+            if not spare or areaOnly[s] then
+                used[s], areaOnly[s] = t, spare == true
+            end
             return s, false
         elseif guid[s] == "" and free == 0 then
             free = s
-        elseif used[s] < used[oldest] then
+        elseif areaOnly[s] and not areaOnly[oldest] or areaOnly[s] == areaOnly[oldest] and used[s] < used[oldest] then
             oldest = s
         end
+    end
+    if free == 0 and spare and (not areaOnly[oldest] or used[oldest] == t) then
+        return
     end
     local s = free > 0 and free or oldest
     if guid[s] ~= "" then
         gone(t, s)
     end
-    guid[s], used[s] = g, t
+    guid[s], used[s], areaOnly[s] = g, t, spare == true
     bumpGeneration(s)
     return s, true -- newly taken: a GUID not held before (or forgotten)
+end
+
+-- Sample the area on a real cast. New enemies can reuse an older area-only slot while
+-- leaving memory for previously selected targets available.
+function I.StageAreaDebuffs(api, t, ability, area)
+    local facade, plates = ns.Facade, I.Plates
+    local melee = area.melee and area.melee[facade.KnownRank(area.melee)]
+    for index, unit in ipairs(plates.token) do
+        if
+            plates.active[index]
+            and Plain(api, api.UnitCanAttack("player", unit)) == true
+            and Plain(api, api.UnitIsDead(unit)) == false
+            and Plain(api, api.UnitIsUnit("target", unit)) ~= true
+        then
+            local key
+            if tokenMode then
+                key = plateID[index] > 0 and plateID[index]
+            else
+                key = Plain(api, api.UnitGUID(unit))
+            end
+            if key and key ~= "" and key ~= guid[I.targetSlot] then
+                local _, far = facade.RangeLib(unit, true)
+                if
+                    type(far) == "number" and far <= area.radius
+                    or melee and area.radius >= 5 and Plain(api, api.C_Spell.IsSpellInRange(melee, unit)) == true
+                then
+                    local slot = slotFor(key, t, true)
+                    if slot then
+                        Stage(Obs.AreaDebuff, t, ability, slot, generation[slot])
+                    end
+                end
+            end
+        end
+    end
 end
 
 -- The index of the active plate whose unit is the target (a plain UnitIsUnit true), 0 none. At most 40 reads, once per

@@ -5,9 +5,15 @@
 # Omitted: default #1: autocastOtherCooldowns: unmapped item 272438
 # Omitted: default #1: autocastOtherCooldowns: unmapped item 272439
 
-actions.precombat=moonkin_form,if=!buff.moonkin_form.up
+actions.precombat=aquatic_form,if=combat=0&druid_form_intent
+actions.precombat+=/travel_form,if=combat=0&druid_form_intent
+actions.precombat+=/cat_form,if=combat=0&druid_form_intent
+actions.precombat+=/moonkin_form,if=!buff.moonkin_form.up&(!druid_holding_travel|druid_form_intent)
 actions.precombat+=/wrath,if=active_enemies<4
-actions=moonkin_form,if=!buff.moonkin_form.up
+actions=aquatic_form,if=combat=0&druid_form_intent
+actions+=/travel_form,if=combat=0&druid_form_intent
+actions+=/cat_form,if=combat=0&druid_form_intent
+actions+=/moonkin_form,if=!buff.moonkin_form.up&(!druid_holding_travel|druid_form_intent)
 actions+=/elunes_light,use_off_gcd=1
 actions+=/innervate,if=mana.pct_lo<40&fight_remains>30
 actions+=/moonfire,focus=2,if=!debuff.moonfire.up

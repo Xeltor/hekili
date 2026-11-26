@@ -2,6 +2,10 @@
 -- entering combat in Cat, Bear or caster form always reaches the same role and recovery rules.
 return function(recipe)
     local first = {
+        "aquatic_form,if=combat=0&druid_form_intent",
+        "travel_form,if=combat=0&druid_form_intent",
+        "bear_form,if=combat=0&druid_form_intent",
+        "cat_form,if=combat=0&druid_form_intent",
         "frenzied_regeneration,display_below=25,if=toggle.defensives&feral_defense&rage.lo>=10&buff.frenzied_regeneration.down",
         "frenzied_regeneration,display_below=55,if=toggle.defensives&feral_regeneration_pressure&buff.frenzied_regeneration.down",
         "healthstone,use_off_gcd=1,display_below=30,if=toggle.defensives&feral_defense",
@@ -68,17 +72,15 @@ return function(recipe)
             {
                 before = "lacerate",
                 translated = true,
-                line = "swipe_bear,if=feral_bear_fight&feral_area_safe&feral_spell_range&(feral_pack|"
-                    .. earlySwipe
-                    .. ")",
+                line = "swipe_bear,if=feral_swipe_pack|feral_bear_contact&(" .. earlySwipe .. ")",
             },
         }
-        for _, key in ipairs({ "primal_bite", "lacerate", "maul", "faerie_fire" }) do
+        for _, key in ipairs({ "lacerate", "maul", "faerie_fire" }) do
             addGuard(key, "feral_attack_in_range")
         end
         addGuard("maul", "feral_maul_allowed")
-        addGuard("primal_bite", "!action.berserk.known|buff.berserk.down|!feral_bear_fight|feral_area_safe")
-        addGuard("demoralizing_roar", "feral_sustained&(!feral_group_enemy|feral_area_safe)|feral_pull&feral_area_safe")
+        addGuard("primal_bite", "buff.berserk.up&feral_bear_contact&feral_spell_range|feral_attack_in_range")
+        addGuard("demoralizing_roar", "feral_roar_in_combat")
         -- Enrage trades armor for rage. In the field use it before contact, with room for the gain.
         addGuard("enrage", "feral_enrage")
         addGuard("elunes_light", "feral_sustained|feral_pull")

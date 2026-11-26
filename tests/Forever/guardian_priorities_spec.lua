@@ -1,5 +1,6 @@
 local feral = require("Forever.helpers.feral_pve")
 local headless = require("Game.harness.headless")
+local SECRET = require("Game.State.helpers.fake_api").SECRET
 
 local function aura(H, unit, helpful, id, stacks, remaining)
     local rows = H.ctl.auras[unit][helpful and "HELPFUL" or "HARMFUL"]
@@ -17,6 +18,12 @@ end
 local function biteCooldown(H, c)
     c.cooldown[407995] = { isActive = true, isOnGCD = false, startTime = c.now, duration = 15 }
     H.Fire("SPELL_UPDATE_COOLDOWN")
+end
+
+local function addPlate(H, c, unit, distance, fighting)
+    c.exists[unit], c.guid[unit], c.distance[unit] = true, "Creature-" .. unit, distance
+    c.unitCombat[unit], c.threat[unit] = fighting, fighting and 3 or nil
+    H.Fire("NAME_PLATE_UNIT_ADDED", unit)
 end
 
 describe("Guardian threat and Rage priorities", function()
@@ -45,10 +52,115 @@ describe("Guardian threat and Rage priorities", function()
         assert.are.equal("maul", (feral.tank(o)))
         o.plate = true
         assert.are.equal("swipe_bear", (feral.tank(o)))
+        o.distance = 8
+        assert.are_not.equal("swipe_bear", (feral.tank(o)), "the selected mob is outside Swipe reach")
+        o.distance = 3
+        o.setup = function(H)
+            H.Hekili:FireToggle("mode", "single")
+        end
+        assert.are.equal("maul", (feral.tank(o)), "explicit Single Target mode")
+        o.setup = nil
+        o.plate = "idle"
+        assert.are.equal("swipe_bear", (feral.tank(o)), "the tank is already against the idle mob")
+        o.plateDistance = 8
+        assert.are.equal("maul", (feral.tank(o)))
         o.plate, o.known = nil, { 5487, 779 }
         assert.are.equal("swipe_bear", (feral.tank(o)))
-        o.plate = "idle"
-        assert.is_nil((feral.tank(o)))
+    end)
+
+    it("uses Swipe on close dungeon packs and requires confirmed reach to include controlled adds", function()
+        local distance, controlled = 8, false
+        local o = {
+            level = 16,
+            known = { 5487, 6807, 779 },
+            combat = true,
+            plate = true,
+            setup = function(H, c)
+                addPlate(H, c, "nameplate2", distance, false)
+                if controlled then
+                    c.auras.nameplate2 = { HARMFUL = {}, HELPFUL = {} }
+                    aura(H, "nameplate2", false, 1324189, 1, 20)
+                end
+            end,
+        }
+        assert.are.equal("swipe_bear", (feral.tank(o)), "idle at eight yards")
+        controlled = true
+        assert.are.equal("swipe_bear", (feral.tank(o)), "sheep at eight yards")
+        distance = 3
+        assert.are.equal("swipe_bear", (feral.tank(o)), "sheep confirmed in Swipe reach")
+        distance = SECRET
+        assert.are.equal("swipe_bear", (feral.tank(o)), "unknown range does not veto two confirmed melee mobs")
+        o.plate = nil
+        assert.are.equal("maul", (feral.tank(o)), "unknown range also does not count toward the pack")
+    end)
+
+    it(
+        "uses Swipe on a selected melee mob with unknown or idle combat only when another close mob is fighting the party",
+        function()
+            local o = { level = 16, known = { 5487, 6807, 779 }, combat = true, idle = true, plate = true }
+            assert.are.equal("swipe_bear", (feral.tank(o)))
+            o.setup = function(_, c)
+                c.unitCombat.target = SECRET
+            end
+            assert.are.equal("swipe_bear", (feral.tank(o)))
+            o.plateDistance = 8
+            assert.is_nil((feral.tank(o)))
+            o.plateDistance, o.plate = 3, "idle"
+            assert.is_nil((feral.tank(o)))
+        end
+    )
+
+    it("uses Demoralizing Roar on a confirmed nearby attacker regardless of the other plates", function()
+        local o = {
+            level = 16,
+            known = { 99, 5487, 6807 },
+            combat = true,
+            distance = 8,
+            setup = function(H, c)
+                addPlate(H, c, "nameplate1", SECRET, false)
+                aura(H, "target", false, 1324189, 1, 20)
+            end,
+        }
+        assert.are.equal("demoralizing_roar", (feral.tank(o)))
+        o.distance = 20
+        assert.are_not.equal("demoralizing_roar", (feral.tank(o)))
+    end)
+
+    it("uses melee evidence when Swipe range and the selected GUID are hidden", function()
+        local secondPlate = true
+        local o = {
+            level = 16,
+            known = { 5487, 6807, 779 },
+            combat = true,
+            setup = function(H, c)
+                c.guid.target = SECRET
+                H.Fire("PLAYER_TARGET_CHANGED")
+                assert.is_nil(H.ns.Facade.TargetMemoryKey())
+                addPlate(H, c, "nameplate1", 3, true)
+                c.unitIs.nameplate1 = SECRET
+                if secondPlate then
+                    addPlate(H, c, "nameplate2", 3, true)
+                    c.unitIs.nameplate2 = SECRET
+                end
+                H.ns.getNumberTargets = function()
+                    return 2, 2
+                end
+                H.ns.Facade.LibRangeCheck.GetRange = function()
+                    return 0, 8
+                end
+                local spell = H.ns.Facade.C_Spell
+                local inRange = spell.IsSpellInRange
+                spell.IsSpellInRange = function(id, unit)
+                    if id == 779 then
+                        return nil, true
+                    end
+                    return inRange(id, unit)
+                end
+            end,
+        }
+        assert.are.equal("swipe_bear", (feral.tank(o)))
+        secondPlate = false
+        assert.are.equal("maul", (feral.tank(o)), "one plate might just be the selected mob")
     end)
     it("saves a five-stack Lacerate when another global would let it fall on a single target", function()
         local stacks, remaining = 5, 2.7
@@ -186,7 +298,7 @@ describe("Guardian threat and Rage priorities", function()
         check(false)
     end)
 
-    it("uses Berserk with funded Primal Bites on a durable enemy or safe pack", function()
+    it("uses Berserk with funded Primal Bites on a durable enemy or confirmed melee pack", function()
         local elites, cooldowns, berserking = true, true, false
         local o = {
             level = 60,
@@ -214,9 +326,9 @@ describe("Guardian threat and Rage priorities", function()
         cooldowns = false
         assert.are.equal("primal_bite", (feral.tank(o)))
         elites, cooldowns, o.plate = true, true, "idle"
-        assert.are.equal("primal_bite", (feral.tank(o)))
+        assert.are.equal("berserk", (feral.tank(o)))
         berserking = true
-        assert.are.equal("lacerate", (feral.tank(o)))
+        assert.are.equal("primal_bite", (feral.tank(o)))
         berserking, o.plate, o.instance, o.group, o.role = false, nil, "none", 0, "NONE"
         assert.are.equal("berserk", (feral.druid(o)))
     end)

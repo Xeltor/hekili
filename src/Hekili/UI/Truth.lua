@@ -389,12 +389,13 @@ function Truth.ClearHealthCue( d )
     cue.button, cue.watchesPet = nil, nil
 end
 
--- Between pulls the normal buttons may all be hidden. Under the health cues, draw the
--- rotation's first action only if it is the requested personal buff and executable now.
+-- When the normal buttons are hidden, draw the first action if it matches an eligible
+-- personal buff and is executable now.
 function Truth.DrawUpkeep( d, out, conf, upkeep, now )
     local rec = upkeep and out.count > 0 and out.recs[1]
+    if rec and upkeep.actions then upkeep = upkeep.actions[ rec.actionName ] end
     local layer = d.upkeepCue
-    if not rec or rec.actionName ~= upkeep.action or out.version == d.blankVersion or d.alpha == 0
+    if not rec or not upkeep or rec.actionName ~= upkeep.action or out.version == d.blankVersion or d.alpha == 0
         or not rec.exact_time or rec.exact_time > now or not C_Spell.IsSpellUsable( rec.actionID )
         or Facade.C_UnitAuras.GetPlayerAuraBySpellID( upkeep.ranks[1] ) then
         if layer then layer:Hide() end

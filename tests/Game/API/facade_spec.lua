@@ -222,7 +222,7 @@ describe("ns.Facade", function()
             assert.is_function(entry(n), n)
             assert.is_string(Facade.Why(n), n)
         end
-        assert.are.same({ passthrough = 130, hybrid = 49, virtual = 25, display = 3 }, count)
+        assert.are.same({ passthrough = 132, hybrid = 49, virtual = 25, display = 3 }, count)
         assert.is_nil(Facade.Status("NotAGameFunction"))
     end)
 

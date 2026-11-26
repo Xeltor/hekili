@@ -29,7 +29,11 @@
 # Omitted: optional_on_use_items #10: hidden
 # Omitted: default: empty group optional_on_use_items
 
-actions.precombat=frenzied_regeneration,display_below=25,if=toggle.defensives&feral_defense&rage.lo>=10&buff.frenzied_regeneration.down
+actions.precombat=aquatic_form,if=combat=0&druid_form_intent
+actions.precombat+=/travel_form,if=combat=0&druid_form_intent
+actions.precombat+=/bear_form,if=combat=0&druid_form_intent
+actions.precombat+=/cat_form,if=combat=0&druid_form_intent
+actions.precombat+=/frenzied_regeneration,display_below=25,if=toggle.defensives&feral_defense&rage.lo>=10&buff.frenzied_regeneration.down
 actions.precombat+=/frenzied_regeneration,display_below=55,if=toggle.defensives&feral_regeneration_pressure&buff.frenzied_regeneration.down
 actions.precombat+=/healthstone,use_off_gcd=1,display_below=30,if=toggle.defensives&feral_defense
 actions.precombat+=/healing_potion,use_off_gcd=1,display_below=40,if=toggle.defensives&feral_defense
@@ -63,7 +67,11 @@ actions.precombat+=/wrath,if=!action.bear_form.known&!action.cat_form.known&(fer
 actions.precombat+=/bear_form,if=feral_primary&!buff.bear_form.up&feral_sustained_form
 actions.precombat+=/demoralizing_roar,if=(settings.maintain_demoralizing_roar|feral_defensive_roar)&feral_defensive_roar&debuff.demoralizing_roar.down
 actions.precombat+=/enrage,use_off_gcd=1,if=(feral_enrage)
-actions=frenzied_regeneration,display_below=25,if=toggle.defensives&feral_defense&rage.lo>=10&buff.frenzied_regeneration.down
+actions=aquatic_form,if=combat=0&druid_form_intent
+actions+=/travel_form,if=combat=0&druid_form_intent
+actions+=/bear_form,if=combat=0&druid_form_intent
+actions+=/cat_form,if=combat=0&druid_form_intent
+actions+=/frenzied_regeneration,display_below=25,if=toggle.defensives&feral_defense&rage.lo>=10&buff.frenzied_regeneration.down
 actions+=/frenzied_regeneration,display_below=55,if=toggle.defensives&feral_regeneration_pressure&buff.frenzied_regeneration.down
 actions+=/healthstone,use_off_gcd=1,display_below=30,if=toggle.defensives&feral_defense
 actions+=/healing_potion,use_off_gcd=1,display_below=40,if=toggle.defensives&feral_defense
@@ -100,14 +108,14 @@ actions+=/feral_charge,use_off_gcd=1,if=target.outside5&(feral_primary&toggle.mo
 actions+=/elunes_light,use_off_gcd=1,if=action.elunes_light.known&(feral_sustained|feral_pull)&(toggle.movement&target.outside5|target.within5)
 actions+=/enrage,use_off_gcd=1,if=(action.lacerate.known&gcd.remains<=0&(!action.lacerate.known|rage.lo<action.lacerate.cost))&(feral_enrage)&(toggle.movement&target.outside5|target.within5)
 actions+=/faerie_fire,if=(action.faerie_fire.known&debuff.faerie_fire.remains<=0)&(feral_attack_in_range)&(toggle.movement&target.outside5|target.within5)
-actions+=/demoralizing_roar,focus=2,if=(settings.maintain_demoralizing_roar|feral_defensive_roar)&(!(!(debuff.demoralizing_roar.remains<=0))&(feral_sustained&(!feral_group_enemy|feral_area_safe)|feral_pull&feral_area_safe)&(toggle.movement&target.outside5|target.within5))
+actions+=/demoralizing_roar,focus=2,if=(settings.maintain_demoralizing_roar|feral_defensive_roar)&(!(!(debuff.demoralizing_roar.remains<=0))&(feral_roar_in_combat)&(toggle.movement&target.outside5|target.within5))
 actions+=/lacerate,focus=2,if=feral_bear_fight&feral_spell_range&debuff.lacerate.remains<=gcd.max&((!feral_pack|!feral_area_safe)&debuff.lacerate.stack=5|feral_held_pack&feral_durable&!feral_dying&debuff.lacerate.up)
 actions+=/berserk,use_off_gcd=1,if=feral_bear_burst
-actions+=/primal_bite,if=action.primal_bite.known&(((feral_attack_in_range))&(!action.berserk.known|buff.berserk.down|!feral_bear_fight|feral_area_safe))&((toggle.movement&target.outside5|target.within5)|feral_group_enemy&feral_spell_range)
+actions+=/primal_bite,if=action.primal_bite.known&(buff.berserk.up&feral_bear_contact&feral_spell_range|feral_attack_in_range)&((toggle.movement&target.outside5|target.within5)|(feral_group_enemy&feral_spell_range|buff.berserk.up&feral_bear_contact&feral_spell_range))
 actions+=/lacerate,focus=2,if=feral_bear_fight&feral_spell_range&debuff.lacerate.down&feral_held_pack&feral_durable&!feral_dying
 actions+=/lacerate,other_target=1,if=feral_spread_target
 actions+=/faerie_fire,other_target=1,if=feral_spread_target
-actions+=/swipe_bear,if=feral_bear_fight&feral_area_safe&feral_spell_range&(feral_pack|(!action.lacerate.known|action.lacerate.disabled)&(!action.primal_bite.known|action.primal_bite.disabled)&(!action.maul.known|action.maul.disabled|buff.maul.up&rage.lo>=action.swipe_bear.cost+action.maul.cost))
+actions+=/swipe_bear,if=feral_swipe_pack|feral_bear_contact&((!action.lacerate.known|action.lacerate.disabled)&(!action.primal_bite.known|action.primal_bite.disabled)&(!action.maul.known|action.maul.disabled|buff.maul.up&rage.lo>=action.swipe_bear.cost+action.maul.cost))
 actions+=/lacerate,focus=2,if=(feral_attack_in_range)&((toggle.movement&target.outside5|target.within5)|feral_group_enemy&feral_spell_range)
 actions+=/maul,use_off_gcd=1,focus=2,if=(rage.lo>=20&(!action.primal_bite.known|(action.primal_bite.known&cooldown.primal_bite.remains>1.5)|(action.primal_bite.known&(rage.lo-action.maul.cost)>=action.primal_bite.cost)))&((feral_attack_in_range))&(feral_maul_allowed)&((toggle.movement&target.outside5|target.within5)|feral_group_enemy&feral_spell_range)
 actions+=/maul,use_off_gcd=1,focus=2,if=(!action.primal_bite.known|action.primal_bite.disabled)&feral_attack_in_range&feral_maul_allowed

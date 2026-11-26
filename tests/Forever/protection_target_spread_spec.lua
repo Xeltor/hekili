@@ -167,6 +167,28 @@ describe("Protection's optional target spreading", function()
             assert.are.same({ "thunder_clap" }, { first(H) })
         end)
 
+        it("lets the Clap pickup proceed while fear holds single-target recovery", function()
+            for _, fearCount in ipairs({ false, 1 }) do
+                local H = threatPull()
+                local count = H.ns.Facade.DebuffCount
+                H.ns.Facade.DebuffCount = function(id, now)
+                    if id == 20511 then
+                        return fearCount or nil
+                    end
+                    return count(id, now)
+                end
+                for _, rank in ipairs({ 6343, 8198, 8204, 8205, 11580, 11581 }) do
+                    H.ctl.cooldown[rank] = nil
+                end
+                H.Fire("SPELL_UPDATE_COOLDOWN")
+                assert.are.same({ "thunder_clap" }, { first(H) })
+                local state = H.Hekili.State
+                state.reset("Primary")
+                assert.is_true(state.prot_clap_pickup)
+                assert.is_false(state.prot_recovery_pack)
+            end
+        end)
+
         it("passes a secure mob and resumes threat attacks on the already-Sundered loose mob", function()
             local H = threatPull()
             assert.are.same({ "recover_threat", "cycle" }, { first(H) })

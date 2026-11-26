@@ -895,7 +895,7 @@ local function run(o, t)
     if A.now[a] then
         rawset(NAMES, "cast_start", started)
         rawset(NAMES, "instant", started == 0)
-        castSlot, castTime = I.CastSlot(a, o.t) or I.DebuffSlot(o.guid) or -1, o.t
+        castSlot, castTime = o.guid ~= 0 and (I.CastSlot(a, o.t) or I.DebuffSlot(o.guid)) or -1, o.t
         rawset(NAMES, "cast_id", A.ids[a][o.c] or A.id[a] or 0) -- `c`: the cast ID's place (Sources/Casts.lua)
         flight = A.lands[a] and travel(a) or 0
         local r, R = A.refundNow[a] and A.slot[a] or 0, I.res

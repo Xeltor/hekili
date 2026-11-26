@@ -226,7 +226,7 @@ describe("the Protection leveling priority", function()
         assert.are.equal("shield_slam", read(H, 0.2))
     end)
 
-    it("opens on a confirmed nearby pack before refreshing Battle Shout", function()
+    it("opens on confirmed nearby dungeon mobs even with idle or controlled enemies", function()
         local H = warrior(60, 25, { group = 5, instance = "party", threat = 3, talents = { [23922] = 1 } })
         H.ctl.auras.player.HELPFUL[1] = nil
         H.Fire("UNIT_AURA", "player")
@@ -234,11 +234,17 @@ describe("the Protection leveling priority", function()
         H.ctl.exists.nameplate1target = true
         H.ctl.guid.nameplate1 = "Creature-0-0-0-0-347-000003"
         H.ctl.unitIs.nameplate1target = "party1"
-        H.ctl.distance.nameplate1 = 4
+        H.ctl.distance.nameplate1 = SECRET
         H.ctl.unitCombat.nameplate1 = false
-        H.Fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        H.Fire("PLAYER_ENTERING_WORLD", false, true) -- a visible plate can predate the reload
         assert.are.equal("shield_slam", read(H, 0.2))
-        H.ctl.unitCombat.nameplate1 = true
+
+        H.ctl.distance.nameplate1 = 4
+        H.ctl.auras.nameplate1 = { HARMFUL = { { spellId = 20511, expirationTime = H.ctl.now + 8 } } }
+        H.Fire("UNIT_AURA", "nameplate1")
+        H.ctl.exists.nameplate2, H.ctl.guid.nameplate2 = true, "Creature-0-0-0-0-347-000004"
+        H.ctl.distance.nameplate2 = SECRET
+        H.Fire("NAME_PLATE_UNIT_ADDED", "nameplate2")
         assert.are.equal("thunder_clap", read(H, 0.2))
         H.Hekili:FireToggle("mode", "single")
         assert.are.equal("shield_slam", read(H, 0.2))
@@ -301,6 +307,38 @@ describe("the Protection leveling priority", function()
         assert.are.equal("cleave", read(H))
         H.Hekili:FireToggle("mode", "single")
         assert.are.equal("heroic_strike", read(H))
+    end)
+
+    it("uses positive five-yard evidence for Cleave and wider evidence for Clap and Demo", function()
+        local H = warrior(28, 95, { group = 5, instance = "party", threat = 3, demo = true, shieldBlock = true })
+        H.ctl.exists.nameplate1, H.ctl.guid.nameplate1 = true, SECRET
+        H.ctl.distance.nameplate1, H.ctl.unitCombat.nameplate1 = 7, false
+        H.Fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        for _, spell in ipairs({ 6343, 8198, 8204 }) do
+            H.ctl.cooldown[spell] = { isActive = true, isOnGCD = false, startTime = H.ctl.now, duration = 6 }
+        end
+        H.Fire("SPELL_UPDATE_COOLDOWN")
+        local range, upper = H.ns.Facade.LibRangeCheck.GetRange, 8
+        H.ns.Facade.LibRangeCheck.GetRange = function(self, unit)
+            if unit == "nameplate1" then
+                return 5, upper
+            end
+            return range(self, unit)
+        end
+        assert.are.equal("heroic_strike", read(H, 0.2))
+        local state = H.Hekili.State
+        state.reset("Primary")
+        assert.are.equal(2, state.prot_nearby_enemies)
+        assert.are.equal(1, state.prot_cleave_targets)
+
+        upper = 10
+        read(H, 0.2)
+        state.reset("Primary")
+        assert.are.equal(1, state.prot_nearby_enemies)
+        assert.are.equal(2, state.prot_shout_targets)
+
+        H.ctl.distance.nameplate1 = 4
+        assert.are.equal("cleave", read(H, 0.2))
     end)
 
     it("uses a learned Concussion Blow as a backup on a non-boss cast", function()

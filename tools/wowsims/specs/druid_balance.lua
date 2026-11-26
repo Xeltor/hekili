@@ -75,7 +75,12 @@ return {
     map = {},
     focus = { moonfire = 2, insect_swarm = 2, starfire = 1 }, -- by role (docs/dev/wowsims-packs.md); Starfire on Eclipse 1
     -- wowsims's sim starts in Moonkin Form (its list never casts it): the form first, once known (a talent, 40)
-    levelingFirst = { "moonkin_form,if=!buff.moonkin_form.up" },
+    levelingFirst = {
+        "aquatic_form,if=combat=0&druid_form_intent",
+        "travel_form,if=combat=0&druid_form_intent",
+        "cat_form,if=combat=0&druid_form_intent",
+        "moonkin_form,if=!buff.moonkin_form.up&(!druid_holding_travel|druid_form_intent)",
+    },
     -- owner R20a: wowsims's low-mana branch only (the fight's length is unknown in game, gap AN)
     condition = { innervate = "mana.pct_lo<40&fight_remains>30" },
 }

@@ -44,7 +44,18 @@ S.On("UNIT_SPELLCAST_SUCCEEDED", "player", function(api, t, unit, castGUID, spel
     -- ability's IDs (a rank: the `now`'s cast_id, Families/Now.lua).
     local sent = I.PinSent(a, t, castGUID, spellID)
     local target = I.Tickets.CommittedTarget(castGUID) or sent or I.Units.Sent(castGUID) or I.Units.Pin(api, t)
-    Stage(Obs.CastSuccess, t, a, I.CostOf(a), I.ab.idPos[spellID] or 1, target)
+    local area = I.ab.obj[a].areaDebuff
+    local debuffTarget = target
+    if area then
+        local near, far = ns.Facade.RangeLib("target", true)
+        if type(near) == "number" and near >= area.radius and (far == nil or far > area.radius) then
+            debuffTarget = 0
+        end
+    end
+    Stage(Obs.CastSuccess, t, a, I.CostOf(a), I.ab.idPos[spellID] or 1, debuffTarget)
+    if area then
+        I.StageAreaDebuffs(api, t, a, area)
+    end
     I.Log.Cast("SPELL_CAST_SUCCESS", t, spellID, target)
 end)
 

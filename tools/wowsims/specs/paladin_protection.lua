@@ -51,6 +51,7 @@
 -- the Crusader setup and use the equipped shield, current assignment and available mana.
 local field = "prot_pal_field&prot_pal_attack_target"
 local fight = field .. "&combat>0"
+local groundFight = "prot_pal_field&combat>0"
 local melee = "&target.within5&!target.outside5"
 local judgement = "&target.within10&!target.outside10&prot_paladin_judgement_allowed"
 local damageSeal =
@@ -100,7 +101,7 @@ add(
 add("seal_of_fury,focus=2,if=prot_paladin_prepare_taunt")
 add("judgement,use_off_gcd=1,if=prot_paladin_fury_taunt_ready")
 add("swift_judgement,use_off_gcd=1,if=prot_paladin_fury_taunt_ready")
-add("consecration,if=prot_paladin_ground_pickup&prot_pal_can_consecrate&!prot_paladin_urgent_pickup")
+add("consecration,if=prot_paladin_ground_pickup&prot_pal_can_consecrate")
 add("recover_threat,use_off_gcd=1,if=prot_paladin_recovery_pack")
 add("holy_strike,if=prot_paladin_loose_melee&weapon.size>0")
 add("judgement,use_off_gcd=1,if=prot_paladin_loose_target&prot_paladin_judgement_allowed")
@@ -134,7 +135,7 @@ add("seal_of_righteousness,if=prot_pal_attack_target&" .. damageSeal)
 add(
     "holy_shield,focus=2,if=prot_pal_field&prot_pal_combat_defense&toggle.defensives&prot_pal_shield_pressure&buff.holy_shield.down"
 )
-add("consecration,if=" .. fight .. "&prot_pal_pack&prot_pal_can_consecrate&target.within8&!target.outside8")
+add("consecration,if=" .. groundFight .. "&prot_pal_consecrate_pack")
 add("holy_strike,if=" .. field .. melee .. "&weapon.size>0")
 add("judgement,use_off_gcd=1,if=" .. field .. judgement .. "&prot_pal_spare_mana>=action.judgement.cost")
 add("swift_judgement,use_off_gcd=1,if=" .. field .. judgement)
@@ -151,7 +152,7 @@ add(
         .. "&target.within20&!target.outside20&prot_pal_spare_mana>=action.holy_shock.cost"
         .. "&(!talent.consecrated_ground.enabled|debuff.consecrated_ground.up)"
 )
-add("consecration,if=" .. fight .. "&prot_pal_durable&prot_pal_can_consecrate&target.within8&!target.outside8")
+add("consecration,if=" .. groundFight .. "&prot_pal_durable&prot_pal_can_consecrate&target.within8&!target.outside8")
 add("retribution_aura,if=" .. fight .. "&prot_pal_aura_missing")
 add("devotion_aura,if=" .. fight .. "&prot_pal_aura_missing&!action.retribution_aura.known")
 
@@ -201,7 +202,7 @@ return {
         holy_shield = "prot_pal_sustained&prot_pal_tanking&toggle.defensives&(target.is_dummy|prot_pal_shield_pressure)",
         holy_strike = "prot_pal_sustained&weapon.size>0",
         holy_shock = "prot_pal_sustained",
-        consecration = "prot_pal_sustained&prot_pal_ground_safe&target.within8&!target.outside8",
+        consecration = "prot_pal_raid_prep&prot_pal_ground_safe&target.within8&!target.outside8",
         exorcism = "prot_pal_sustained",
     },
     levelingFirst = preparation,

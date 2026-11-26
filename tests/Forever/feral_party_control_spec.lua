@@ -9,14 +9,14 @@ local function control(c, unit, id)
 end
 
 describe("Druid party crowd control", function()
-    it("continues tanking the active target without hitting a nearby sheep or trap", function()
+    it("includes a sheep or trap in confirmed Swipe reach while tanking a dungeon pack", function()
         local o = { level = 44, combat = true, rage = 50, known = { 5487, 6807, 779, 1328616 }, plate = true }
         assert.are.equal("swipe_bear", (tank(o)))
         for _, id in ipairs({ 1324189, 3355 }) do
             o.setup = function(_, c)
                 control(c, "nameplate1", id)
             end
-            assert.are.equal("lacerate", (tank(o)))
+            assert.are.equal("swipe_bear", (tank(o)))
         end
         o.plateDistance = 25
         assert.are.equal("lacerate", (tank(o))) -- the only active melee target

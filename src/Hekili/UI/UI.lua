@@ -1078,31 +1078,48 @@ do
         end
 
         local vis = ( zoneType == "pvp" or zoneType == "arena" ) and conf.visibility.pvp or conf.visibility.pve
-        if not conf.visibility.advanced then return vis.alpha end
-        if vis.hideMounted and IsMounted() then return 0 end
-
-        if id == "Primary" and wantsTargetReturn( dPool.Primary, conf ) then
+        local advanced = conf.visibility.advanced
+        local hiddenMounted = advanced and vis.hideMounted and IsMounted()
+        local alpha
+        if not advanced then
+            alpha = vis.alpha
+        elseif hiddenMounted then
+            alpha = 0
+        elseif id == "Primary" and wantsTargetReturn( dPool.Primary, conf ) then
             -- The forward cue was visible in combat. Keep just its return cue visible after leaving the pack.
-            return math.max( vis.combatTarget, vis.combat, vis.target, vis.always )
-        end
-        if vis.combatTarget > 0 and Status.combat and UnitExists( "target" ) and not UnitIsDead( "target" ) and UnitCanAttack( "player", "target" ) then
-            return vis.combatTarget
+            alpha = math.max( vis.combatTarget, vis.combat, vis.target, vis.always )
+        elseif vis.combatTarget > 0 and Status.combat and UnitExists( "target" ) and not UnitIsDead( "target" ) and UnitCanAttack( "player", "target" ) then
+            alpha = vis.combatTarget
         elseif vis.combat > 0 and Status.combat then
-            return vis.combat
+            alpha = vis.combat
         elseif vis.target > 0 and UnitExists( "target" ) and not UnitIsDead( "target" ) and UnitCanAttack( "player", "target" ) then
-            return vis.target
-        elseif vis.always > 0 then
-            return vis.always
+            alpha = vis.target
+        else
+            alpha = vis.always
         end
+        if alpha > 0 then return alpha end
+
+        local tree = Registry.Specs()[ Status.specID ]
+        local recovery = tree and tree.recoveryDisplay
+        local upkeep = recovery and id == "Primary" and recovery.upkeep
+        if type( upkeep ) == "function" then
+            -- A pack can open the hidden display for one eligible situational spell.
+            if dPool[id].style.DrawHealthCueDetails and not Hekili.Pause and not Hekili.Config then
+                local cue = upkeep( Status.specKey )
+                if cue then
+                    local configured = advanced and math.max( vis.combatTarget, vis.combat, vis.target, vis.always ) or vis.alpha
+                    return configured > 0 and configured or 1, nil, cue
+                end
+            end
+            upkeep = nil
+        end
+        if not advanced or hiddenMounted then return 0 end
 
         -- Keep only eligible self-care cues when normal visibility hides the queue, including
         -- during a fight without an attackable target. The client can draw protected health bands.
-        local tree = Registry.Specs()[ Status.specID ]
-        local recovery = tree and tree.recoveryDisplay
         local defenses = prof.toggles.defensives
         local showsDefenses = recovery and ( recovery.spells or recovery.combat )
             and defenses.value and id == ( defenses.separate and "Defensives" or "Primary" )
-        local upkeep = recovery and id == "Primary" and recovery.upkeep
         if recovery and ( showsDefenses or upkeep )
             and ( dPool[id].style == ns.UI.Styles.classic or dPool[id].style == ns.UI.Styles.timeline )
             and zoneType ~= "pvp" and zoneType ~= "arena"
@@ -1388,6 +1405,9 @@ do
             if recipientEvents[event] then retireUnsafeSelfCast( self, Published[self.id] ) end
             if kbEvents[ event ] then
                 self.style.UpdateKeybindings( self )
+                if event == "UPDATE_SHAPESHIFT_FORM" and self.id == "Primary" then
+                    self:UpdateAlpha()
+                end
 
             elseif alphaUpdateEvents[ event ] then
                 if event == "PLAYER_TARGET_CHANGED" then

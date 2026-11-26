@@ -28,10 +28,80 @@ local state = Hekili.State
 local IsCurrentSpell = C_Spell.IsCurrentSpell
 local floor, max, min = math.floor, math.max, math.min
 
+local AQUATIC_FORM, TRAVEL_FORM, CAT_FORM = { 1066 }, { 783 }, { 768 }
+local BEAR_FORM, MOONKIN_FORM = { 5487, 9634 }, { 24858 } -- Dire Bear Form is Bear Form's second rank.
+
+local function plain(value)
+    if Facade.issecretvalue(value) then
+        return nil
+    end
+    return value
+end
+
+local aquaticCue = { action = "aquatic_form", ranks = AQUATIC_FORM }
+local travelCue = { action = "travel_form", ranks = TRAVEL_FORM }
+local catCue = { action = "cat_form", ranks = CAT_FORM }
+local bearCue = { action = "bear_form", ranks = BEAR_FORM }
+local moonkinCue = { action = "moonkin_form", ranks = MOONKIN_FORM }
+local feralCombatCues = { actions = { cat_form = catCue, bear_form = bearCue } }
+local pickForm, combatDisplayFormCue
+
+local function inForm(cue)
+    local index = plain(Facade.GetShapeshiftForm())
+    if index == 0 then
+        return false
+    end
+    if type(index) == "number" then
+        local _, _, _, id = Facade.GetShapeshiftFormInfo(index)
+        id = plain(id)
+        if type(id) == "number" then
+            for _, rank in ipairs(cue.ranks) do
+                if id == rank then
+                    return true
+                end
+            end
+            return false
+        end
+    end
+    return Facade.C_UnitAuras.GetPlayerAuraBySpellID(cue.ranks[1]) ~= nil
+end
+
+local function usableFormCue(cue)
+    if cue and not inForm(cue) then
+        local rank = Facade.KnownRank(cue.ranks)
+        if rank > 0 and plain(C_Spell.IsSpellUsable(cue.ranks[rank])) == true then
+            return cue
+        end
+    end
+end
+
+local function formCue(specKey)
+    return usableFormCue(pickForm(specKey))
+end
+
+local function displayFormCue(specKey)
+    if Facade.InCombatLockdown() or plain(Facade.UnitAffectingCombat("player")) == true then
+        return combatDisplayFormCue(specKey)
+    end
+    return formCue(specKey)
+end
+
+local function holdingTravel()
+    if state.combat > 0 or Facade.InCombatLockdown() or plain(Facade.UnitAffectingCombat("player")) == true then
+        return false
+    end
+    if state.buff.travel_form.up or state.buff.aquatic_form.up then
+        return true
+    end
+    local cue, traveling = pickForm(state.spec.key)
+    return traveling == true and not state.action[cue.action].disabled and (inForm(cue) or usableFormCue(cue) ~= nil)
+end
+
 -- The class kit and its specs (ids the core's: Balance 100111, Feral 100112, Guardian 100113, Restoration 100114).
 -- Feral and Guardian ride the Feral Combat tree: its points pick Feral, with Thick Hide 3/3 Guardian (the selector below
 -- RegisterTalents); /hekili spec guardian or feral keeps one for the tree.
 local recoveryDisplay = {
+    upkeep = displayFormCue,
     selfCast = {
         healing_touch = true,
         rejuvenation = true,
@@ -53,6 +123,7 @@ local spec = Hekili:NewClass("DRUID", {
             role = "attack",
             ranged = true,
             package = "Balance (wowsims.com)",
+            recoveryDisplay = { upkeep = displayFormCue },
         },
         {
             key = "feral",
@@ -101,11 +172,6 @@ local PROWL = { 5215, 6783, 9913 }
 local DASH = { 1850, 9821 }
 local SHIFTING_POWER = { 1322605 }
 local BERSERK = { 417141 }
-local CAT_FORM = { 768 }
-local BEAR_FORM = { 5487, 9634 } -- Dire Bear Form is Bear Form's rank 2
-local MOONKIN_FORM = { 24858 }
-local TRAVEL_FORM = { 783 }
-local AQUATIC_FORM = { 1066 }
 local MAUL = { 6807, 6808, 6809, 8972, 9745, 9880, 9881 }
 local SWIPE = { 779, 780, 769, 9754, 9908 }
 local PRIMAL_BITE = { 407995, 1238069, 1238070, 1238073 } -- Mangle, renamed
@@ -877,15 +943,18 @@ spec:RegisterStateExpr("druid_bleed_active", function()
     return debuff.rake.up or debuff.rip.up or debuff.lacerate.up or debuff.pounce_bleed.up
 end)
 
+spec:RegisterStateExpr("druid_holding_travel", holdingTravel)
+
+spec:RegisterStateExpr("druid_form_intent", function()
+    if state.display == "Primary" and state.combat == 0 and state.offset == 0 then
+        local cue = formCue(state.spec.key)
+        return cue ~= nil and cue.action == state.this_action and state.buff[cue.action].down
+    end
+    return false
+end)
+
 -- Form choice and pulls use the actual assignment, enemy and melee witnesses. A damage
 -- display's forced target count cannot establish that a second mob is fighting the party.
-local function plain(value)
-    if Facade.issecretvalue(value) then
-        return nil
-    end
-    return value
-end
-
 local function instanceType()
     local _, instance = Facade.IsInInstance()
     return plain(instance)
@@ -907,7 +976,7 @@ local function groupedInstance()
 end
 
 -- A party member's control is visible on the affected unit even when our own aura ledger is empty.
-local feralCrowdControlled, packAt
+local feralCrowdControlled, packAt, swipeAt
 do
     local ids = {}
     for _, ranks in ipairs({
@@ -926,12 +995,12 @@ do
     end
     local observed, readAt = {}, {}
     spec:RegisterEvent("PLAYER_TARGET_CHANGED", function()
-        readAt.target, packAt = nil, nil
+        readAt.target, packAt, swipeAt = nil, nil, nil
     end)
     local function invalidate(_, unit)
         unit = plain(unit)
         if unit then
-            readAt[unit], packAt = nil, nil
+            readAt[unit], packAt, swipeAt = nil, nil, nil
         end
     end
     spec:RegisterEvent("UNIT_AURA", invalidate)
@@ -961,8 +1030,7 @@ end
 
 spec:RegisterStateExpr("feral_group_enemy", function()
     return groupedInstance()
-        and state.buff.travel_form.down
-        and state.buff.aquatic_form.down
+        and not holdingTravel()
         and not controlledTarget()
         and Facade.TargetInPlayerCombat() == true
 end)
@@ -981,7 +1049,7 @@ spec:RegisterStateExpr("feral_sustained", function()
 end)
 
 spec:RegisterStateExpr("feral_pull", function()
-    if not feralField() or buff.travel_form.up or buff.aquatic_form.up or controlledTarget() then
+    if not feralField() or holdingTravel() or controlledTarget() then
         return false
     end
     local engaged = Facade.TargetInPlayerCombat()
@@ -1033,6 +1101,131 @@ local function groupTank()
     return role == "NONE" and instance == "party" and partyHasTank() == false
 end
 
+local function targetIntent()
+    local exists = plain(Facade.UnitExists("target"))
+    if exists ~= true then
+        return exists
+    end
+    local attackable = plain(Facade.UnitCanAttack("player", "target"))
+    if attackable ~= true then
+        return attackable
+    end
+    local dead = plain(Facade.UnitIsDead("target"))
+    if dead ~= nil then
+        return not dead
+    end
+end
+
+local function targetFacingAway()
+    if plain(Facade.UnitExists("targettarget")) == true then
+        local attackingUs = plain(Facade.UnitIsUnit("targettarget", "player"))
+        if attackingUs ~= nil then
+            return not attackingUs
+        end
+    end
+end
+
+local function combatForm(specKey)
+    local role = Facade.GroupRole("player")
+    if role == "HEALER" then
+        return
+    end
+    if specKey == "balance" then
+        return moonkinCue
+    end
+    if groupTank() or specKey == "guardian" and instanceType() == "raid" and role == "NONE" then
+        return bearCue
+    end
+    local knowsCat = Facade.KnownRank(CAT_FORM) > 0
+    local catBuilder = Facade.KnownRank(CLAW) > 0
+        or role == "DAMAGER"
+            and Facade.KnownRank(SHRED) > 0
+            and (plain(Facade.GetNumGroupMembers()) or 0) > 1
+            and Facade.TargetInPlayerCombat() == true
+            and (state.settings.behind or targetFacingAway())
+    if not knowsCat or not catBuilder and Facade.KnownRank(BEAR_FORM) > 0 then
+        return bearCue
+    end
+    -- Let a current Bear finish a pull the party has already started.
+    if inForm(bearCue) and Facade.TargetInPlayerCombat() == true then
+        return bearCue
+    end
+    return catCue
+end
+
+local function canShift()
+    return plain(Facade.UnitIsDeadOrGhost("player")) == false
+        and plain(Facade.IsMounted()) == false
+        and plain(Facade.UnitOnTaxi("player")) == false
+end
+
+pickForm = function(specKey)
+    if
+        Facade.InCombatLockdown()
+        or plain(Facade.UnitAffectingCombat("player")) ~= false
+        or not canShift()
+        or Facade.PlayerEatingOrDrinking() ~= false
+    then
+        return
+    end
+    local hostile = targetIntent()
+    if hostile == nil then
+        return
+    end
+    local instance = instanceType()
+    if instance == "party" or instance == "raid" then
+        return hostile and combatForm(specKey) or nil
+    end
+    local wet = plain(Facade.IsSwimming("player"))
+    local speed = wet == false and plain(Facade.GetUnitSpeed("player"))
+    local travel
+    if type(speed) == "number" and speed > 0 then
+        local outdoors = plain(Facade.IsOutdoors())
+        local outdoorWorld = outdoors == true and instance == "none"
+        if outdoorWorld or outdoors == false then
+            travel = outdoorWorld and Facade.KnownRank(TRAVEL_FORM) > 0 and travelCue
+                or Facade.KnownRank(CAT_FORM) > 0 and catCue
+        end
+    end
+    if travel then
+        if not hostile then
+            return travel, true
+        end
+        local near, far = Facade.RangeLib("target")
+        local close = type(far) == "number" and far <= 10
+        if not close and (type(near) == "number" and near >= 10 or inForm(travel)) then
+            return travel, true
+        end
+    end
+    if hostile then
+        return combatForm(specKey)
+    end
+    if wet == true then
+        return aquaticCue, true
+    end
+end
+
+combatDisplayFormCue = function(specKey)
+    if not canShift() or Facade.GroupRole("player") == "HEALER" then
+        return
+    end
+    if specKey ~= "balance" and groupTank() then
+        return usableFormCue(bearCue)
+    end
+    if targetIntent() ~= true then
+        return
+    end
+    if specKey == "balance" then
+        return usableFormCue(moonkinCue)
+    end
+    if inForm(bearCue) or inForm(catCue) and combatForm(specKey) ~= bearCue then
+        return
+    end
+    -- The rotation decides the combat shift when coming from caster or travel form.
+    local cat, bear = usableFormCue(catCue), usableFormCue(bearCue)
+    return cat and bear and feralCombatCues or cat or bear
+end
+
 -- Opening a fresh dungeon pull is a tank decision. Only the selected enemy is eligible,
 -- between fights and with the whole party idle. Never reuse this permission for an area attack or taunt.
 spec:RegisterStateExpr("feral_tank_opener", function()
@@ -1077,6 +1270,10 @@ spec:RegisterStateExpr("feral_bear_fight", function()
     return state.feral_pull or instanceType() == "party" and not state.target.is_dummy and state.feral_group_enemy
 end)
 
+local function bearAreaFight()
+    return feralField() or instanceType() == "party" and not state.target.is_dummy and groupedInstance()
+end
+
 spec:RegisterStateExpr("feral_maul_allowed", function()
     if buff.frenzied_regeneration.up then
         return false
@@ -1087,12 +1284,9 @@ spec:RegisterStateExpr("feral_maul_allowed", function()
     -- A queued Maul also costs the Rage the white swing would have generated.
     local advanced = action.primal_bite.known and not action.primal_bite.disabled
         or action.lacerate.known and not action.lacerate.disabled
-    local cleaving = state.feral_pack and state.feral_area_safe
-    if
-        cleaving
-        and (advanced or action.swipe_bear.known and not action.swipe_bear.disabled)
-        and state.rage.lo <= 50
-    then
+    local cleaving = action.swipe_bear.known and not action.swipe_bear.disabled and state.feral_swipe_pack
+        or advanced and state.feral_pack and state.feral_area_safe
+    if cleaving and state.rage.lo <= 50 then
         return false
     end
     if advanced and state.rage.lo <= 35 then
@@ -1111,7 +1305,7 @@ spec:RegisterStateExpr("feral_bear_burst", function()
     local bite = action.primal_bite
     if
         state.combat == 0
-        or not state.feral_bear_fight
+        or not state.feral_bear_contact
         or not buff.bear_form.up
         or buff.berserk.up
         or buff.frenzied_regeneration.up
@@ -1119,14 +1313,12 @@ spec:RegisterStateExpr("feral_bear_burst", function()
         or bite.disabled
         or state.rage.lo < 2 * bite.cost
         or state.feral_dying
-        or not state.feral_area_safe
         or plain(C_Spell.IsSpellInRange(bite.id, "target")) ~= true
     then
         return false
     end
-    -- Berserk lets successive Bites cleave for 15s. Spend the three-minute cooldown on
-    -- a proven pack or durable enemy, and keep an idle neighbor out of that cleave.
-    return state.feral_pack or state.feral_durable
+    -- Berserk lets successive Bites cleave for 15s. Spend it on a proven pack or durable enemy.
+    return state.feral_swipe_pack or state.feral_durable
 end)
 
 local recovery = Hekili:NewTankRecovery(spec, {
@@ -1163,8 +1355,23 @@ local function observedRange(unit)
     return near, far
 end
 
--- Cache only observations, independently of simulated form and combat time. A possible idle
--- bystander inside the area also rules out Swipe and Roar, even when two real attackers exist.
+local function fightingGroup(unit, victim, threat, attackingPlayer)
+    return plain(Facade.UnitAffectingCombat(unit)) == true
+        and (type(threat) == "number" or attackingPlayer or plain(Facade.UnitInParty(victim)) == true)
+end
+
+local function hostileNPC(unit)
+    return plain(Facade.UnitCanAttack("player", unit)) == true
+        and plain(Facade.UnitIsDead(unit)) == false
+        and plain(Facade.UnitIsPlayer(unit)) == false
+end
+
+local function inRadius(unit, radius)
+    local _, far = observedRange(unit)
+    return type(far) == "number" and far <= radius
+end
+
+-- Cache the conservative footprint used by form choice and selecting targets for bleeds.
 local packTarget, multiple, clearArea, holdingPack
 local function readPack()
     local now, key = Facade.GetTime(), Facade.TargetMemoryKey()
@@ -1191,8 +1398,7 @@ local function readPack()
                 local engaged = hostile == true
                     and dead == false
                     and plain(Facade.UnitIsPlayer(unit)) == false
-                    and plain(Facade.UnitAffectingCombat(unit)) == true
-                    and (type(threat) == "number" or attackingPlayer or plain(Facade.UnitInParty(victim)) == true)
+                    and fightingGroup(unit, victim, threat, attackingPlayer)
                 if not engaged or feralCrowdControlled(unit) == true then
                     clearArea = false
                 elseif targetRange <= 5 and same == false and type(far) == "number" and far <= 5 then
@@ -1227,72 +1433,107 @@ spec:RegisterStateExpr("feral_held_pack", function()
         and recovery.holdingTarget()
 end)
 
-do
-    -- Challenging Roar is centered on the caster. Its spell-range answer cannot measure an enemy.
-    local function inRadius(unit, radius)
-        local near, far = observedRange(unit)
-        if type(far) == "number" and far <= radius then
-            return true
-        end
-        if type(near) == "number" and near > radius then
-            return false
+local function swipeReach(spell, unit)
+    local inRange = spell and plain(C_Spell.IsSpellInRange(spell, unit))
+    if inRange ~= nil then
+        return inRange
+    end
+    if inRadius(unit, 5) then
+        return true
+    end
+end
+
+local swipeContact, swipePack
+local function readSwipe()
+    local now = Facade.GetTime()
+    if swipeAt == now then
+        return
+    end
+    swipeAt, swipeContact, swipePack = now, false, false
+    if not bearAreaFight() then
+        return
+    end
+    local targetEngaged = Facade.TargetInPlayerCombat()
+    if targetEngaged ~= true then
+        if plain(Facade.UnitAffectingCombat("player")) ~= true or targetEngaged == nil and not hostileNPC("target") then
+            return
         end
     end
+    local spell = SWIPE[rankOf(SWIPE)]
+    local inRange = swipeReach(spell, "target")
+    if inRange == nil then
+        local plate = Facade.TargetMemoryPlate(Facade.TargetMemoryKey())
+        inRange = plate and swipeReach(spell, plate)
+    end
+    if inRange ~= true then
+        return
+    end
 
-    -- A safe unit is either held by us or attacking an identified living non-tank. An unreadable
-    -- victim, protected mob or co-tank in the footprint vetoes the whole forced attack.
+    local closePlates, hasAdd, hasFight = 0, false, targetEngaged == true
+    for unit, victim in pairs(recovery.plates) do
+        if hostileNPC(unit) and swipeReach(spell, unit) == true then
+            local same = plain(Facade.UnitIsUnit(unit, "target"))
+            if not hasFight and same ~= true then
+                local threat = plain(Facade.UnitThreatSituation("player", unit))
+                hasFight = fightingGroup(unit, victim, threat, plain(Facade.UnitIsUnit(victim, "player")) == true)
+            end
+            closePlates = closePlates + 1
+            -- Two different plates prove a pack even if the client hides which one is selected.
+            hasAdd = hasAdd or same == false or closePlates >= 2
+            if hasFight and hasAdd then
+                break
+            end
+        end
+    end
+    swipeContact, swipePack = hasFight, hasFight and hasAdd
+end
+
+spec:RegisterStateExpr("feral_bear_contact", function()
+    readSwipe()
+    return swipeContact
+end)
+
+spec:RegisterStateExpr("feral_swipe_pack", function()
+    if state.max_targets == 1 or state.toggle.mode == "single" then
+        return false
+    end
+    readSwipe()
+    return swipePack
+end)
+
+do
+    local bossUnits = { "boss1", "boss2", "boss3", "boss4", "boss5" }
+
+    -- Count only confirmed loose enemies. Other mobs in the Roar footprint do not veto it.
     local function looseForRoar(unit, victim)
         if
-            plain(Facade.UnitExists(unit)) == false
-            or plain(Facade.UnitCanAttack("player", unit)) == false
-            or plain(Facade.UnitIsDead(unit)) == true
-        then
-            return false
-        end
-        local near = inRadius(unit, 10)
-        if near == false then
-            return false
-        end
-        local level = plain(Facade.UnitLevel(unit))
-        local kind = plain(Facade.UnitClassification(unit))
-        if
-            plain(Facade.UnitCanAttack("player", unit)) ~= true
-            or plain(Facade.UnitIsDead(unit)) ~= false
-            or plain(Facade.UnitIsPlayer(unit)) ~= false
+            not hostileNPC(unit)
+            or not inRadius(unit, 10)
             or plain(Facade.UnitAffectingCombat(unit)) ~= true
-            or type(level) ~= "number"
-            or level <= 0
-            or not kind
-            or kind == "worldboss"
-            or feralCrowdControlled(unit) ~= false
+            or plain(Facade.UnitLevel(unit)) == -1
+            or plain(Facade.UnitClassification(unit)) == "worldboss"
         then
-            return nil
+            return false
         end
         local threat = plain(Facade.UnitThreatSituation("player", unit))
-        if plain(Facade.UnitIsUnit(victim, "player")) == true and (threat == 2 or threat == 3) then
+        if threat ~= 0 and threat ~= 1 then
             return false
         end
-        if threat == 0 or threat == 1 then
-            for _, member in ipairs(partyUnits) do
-                if
-                    plain(Facade.UnitIsUnit(victim, member)) == true
-                    and plain(Facade.UnitExists(member)) == true
-                    and plain(Facade.UnitIsPlayer(member)) == true
-                    and plain(Facade.UnitIsDead(member)) == false
-                then
-                    local role = Facade.GroupRole(member)
-                    if role == "HEALER" or role == "DAMAGER" then
-                        local guid = plain(Facade.UnitGUID(unit))
-                        local now = Facade.GetTime()
-                        return near == true
-                            and (plain(Facade.UnitAffectingCombat("player")) == true or plain(
-                                Facade.UnitAffectingCombat(member)
-                            ) == true)
-                            and not Facade.DebuffImmunity("growl", guid, now)
-                            and not Facade.DebuffImmunity("challenging_roar", guid, now)
-                    end
-                    return nil
-                end
+        for _, member in ipairs(partyUnits) do
+            if
+                plain(Facade.UnitIsUnit(victim, member)) == true
+                and plain(Facade.UnitExists(member)) == true
+                and plain(Facade.UnitIsPlayer(member)) == true
+                and plain(Facade.UnitIsDead(member)) == false
+            then
+                local role = Facade.GroupRole(member)
+                local guid, now = plain(Facade.UnitGUID(unit)), Facade.GetTime()
+                return (role == "HEALER" or role == "DAMAGER")
+                    and (plain(Facade.UnitAffectingCombat("player")) == true or plain(
+                        Facade.UnitAffectingCombat(member)
+                    ) == true)
+                    and not Facade.DebuffImmunity("growl", guid, now)
+                    and not Facade.DebuffImmunity("challenging_roar", guid, now)
             end
         end
     end
@@ -1308,41 +1549,28 @@ do
             or state.toggle.mode == "single"
             or state.boss
             or state.target.is_boss
-            or plain(Facade.C_InstanceEncounter.IsEncounterInProgress()) ~= false
-            or state.active_dot.hibernate > 0
-            or state.active_dot.entangling_roots > 0
+            or plain(Facade.C_InstanceEncounter.IsEncounterInProgress()) == true
             or plain(Facade.UnitIsDeadOrGhost("player")) ~= false
             or min(state.rage.lo, state.rage.actual_lo) < state.action.challenging_roar.cost
         then
             return false
         end
-        for i = 1, 5 do
-            if plain(Facade.UnitExists("boss" .. i)) ~= false then
+        for _, unit in ipairs(bossUnits) do
+            if plain(Facade.UnitExists(unit)) == true then
                 return false
             end
         end
         local selected = looseForRoar("target", "targettarget")
-        if selected == nil then
-            return false
-        end
-        local first, pair = selected and "target", false
+        local closePlates = 0
         for unit, victim in pairs(recovery.plates) do
-            local same = plain(Facade.UnitIsUnit(unit, "target"))
-            if same ~= true then
-                local loose = looseForRoar(unit, victim)
-                if loose == nil then
-                    return false
-                end
-                if loose then
-                    if not first then
-                        first = unit
-                    elseif plain(Facade.UnitIsUnit(first, unit)) == false then
-                        pair = true
-                    end
+            if looseForRoar(unit, victim) then
+                closePlates = closePlates + 1
+                if closePlates >= 2 or selected and plain(Facade.UnitIsUnit(unit, "target")) == false then
+                    return true
                 end
             end
         end
-        return pair
+        return false
     end)
 
     -- Two real wounds of at least 10% maximum health within five seconds establish sustained
@@ -1399,12 +1627,49 @@ do
     end)
 end
 
+local function roarEnemy(unit, victim, held)
+    if not hostileNPC(unit) or not inRadius(unit, 10) then
+        return false
+    end
+    local threat = plain(Facade.UnitThreatSituation("player", unit))
+    local attackingPlayer = plain(Facade.UnitIsUnit(victim, "player")) == true
+    if held and not attackingPlayer and threat ~= 2 and threat ~= 3 then
+        return false
+    end
+    return fightingGroup(unit, victim, threat, attackingPlayer)
+end
+
+local function anyRoarEnemy(held)
+    if roarEnemy("target", "targettarget", held) then
+        return true
+    end
+    for unit, victim in pairs(recovery.plates) do
+        if roarEnemy(unit, victim, held) then
+            return true
+        end
+    end
+    return false
+end
+
 spec:RegisterStateExpr("feral_defensive_roar", function()
     if not state.toggle.defensives then
         return false
     end
-    local tanking = instanceType() == "party" and state.feral_group_enemy and groupTank() and recovery.holdingTarget()
-    return (tanking or state.feral_pull and state.feral_pack) and state.feral_area_safe
+    return instanceType() == "party" and groupTank() and anyRoarEnemy(true)
+        or feralField() and instanceType() ~= "party" and state.feral_swipe_pack
+end)
+
+spec:RegisterStateExpr("feral_roar_in_combat", function()
+    if bearAreaFight() then
+        return anyRoarEnemy(false)
+    end
+    if groupedInstance() then
+        return Facade.TargetInPlayerCombat() == true
+    end
+    local instance = instanceType()
+    return state.target.is_dummy
+        or instance ~= "party" and instance ~= "scenario"
+        or Facade.TargetInPlayerCombat() == true
 end)
 spec:RegisterStateExpr("feral_damage_enemy", function()
     return (plain(Facade.GetNumGroupMembers()) or 0) > 1
@@ -1438,7 +1703,7 @@ end
 
 spec:RegisterStateExpr("feral_sustained_form", function()
     local role = Facade.GroupRole("player")
-    if feralField() or role == "HEALER" then
+    if feralField() or holdingTravel() or role == "HEALER" then
         return false
     end
     if not groupedInstance() then
@@ -1450,7 +1715,7 @@ spec:RegisterStateExpr("feral_sustained_form", function()
 end)
 spec:RegisterStateExpr("feral_wants_bear", function()
     local role = Facade.GroupRole("player")
-    if not action.bear_form.known or state.buff.travel_form.up or state.buff.aquatic_form.up or role == "HEALER" then
+    if not action.bear_form.known or holdingTravel() or role == "HEALER" then
         return false
     end
     if groupTank() then
@@ -1466,13 +1731,7 @@ spec:RegisterStateExpr("feral_wants_bear", function()
 end)
 spec:RegisterStateExpr("feral_wants_cat", function()
     local role = Facade.GroupRole("player")
-    if
-        role == "HEALER"
-        or not hasCatBuilder()
-        or state.buff.travel_form.up
-        or state.buff.aquatic_form.up
-        or state.feral_wants_bear
-    then
+    if role == "HEALER" or not hasCatBuilder() or holdingTravel() or state.feral_wants_bear then
         return false
     end
     -- Keep a manual or emergency Bear shift until the whole pull ends, including when
@@ -1797,11 +2056,9 @@ spec:RegisterStateExpr("feral_behind", function()
     if state.settings.behind then
         return true
     end
-    if plain(Facade.UnitExists("targettarget")) == true then
-        local attackingUs = plain(Facade.UnitIsUnit("targettarget", "player"))
-        if attackingUs ~= nil then
-            return not attackingUs
-        end
+    local facingAway = targetFacingAway()
+    if facingAway ~= nil then
+        return facingAway
     end
     return buff.prowl.up and plain(Facade.UnitAffectingCombat("target")) == false
 end)
@@ -2205,6 +2462,7 @@ spec:RegisterAbilities({
         id = 99,
         -- it deals no damage, so its ticket pays its own avoid only, never a Maul's wound in its frame
         expects = "debuff",
+        areaDebuff = { aura = "demoralizing_roar", radius = 10, melee = MAUL },
         copy = rest(DEMORALIZING_ROAR),
         cast = 0,
         cooldown = 0,
@@ -3452,18 +3710,18 @@ spec:RegisterSetting(
 -- (tests/Forever/druid_spec.lua checks they match). Your talents pick one (the selector); /hekili priority <name> keeps another. Restoration is deferred.
 spec:RegisterPack(
     "Feral (wowsims.com)",
-    20261125000,
-    [[Hekili:T3tAVnoYY9BrFrreEISKT1mZBH1aKGfVKji5HG4x(QKPLAzXNPefiPSJxi4F7Pp4rFv9He1HNL7h2XIhDvD1vxNDvCYWj)9jpmpmhn5VDZGB(6WH3mAWGbtEi)9nOjpSjC2lHpJ)J1HRW)))kknm(Jh79wYBzrRY6plzva5HEpojCozGEABuC(pxp5jTJz2g0Sjp87)p)V)83)TfKHAYdlJMphXEEu2m9q43(4X8LOpES4AxVijf9kk9JhNJweUno)Jh)x(V)p)4r8L)4XY3FB01eOLD980TrZVMcTzH5xhUjo76W5HBYJEf1h)R()JSK1bFbdI0W1zXyKEo(VtiGmk7JhdNppz9)e(pEb9Ew)pE83dZd)nnOsV)RF(3XdYY88nz)21x)Cu(YTprW(RLE0a8yIX4WNgSyWa0DlM99BXd7pxTjjnhdM)TTHPZJcxlrcWVqwbv4juigEXrz5zyaIwNJsjO8BlJIj3D7If9jpYum8w1F7M(41N0Kf4Bo5HWz5rjRZgplmoEk7htjd0xiRUJjV1xIwmwzi(4)O4fVA81VgMgf(umI9kVoDty08PKv95i8ZhLNnfJKtrRrPp)(0njjXFzZ2u04HF51W4TOX960RxVoSHRpE9GbIxwN826Du4wDTTBc6MhgJNF93GNGH5jPVpDEu2SOnXrRr9rRjOX8U96v9urRcJNUyB67v3et6EkbJgrRZX0XTPP4h8hJVlyxVoE)wJccmdSQ5vA0MIP0CeDsrUqkAvy06SFm(2alGNqHkUD0k8A3RO5tZwIPbvprhJVVLx2fIAXZKTmArE06NX0I3qPv3LoNIMNepnzXu8oRKzr5VtxW6LhTcD1IONxMpTychC)4VoiWvIZnuIZFEN)3fq)p8mShB7qmEF4SWmcwGHqx2gR(Xj4hDeHuP9P6X9yFB0UE9a4O3PJDglg8f8cHfYigh5acEgsrBOXB8WDcp9UEMwbnIwA3cwEtJRBbNrodmTr3AW9errMwd(CoB1pxXc(c4vLSaF1)icJxPONjChHKB8fmwSjo89PpHItEB8nJiAK6LN88ZXO(y99O1zyf3zDPk0NYUaQBk2gfkR1WbmSs7y3FoEBhMUyubNly1iZyf)BoftFZYWQapu8AjkmoFzwEYA0x2MHWK8ftFE2CSMvrC72bUqXCbASfC603eaVRra4tHPVK9sKmL(Ron4mAB5q4m5KmbZt2oBPRZOEmOsK0IT2Hme7yxbViVjmfrVuGnqNI(hBFfVhYFgloaZMY8dLtt7zHRNHINsEMVq(FtRS8J(0sOZ3mJoBxtfmWWNswFQsOP5HPpJY3pSP0eWtmYyIJWcS5x(3lyJLgKM8w(PhSGCI(aAMPk0XNWdUtpQSFmSylJW6UMI1HKHOye9Pj4kkoMOgIDlIvpmWMHIxmLDFBJD4tjyVFws0tH9bu)OZUhz4P3s8vOZa)HlgJroc0kZgLamNhtAqPa)XPvyHNe14eV3Ed7nhfXexRP4xXitF8vrzz4vyBdD(YK01zGdi9DzpJJCef7vQiDLxHF5OegO4OCu11W2qL(Unaajn82rCZb0kS5SO1Zi3mm19HScPRFubSMIHf)6TqS5ton(vImRg(k)O5gD24HVJTHRqBZsYoxjD)1uGisKhs3UjVKzJSAofBB6ZoOSpBP2rQZtjzzedxjIm6hHN8KF794JX8ySHRpte)KMWIQbSsvPhUBHFzYx3jMtcJymijlojbFh2SRem03WPXofndlkmfVfnffMRbieRUdZ)XGkDb8pVTrhTMyeniQNJ95yAYgInRfdp7fSnSlcrPrOPlIszIVvhUDLsf2gxAofMMSDdjisRENeeikZqY28SO5OrbQSdfMwtVCbkul4CdL(YjVCdhbVynGdjDALiCBEY0W88WzVOHGzC(Stz(hOb9THaRsswxrslNP1pmD22vFy26QIEciJk1TGivctMeLEy1Y4Dg7k55SA17ByFDwEeW3EDkWKI3McN(elLNscgZ4bAMs2WvQJY8kS2wP4JY9GbhxaDcFL49jJdt8Ay9hf(IZE5NqlJwp3F8zb136KTy5HyTz6rS5VtWk1vpGy)C3o9x)MY9ByzgykD(8X3(1b2xDtJ2iJwDKiyQOwbrjgH9h(TK08L0yy3LlUymwnOOxP)63wmUXOxrud6XdeWJExjTBBkzDs)uNpoxLlVyuBwsMvzQMx3StGmJ1KXC6cSsQNWYH0GLIq3jeon8L9anTSoIht2cPgcj5EoJyjyJttluFkOCkdBTx48sfRhayu0wvsk5uqWKkPrZrrqCVNiYPNw9pD4uardxmd9zAsWMbvinW(UnQ4fggArphfm9Gaebpz3ArekEE5A98Wv4XVqb8oEzx0y8YmKI4x2kmdPSc6Df)(TOC8BmY6KrW21oIgVsuKxSeVnlhtDXCyKBuGtCg020yLMTUEK4kHmaC)4Ha7KVbKfOXNpO4TRrztJjiMgBwkMy8pvP6xEgKDQYf4DsPPrATlcUVk4seUBtFO87FgtBWbN(S20hwKhUpNzp8ejluCDXxz7vi(9JhDB3I3sAPMyoY7bWYoH8bA3QW1H8wUinUeByUs5vPw208KPdtfiatdxkIH3aTJNgpswD63pLCkehbxKmBBwPZ9Utb0T5IAmwVmuo53z9zgvTJlGxS)IUIhh(o1bx97Kk2OTtluGnT8sWIpIZImA6n(stH8MTBpJc1nkQYCA0da8DC0Uo9e4l)X4EF)QHCk5buGunzzxwiUbflTLsp08G1cNVA4GGFuz5g7z4Lpu5KkVbd2WPzXHVjIs0RiJrCpgecrFea8H6HdN(lsYBejLFhKfwRqvzFppgmTepq3xU2o8(cRmB)6f3KToayEmlnZIP6vEnlB3YtvyFhoqHTIqjonJ3DjPxYJvklsduxQQ2m73kfwWJpOLEbEDKwQ7cVsVdED((B6Q1A3aaWAGge0vR117ApART(M26BQvFt)CE0wd0LhGArcNqVxBf93k6Vv0)NkrFTI(Bf93eI(JwJXJxd3NGXLetsbB)QrG5sFb8OtVO)athiK5IyqE)W7gmOl9hBMLpfFbsO4EE2CUeDYhm0BhOxmRSR9dhfCwtQeNVT1aENgF4ep0g2crI8z9WJJ3bvJUDeQK4u4uP)WX8XwI(Q03IDQluWf(JDJrqrV6yxkKcw5Dy7097r1DiIdx5t5C0OvZHcE4x5ByHIOD0J8PCn8faglpdBRFmof(QZaCcaxog7B1yOakRLFX(x9fkWAFk3I9UahCe6LkgoYa3E5u4uTf4eSmw(enjySuUeobQdPAj0GsILhb91CR6iugl1YHqz02NQHqLTuS8hmaKkDUhA1pOGd6k3bX1kOQDqzOQlVbDdafj5QUbyE3ssHNvZGQOAaPlSYxG9UIvVGHHisPDa4q1kOrquU4WvzCQUQtqvhot8lq5iWURHQrqJYmw5hi)Mow9bQtpnLBqJuTbkqcO8cydT5QlqdJN5YjWy1eOmAqLpa7LHQEa1LAPdGPYRFbwTaQcsnANTj83TQdqvAgx5aaCYs2ZtxVk1ZTQbqbfRo()nl(TpN(FZI7efTP6Lt54jCEuvgY5y9Y4hl6p4LjuN0sIRWKxFQYZv63xPCd6fd6Q7QLlfkJbGNqgLIkTVPIUxqhK9bxLVOZgcAHYqP4)TwMQ8X3LZz)avUeZNs1I1yDhsvdqX7ai4SSTYJ6qC4mm4YlpA4sHiPs2I4JTRWR27LVB5P5IxozdmjKLSwaw)pz7m86GJ1LdBz4pTf7)whsGx7bUvHBQfOWgvfNkvr0yRXcNMfUafWh(k575nvrLSuYxWtnyGHjvISlawmDfxv18KWDUk8)R(qmqAXx76OG5Ydqgz9E8OIz7su8C6BwkzQOcAkple0IrsEi2UrD69ec7FsQg9KCZXNW(WOAXrr0DlpBIvkWRUAPSbdv)qTYikwWR4V8suF06itXv4cOzrXV1Av1)QRJhn(bodVDzTegnulkNsGZvtogLgTFJq2BrBq05Sbkq16Jgkspo2Fiz0YxToiVCwmkXWTtZn08ERc3gl(c0Ru(KmMq6LW2Cufb0IhTEYlCe7Opot)Ht8nGYYpnSYe0vAJppYvnPVzGjYDpWD(vz9G)wL5HyyFsMMGLAua9)zfs7p0jQPktqWYAy3GmotXU6L8gLB4IGqVNSYANPDvNM(5FKy0XSy)V4qtctcZdKlHKpuJnxDHKgcbm6iMqcf4C8snHaOoQjPq7K6yNUcbGEYsCHaupJPWWb84uKmdNx59ijaEc1trcoCLxZdG2CP6qc5AOKEimQNK0FiYsFUteIa20uPeryqpKKJOFhqutKMer1gaYYCnHjadw0HN6ejbG7FsueTfHPuOzsNIKc4gmXkIt(ttkweGzJLSfjg5glTlcJBtKagr2Kp9PIru8(jnPmIswVWtpJaYEXMOgyXSIIu3Ru2im4xAjVXP95I5lOEaQExdD9)AaOrRfpRTG8bhCP9e3(M9g)o5nYzbm0pxWTrf9dUE5sEZb6tABEw7K(u3WN7lQ8)m16N7lAjP)U0dIywDM(qXlJU4Fkql7U87wBs(WWIZrlI2vExFqIdjMa(GShP2gTauolnqAXTmxATsAbS7y1uPfast2EP1VJRIW6zmhChuqYE33wonWGxnrQFjhIjH7qIpefhABOw0woMoWJtdPwYaLJyRPwKyDEAs1c4WrRDvlTr6O14QfGZXOfwlYg(lxZSwuD2zTTwlQ54twdUwa5)00QRfW666ISglQ0mCQB61Ys)VKB)1IY6ABe2hWAPDsLz8VPBj2IlTxKnhBvu8i3MSfa4gadi6WPDIQaRqpG9692DypNyQMg9uhkSM8a24Jmm4K(61s)KRs)i3IFC8)(3OF6Cl6Cat(xN8GGT74xEu5xC1jpOnCHtEywkMnmnkCYd2c9LhHiDsog2MrTrnbQTxrhLGC3Ag5UDGlqVGWm5booaYss18Il6QeGENzGExZb06qRsG7iZW9RdQF5YiB6bMOjKOeG(v7twzmMgDlZqwt0q1foucc8n35)4JYJlZC7rcLGaF3mc8TrUakRbrSEwWf7sYxb7IGxYKvqfTqqQ)YfcsvA2jbNgoWosTh8kQ8f6Xvcgyro63eywyrGP5aUfjLF7a4u3ykUNEf4tkMkl2SgTQJ1jpArhk3c5jD8LLqwo(Irf0ie2NGDsHTSuYko464B6iGnhMtFIZjfXKLKwIyYH2Kh7ex9HIWjD4LLtwo8SawABqPtgUyBshszjFM26uWT5vunPaXIKSB521ulbuz2igrtQDlYsJmoksgV5qSmPWqwEtT4YC9GWyumPdjvkISrbYtxdbOKZCmMsoAOo5XscuGKaqcAPjW5ySlPWaskGCKgDraOxrTKc9rUqhnhxYAuMEnzA4xndbJHIKFZK41fHX3CzwafoYAGu(BXbhA)nxC)4bMMyukeKYJCukDomL052FXmHZmEVZTGqYPyRoENse5BHedvgJqES6acYxdeFY6ausrCizB0yfEeX6Qyt6tWjPySSbyoO3WZJ6ffmqYovoawcmCUCOVASt9ffpVZ8waPTMhV60NlYjbboPE6wlcVlymCP895bU9AOwUi54KGYblzS1IIGdR4(B6Q73WuuNsIBHSResjrbAE66gakticwdPA7OThTP7nafGHR5aWhas5B6pvcVUtlCtsa(iemzZWljyLSBQIozclDSiXT00a8ORbuqgCPuZ112aeN23nWf7ROZuARdGxNcTO(L2TChKstU6EvJGSMOvdOPxdOPzdOWw5sLdRu6WQwmPYcq3hEhKk5gITIZlkxyiKw8HuKdJCc59yYd85hHW5qguiVEaKx684cfxJ6c43bAPRDXaW2yW(1hd8VrgOVtgCOTYakHekom6w1bvkDS2ZiYGkR7LdXCSLgCq90Gpbn1GdMmdM)fcMqxeKnLGBryF541se6Qsb8cpT4XRyqJT5fMdU2Mx4yvvIuN0MiZ2ez2MiZ2ezwmlAtKP1u5PfxZBtKzBImBtKP8W3MitjSVnrMTjYSnrM5TjYegVBtKzBImlHXVSjYumdyMLvKtMDlc3gRnAfGQr53Ii38lyhNBoFBOBBbiTLF5lP)vX74WhbZjpSbB1hDE)Ay8wej2tWF12oPFPipvFQib)wr2(XIeK8CdJ88NykGNFViD8dgPHVyKn9NmYUqJ34H72j84eSYW6Ozmt7UXYBAC5l4mYGeeOvaZ9uXsMwh(CoD1pzXYaz25y2)tVc9U1(NJhXExxPrrWxlrF2R4XF877sem2sCRfdsVnsOwG4AK7Diy2htmrmC(wcSTTW5Bd9CSxnrWelr42Py87wVBsxq(HWklbgYLa)3WnZjA8QCii3oGawd9UEURAJPDihbUen8ZhQkK5apcDUpCGQCBUpbY1eNCptNWraJSi93LCm4gwDqjzae9HcopuIho0UgffOqbEhoBehVMiffHGcvpqkk2)EkLp5OaeBHIsOP8w0tKJckXfGWe6yvQMmdTqIoOwA5u0WnafCoT7Ml419kfhGq2ISzRP9Om6nwBjvuO5vKXAOouffWqXktxcs2ZgwffoUfRlpBqvCwsZSAqBQuGKPjNkffCWXCPaoNHKRzk)khV(BffLSKUIcsG)T1Q6jN2mX8DlG172BfVKatPNXTSm4tFVYCCyHtNauoB(SK0giwkwAimqIBKm5yELWq2DGeSQl7ohsZOQrtVdiTgsATskFA6PYELZhWPbuINPrCsNXdo3OTAWoTfftH0DSqOnjzgL9UXBD4DElkUdP(jnAdecFWnRjRnIlF6exNWwXfLGbwsyoTyBN2Ds6mx0zc4bdk8Lda)TS2VVnQlkgd5qbagFqnQl9fII3kUlxx8UIa1RiUdNMyAsIyZuLskaIecwJwmzHI4UntbOiGHQAqOfIvvlsHRWaQWiLs1imrUb7tP8bnrH0PR1NLoIoTqSdQGfs4GduIUCEY0CimKABdcw8jj4cjs8(Xdbe0CtdwmQGtvB(5vmP0vIZcDLUDQsM49MTzq4At5HRcAWcuZ4INhREUKyT2JWWVAjWV9imuEeg(8Ecgo6ctHSGxC1AV1BunNUF8OB7w8AsCceZSEpWGWzipn3TBv46qH6yvCK5RL163TS7p0y0W9WOEFOHaCBChVf4nFCh0f8kWizf5F)uWIb5PGQR4(qv0TvLAqz9PSKzxi2S36WRY(lkhsC470WoOFBzXU2silbhytNpJ2TwwXRmFna92rY1CFO5qHtOBpJkrmlx08zgkaYfDmrPtpbU5FmU33VAiNTfa6SQMWSllgvNIv)srs6EYA9bxnCqagQcpeVmNQWbiyOIn0AwC4Bsyf9sYif)ZbHt0NbaLO(5XP2KKqvr653bz01lT(jj)2BCwBAT9pcmJDYoY7fVDh(GmOql(6LjPaYH8dt2Qzgv1qHuZ53T8uA33HJM9FUfxtw(adZaEBRS7EES(zrsJ6cyLyc)w)is18cXaeO2rIhOlmhaH2cXaC)nD1AbFaeGnqic6Q1NbIshFMWoyIwRN3)Y53zRN3F6lEGaDP3Pw6Wr33CbJ5hbEeAA1t0QNOvpXNvPKT6jA1t0O6jGo1lrRX44RYDOpFeqv1Y7Qgkw8ikWjkni6pWelYQrryzVF4Ddg0L(JnZYNIVajcKsnVxU4tE7a9YLLdlXWrbNJu5Ltl4eN93UgLQQPBEVkfpUqwd(J8XmYHtw0iWdhQIvdMX1UDeCa2dmW2zbL(w0xGDKEuXd(Ji2EEc9Yj9qwdnAVA8XWOBT015AMF5w7yExCvuOLQC5cSIcTufmNWkk0sTnEAROqlL34jSIcTuBJNPkk0sDoEMQOqVALFN6Q0R6Pjy6LDTpwAYcftDO0h3hgqvMn3Na5(vNJNOck0RsC0Z9eNGckeYO3JAbfczi4zRGcbn27ISGcHoYehZcke6Ci0WfuiyHlE8lOqlYMB4ckek3J6hAPX4qkOqVoCU0HOYvwVkOWBT49cBCokfuiKmTJEbfc26upFfuOTVrqmy14fuOnFxpAfuOTkzKbVgSGcVbsI1VSfuOLVDnN5ckesW6NZckesA9NSckekfCQr(RgTQuWDslOqWpJoovJzS)8CvqHGnhK2ckupbdYSF3wSTt7oDfuiKlbxUfuONLazZxqH3AR3d0HttjvBAHckhsAIzTxB0yXKTViC9AoWpNAgmp0PH5hRtf7F2Kh(3rVefh9XJ9(RjP4nNPb0Bp5)p]]
+    20261125005,
+    [[Hekili:S3txZPoYY9BHxiOYNGbBJp(UL5uvsTvsTPsUvQ4BE1CKbHrxlqejHD8wu(3(D(ssZx98Hqa27Q9H9GfA6UNE6P7E6E6Mhh)4F7Xhwewe94F9QrxD74Xxnz0Ojp(qX7BJE8HTHZFj8z0h2eUg9))3IYct(4NdEl9T8415dNNUoa)sVNKgUadON2fNu8BBE8jTWmFB08hF4x)F(F)TF9xwIb1JpSkEXIi67hLpxpg(Lp(zXQOp(j7zxUmnl61OSp(5IOLH7sk(4N)l)3)NF8t0J)4NLJFx8LySLF5ISDXlUKGT5HfxgUnj)YWfHBlIFnAi6Vg(3Zt3e8nekYc3KNGi6fOpNIrzC(h)mCXI0n)tOp8s075d)4N)Ayr4VOHug8F9B)neqwvuSn)xU8YNJlwT7jm1FP0RgGGjIIdFA0YrJIUz587Ugb2FB920SceA(33fMTioCJelanGCgx4POqe(sIZlYrimAtrugMKFBvCc(B3TC5q8RmdHV1d3TDiA9jlDj6lF8HW5fXPBYNopmjzg9pMHb03WRUtXJ6BXlNQaIp(pyd8IPx(AywC4tjr0H86STHXlMHx1xeHE)4I8ziICw0MOSNFF2200KVTDxw00XF71WKDrth0BWGb9OGBiA9GIIx2K(2M9e8w9SDBd6xeMGMFd3IMGHfPzVpBrC(84TjXBIggTbtgl6pyq1BfVomz2YDzVx9Liw3tPiYiEtbIpUlld9I)y6nb7h0Z7rnjiWmYQMxzXBztPfrKjf(bzrRdJ3K)JPxhyb9yoe7RJxJw7EnAXS8viEq1B0Z44TmyxyQS3jFv8YI4npJ4fVfLv9TK5u8I0KzPlNH2zLopU4DYc2GI41rxSm(5vfZyt4G7NE7Oaxzoxryo)5D(Fta5)qZWb0TdjO9HZdZXubcd9PBSgMKIE1jywL23Aa3R99j7hmaqIEVoXzKAWxqlewyJiAKdjOziHSHG30X7fE79dmTcAKS0UfS8lnUUfCgLmq8gDRb3JvfzAn4R5Sv)CfP4lG3us4)3UWI45e19y7oeP0WIPJ6tSztE(meeqJfnzmAvcz7(1OK2asvp)aHtPDSdemlrCUFpgT2Lf9mEhui(l(gALABs47ZEkkj9TPxnHGKI0NFojAiYNOOn5iNBY7tC6zg9br9Zq(Xr2(nEeDLtlShUaPAQnOQjMPk(rodjdMNJCt4qPRvrHjfRYls3e9TD5riXYLZEE(cK3hI021JCHJ5c2OBkitFti8MwbHpfM9s(lXYC6BDc4uEBjiCMDINGfP7MVY1z0akwXwJqEeIbXE6tqlYBdZIipkWgQZI(77EfPNXFbloetNY8GYPP98WnZrktWVZ3W)VzvEht3rlsoF3m5SBdr5jLEkf9jgQNveM9CKvna6PMk1lNwIXKeHfCZV83iCJ0gKL(wXPhTGsI(GAQ7Ce4JLb3RNuAMalY7rK99zi7S5rekI82yAnkjbBQM(vypdPOnpkz5m63Bd2HpLIoH4kSTC05K1dD63Hbp5Rehczg4pEruCKJiTY1AjeZDQsnKuG)00AKYtSRo4t4(g6eVectCTMqFmitE91X55OvyBGUyvA2MCqasgl9DCuIGTxPI1v(e(LJsCeLexev9mKFMzVBdbqAdVEc3CiAnYL)OnZXFzyM7GSIORFvbQMqHS)6TqKlMobFbpYiVzvSg4GofEOVXg4ywBwH35kz7VMdGDYllB32IsHn8Q5mK)7p7GX(8vAHuVNsZZXo3Jvzmmgn5X)T3Whr5jiN7FgR(jlLg5hyJQsVCF2zxLFUtcNybXeqwwsAk6BOZUs0qgHtWolAosvygAlAwuyHgKqDf)hJQSfW)(2GE0gSt0GKEb6CzZs3I9zLbE6aSb2LHrzXrZwgNrvFRcU9LAf2Lu6ofINSBloqBRFhhOmIWq6UI84frtcufhyUwtEmJeQvCULWF50xULJHZwd4isNwjc3vKolSOiC(lAyygNp7vM)bAiFBeW600nvS0YzA9ltMT91hkY(QKNaXOYDzmPsCs1OmazwgTZyFPmNvVEFdDwNvhb6DqpgLWgnbpdXEkpdhWQPJ0mLSrRKGjWBWAxLHpI0dcDCb9k8v8PpPsyIpdz)GfVc6GFkAv8Mf(tpljXFiDhsFiYAMEcBX7yQsD1di(y3Sx)ZVQC)gsNbItxSy613oY(QBw8wzYQNedtL0ymLKi05HFlnRyfjo)95IDivudkcF6F(1m4Me9AeXHEeGaE1Bk5D7YWRt6N68XcSC5frAZtZTQt186MDgKzQgdZzlrgPEcPhsdvkIDNi4SWxAazAzDebt6cPggj(7CMWsroNMXmFkyCkh5Tx4IsdRhaAuSwvYk5mqq1kPXYblq33Jv5mqR9NECgGiHuNs(ulji3GyAdSVBJOEHsHwSZrqZaieHPt6xTmokzr5A9IW1i4ZmaVNx3fjo4uhPWNlBnsGu2a9E2F)wCbAetSoze8DTNOZRyd5SL4D5fiUBencJmAIZH22MQ0S11JK7jKLK7NogyN8vGIaT(8jkz3MO8zjyctJplSjg)BvA(LxazVQEb(dP02eT2fb3xfCjlaDPyvE8NXuRCWPySlfRSCv(1mdRNiDHIRl(QBVIWVF6KR7ZgL0sn2DK3dG1DcDgO9Rd3eY75IeCX(WCHYqjE20(SPdZeiGqdxA0H3aTNNhpr2C6DNsjf8bbxMoFxE5H7DNdOBZfXzSb5rf4)oFi1PQ9Cb8I(jYkEs47Kd4QFNeBJ2ETyb21YpdE8HpSiLNELV8uOtZ2FGrL6gvvz(QgeaC2Xj77nqqU8hthC3fJ5mYdyaPAYsFSqCdylTLAp08I1kNVy8OGFu55g9D41puDivEhgSrtZtcFtKKiprMI4EnicI8ka0d5eoC2VWjVrKvEhOiSwLQYN98yi0IpbAtLA7XFwyLz7TF6MS1baZJzPzrm1tLxlY2V8Mxo0HlDzNku8HMr7UKSl5XkLfTbQlvvBM9BLcP4XhYsVcVEsl19HxP3dVoF)v916TBaaAnWdc6R1769Dx)3UZM2D2uRNn9R51)nqxEaQvjCcp9ANQ)ov)DQ()sP6Rt1FNQ)2q1F8geD8AytcgxAcofSdRGa9i9m8rMEX)oIpGzZSyqE)4BgnQp5p2oVyg6b4qX988fCj6KpyOxpsVAw5J2pEsWznPsCNTTgX71CgoXlTHTqKiFxp846DqSOBNGkzoSdv6pEmFTLidLmk6TUqHw4V2ngrf5PtLlbg4cfrCGxOuYlEmYk6XZXnNlj0EmmxkweAjSyRcg8OcwAevmXiv0OkwrHo8RevSWr0c9yFkjfFrGXsqX26hD3aFfOaobGl5KMwXjkOYAjM08kmrZwh)lPKgxehoI9QTZhxKBVKrCQ(jCcxglrK2enwkjeNq1HuriAijXsaHmm3QaefyPwYhkqRjv8HQyPyjEyajv(vCOv4HcnORKoexRGQOdvdYvLWHoaqisUk4aw2TKv4zfByWmVUs0GowXk0WSNcs(Y4qfzy0dcrhW1vbgQ2WPQFbk5c63AOIl0ymJwIfYJ0XkSqD6PPKkALkQqbtaLqbf0MRGcncEMlzcJvmHc0Gkrc6GHQqc1LAPlzQYW)ewreQksnEwct0VBvaHQ2mUsEa42Z0WkiqL75wfpOqIvL4q7sFnPchmRUtu1M6j5kHNWDUvbKlq2LrVw8VZRtOoXS4J7Jh(mL3R8STL6nipmOVUNwUuOadGtczulQ0(Mk(oJpihNbv5IEBXKvuEug6FR1PkFfL5cOrGQuI5BIlBnw3fX1aw8oijoRBR86CKeohHUIYR)UuyGQ0Ti(A7zNQ9E5VT8gRXRNSfMeYAwzO1)BVpLUo4455Wwg(BusZ36GdU8aWTkCtTQ5g(lWZmQ2m)NAQZTYfx(PefxuvlyrzyDTvIgvelweBD4)F9TTa3V22Z(mYrXWz5HlJcuaqoErB6egNAvuYcYilvVWk1NYlTbPQPKbXUTQtVNIqhYitJXoU54tOdIO62alm0LxIYkRWvpTCdotpmbp1AHjqEEksGyUg(3EirvFxqlD6GZsTgS1es84jRW5zTlRZWKHALfvICUclYO6MMbH83I3grMZCJG8mIWUgU7aivTYpToE0Co(jjYTxZxOzCRd3LioaYtkFtQqb5rijIQazYE16POWTbK86uZaojDaQs2B5CheZvjjm5kT1NN4QM0xnYe7Ea4E)Qe0W)vLPmz8q82ty9gmS)pRWA)HoLnvjTc((Tr)cmCMHoXw6BePHpfm6gkkRDM2xDA63XCedYLf34fbnoAhS8m008KudIlACgteGHWreAeeAswueaGlzY4iNpfVPNJEMveOOJyowuWZXlBlIYDhZ8UODsDSZaJaspz5IrAR4zlRmoqhNI8Z48kVh51WtSEkYzJRYAEG02l7nsexlLhhbOEsYOJOi95o3ocutBLLhr3joG89OFhqCBK5ha3vAwoGG99rkEOENniqFIia2J8cj6lc1Oq7KHijdWTyUIeN8NMSgjGZwl)rscYTwMKeGBBKtjrXKV8zxsu9(jnptIAw)KNXjbI9tBUNGvZkQsTrzHsa4F2YhLt7ZftbsnaQgRHFqlQrGgRw8I2cBOAPotUaqBPEu(qqzLwbI8MIBfa6s4boXDWCVPVtEVmxGc9lCg24I(HxVcVr7H6tANox7K(u3ZZhk6i1zQ7NlPkW)WJasywdmXHsxgdxYPGSSh(e36u4hgvCo6s6Uk76drCiXxXhI9i150fDN4C0d1f3Y8zRBQlqDhR(QUO7xTyhwx)oUkgRNXVXDubP7TPDDDd(sknihIVJ7ysWhtYymgVh3bmZg4XPNSl5GYrS7SlYSop9PDbA4O1X2L2iD06D7c45y0f3ffd)dx)Cx0C2zTZUlA54lwpExG4)Y0T3fO66sdUMkQSmCQ777YA))m3b4f1111l4pG1s7SkZ0FB3v4fxA)u2F4vjXJCNIxaHBbCGOhN1jIbmMDa7T8a3X9cSRAAStDO46XhqoFKJqN0pY1KFzMj)wyJED0)(xj)cBZAEgp(Vw(RWm6F5IY8JpmpdjQLfhI(eHY1f11hlq4caACHx2DGDnaWQMPUdQBaavPTl3H0ejijCwhedysnW1gEvEmzluHEeszmPDRzsBsBqAnkAYyI77MjURh5c2zmMhFGBhdweUAEXfnAmsVZmsVP9qADOOX49VygV3oItyMfjypOenHqgJ0XJSpBLjzs4anJAnHpwx8JjuGSYedsG8XfZL5U9yhtOazfqsuW3N4cUSg3vEfivH7fTwUJfVxEDuyQswt25IQQu3HjkzDIAiQgiUOkAONwXuGfDPFxqCHg1Q2d5w0w(9dqwDRPyf7vWIjuQSQZAYQo(W8KfbuUfMyc8L1sw5cGqKunIHMeGycUL1uwjbxhtyhrS5qd7tSHjoYiRmTKWKdhmp1jU6dfvyc4HC7IgKxBaLmz4IhmbKq(EPBRdtAZRibtqIfnzxpXIBAuikgfycGH8qtluKC41H4)sWHS(gtEbsqHXi)sajrlISJbYtxdb1LZLmQzos4H5PsmwG0aGd0Rj05y8Ej4aslGC0zDrbOxr6LG9)Il8rZXYTMKjptIhE9iZyWy4B53mj(CrCm2LzbuiCRrs5FlcCO93CXkLhzAIRRqGDpYr215q7sMBxBMXzMU37wGB5mSvhJyzMmKAOY4QYtvhqGrBHy6whuxcHdPBJeF1JivxfpxFcOlHILDaZb7gEEvdjObs3PYfauqGZLlDyRDRdj05DM3ciT18416l4I2uqGtMNU2IYBMGHlDedEKBVJgixWQCAq5WLe1EJfdbhw)YOTByggMI6msCdKFLqgjyK5PRbBOmHWunKPTJ2E0tq72qPFBGweW1bnoiP45mu0nlLyu1(r135yNvWsx4WJ2WbJf6s)zqxF4qAAFJlUirMPKEXbVzbspRqwGhYUhxzKRrxuB17o2dTnWBXJ9U1(oAy)7GWQGm42ssCCNrYfzfj5ciZ0WeNqMGE8b(mgHfQWaf6mnaAdDgUqrTOUvzObS1DfK9Aw0aBlinRVG4FJbrFNb5qBniy21eOyPOBTf0Wsd2r5Wgkj1ttKTFYryo2IqoOEeYxGMeYbZMbZJcMsilcYUdWTi0ujETmH(QCaVOtlNAvmWV2ojLdhpTGD4OQei)yxcC7sGRFKwxcC7sGBxcC5vG0LaxBPWulTw0La3Ue42LaxfhL6sGRdo7jf)(Ue4cGUUe4wXd7sGBxcCRmS1La3wJQ7sG7PjbUIz(ZSUIc8SBz4UeTr4b0mk)we5Mod9Q)ZD4gIwBawB5puWKpXgJd)Mb)4dBrE9rM3VgMSlchVo4FKlpP)W6EQ(L1f8Nw3UFBDbzpxrzp)jMd45pVUo(7RRHFGDB7FHD7dbVPJ3Vx41XuLH1rZuM2DJLFPXLVGZOasqGwfm3tulzAD4R50v)KfPdK6NduSkasxHNT5lmkGCbeihgnadq(QP1ZNgaFipR0Do3gaElHY3RuGyTFx5roqGOxlzbWR8IC87tAyk2s(detwInwOwK4AguCjPchtsrmVk2sWGTeRyJ(CS7QriflzAWPST4w7wtx6wajllbOZLuW0YnGncz5qYgCGaSMce9cy16)CjznoKvIZhPkKbhpsHHpIGQIBUpbk0KVcptRZrGISybWLC94gvDqj7bK8HsscucGo0o9g5S9qjaboRqhVg)gHGGszcqQIAEFGZNCfbsTqXgXu(JgikrbLajqCc5CSAsL0IjcqT0M4i4bYdzT7MzY6ELQjqmBr3S10pvgfnRTroc28kcLTuxLJGyOywQ1bEci8UjZrWJBXC0q6RmBeJ51G2uAbPttoLwk0GJ50cAoFnKEnt55641t6iKKL0gXyb(3k6QNCAZi2vwqRXuIzgFMttMBz7XNEvxnM1N7minwq5o7RsYZafPMyHf3kzuZ8kHHSSbPyvxw2oKgixRMMnqEnK2ALuV12tLgL7nWPb0faGe5pDop4CZXRf7oEekfY2XsHwBMzs27ML3H3T8W0(nqMFYI3crWhCdwZAZZZNUN3jS95ryyGLKOtl225DMNoTu30JmtaVGwHVCa0VL1(M2C9ium0bkaO4dQ56PVuP82WD56I3vKQEdX94SetswhDMQuomGSqOy9t1fks72CfGqagQihH2(xv1YfUgHiMtk11ogwLBqtQdvOjQxjDON4HwW(bXeHeUahLKl3jzApcgYSTbfl(CzeesO79thdOO5QwSyObNQ2oNhBsPRe7f6KK7v1mXFA22HGRDL3qv43axa8A1ZLeC2Dvs(J2fPO7QKuEvs(6Etso2ktblhzXvRgB3OAoD)0jx3NnmjjbSBwVhyq5m0jn3VFD4MqHAWweY81HD9yl7(iTgpSbo17dpeqAJ7AgbV5J7chHwbMiBi)UtHig0jfupkUpCfDBvjouwFBxP(fIC7To8Q0prKqscFNe2b9Blz7AlXSeEGDD(m63Az1AtoRXeWt7iD0CF45qHtO)aJgrmRx08D3ka6i6iMsVbcsZ)y6G7UymNVfa2SQMW0hlgvh2QFPkjDVzT9GlgpkaHvHxIxNtv4aeCuXgznpj8njQI8izII)9GOjY7aqsKZ5Xz2eNqvr(5DGc661w)K052BDrBAFPamJDYhK3lz7E8bzqHxC7Ntwb0bYpmDRMfuvdfsTKF)YBl)qhUI8)5wDnE5dmmdOTTYh3ZJ1plAAuxaRut436hwRMxegGc1EsYa9HLaW8wibG7VQVwp4dGqSbgrqFTNzaB0XNjSdUO1DY7)WDUZUtE)LVioc0LENATdh9ZMl6mp4vOPZorNDIo7eFv1s2zNOZorRANa6wVeVbrJVk3Dj9rbvv7AScu04rWOjcpi(3rml8QblSS3p(MrJ6t(JTZlMHEaocKsnpAU4tE9i96LLdlX4jbNJu5HzWGn7u1ZBxtsv1wp)PkfVUqwd(J81mYHBw0TGxoufVgmtRLSu2bG9GcSDxqjJIma6v6rLo4VIyn8g6vGBaYgAsK10JbOBTfcW1iklGBMaTyLDcE)4BTk70RUyudGVpDWOgaElfu0NUk70sLg9jSYoTujsNWk70snMEIlStlLz6PSWoTuJPNRc70s9MEUkStVATLN6QLSwTBXN9AqTsdEHBLGAtebvf3CFcu4x9MEIkStVk1up3uCckStOdFCmlStWQj9SvyNGoD)PSWoHU6khZc7eSTQ3Yf2j4nG4OxyNw0n3Yf2PFnGfjyCif2PxxsAciQcPGxf253TCkskCokf2jKoTJDHDcwrPNXc702VvyuC16f2PTyiC0kStBvukfFTzHDcPX6pSf2PLFaSoZf2jKI1VMf2jK26Vyf2juQqvJaBnzvzG7KwyNG)GB5uT(r)yDHD(pgDDJDIZnL6OBStShGHZDclXfzt4Wo63g7exDjyW7g7Ke3kQ0Gn2jHodiuePAkbxBk0kOiIjVc)1EvawAXeHUwj1G6z9PaUzWiB7GNUfG1PcS)zXfShPMDM5KzDjOHB5xeWmNfPjyPJda]]
 )
 spec:RegisterPack(
     "Balance (wowsims.com)",
-    20261118000,
-    [[Hekili:1svxRTnpu4Fl9MUywWF0M13sOPWkLXA5DLXC3Tkww(4yTilzKKBwHI)TVJCsCD(WRmg7MGYrNNpospYKiYJK4mQfipCw4zxeffDzyyij2(CfqIROSL0f4cjTe)9gQGkzqtYOvQvgEPXNPk9CT9SqrZCuLwZf27KK0JYQPcyK4B)23V72PPRjJexWZYG1iadBivM2KylWIBQfKR0WtGUjjdYP1cBtYh)6)3KGLBsELHAEGtttqMUMNfSrZaALalTgOp(h)FyusVXOeAQ0iqJNHRvoj5MMeAwMs(oCXs4zJFtYTulD6rSYOVC3JijfwBLzAqWcUTOo15(G9A1d5eDmnnmpmeMKZU8CF8yuRY5c8eHYSCL04xPbeCk1oRuPKl5Y5i(YX88zNKwNN73VQFDvZ9ha89ZcwPP2chg3MpbZbjuYbZvt6A)pKDKtqulbZCbFrHDCTbMRYZNVGLnlQFxCPe0pHhMoolPsQFfZoxOUAs4P5oOZ1qjLlnxFEyFCoHZ5AyCUIvBMDwRLYGot52BpdHKai3MvuCcocS(7Vh0IATMZOs4WZORNnPFNglv3ZxroaJgDILkaP1hycELb8bjnvazV0Q72I1vENoA0X780D6efHT86iVxozTW(Bv1h(jWQTC5cpV(UQ9(T5EsmMRmyT9EYj4gRP9r(64oU8H2h9BuNCZ28gjU)nojMP5wqZPK4JMhiwuP9iQxuWPshX9ZloCNpGb6sm9v)nsoo(MShF9S(H5MDNxxrsC7nQBEqY(WBs2EPP(()1n2L0lgyI7sF915GuOJH)BqBnCg8Voe(BtHVofB3TBMJCo(YbM52elXfeI7(q1)0y5Ucp4b9vtAnfAlATTqPjXFgwYfC8d7FAZ3TB3M8Rd]]
+    20261125001,
+    [[Hekili:TBvZUTnpqWNfFX1g1q)44KMVG4a0GGIMGVguuLELYuuRSynfLkjLtdqGE27szBf5FuBtkAp1lj0l3DMHl3H2eFYDKGyQbi3o2B8j((Jp2ZZNeyEOaibfu2c6CCHKMH)9sQGkzq1Sb3NFVMNPDy5zdTP9GiNgBHkQKlmxljrhevDbWibx9PpF9vNfTcmsqkpogwvbOzDXYzvZmPyW1XCtYvWsqvnlgsOLct1S3(X)VAggUA2tiuYDTCQDJvL8y31C6sleyOvf6GFW5l6C5WrifkQulqHhJRZTuY1vZOXX5YxHlwapODQMDf1qp7aszWhU(oeKuJPqFMR7CUjTmYQE3DsDiIjQyAKxINhmjHD6royBuLNWfyhHYm8CP2PqbyXruZu6xlPgoleRpBepz66WE9Rpx1Hd5sdinv3Sx1VEQlEUwcIxC5mQ5fxBwEUCbx2uFVOYKeN2rDkl6pO3k4sZfXC58Wvc(X94y4Hj5Ef1KAr3U5sieKqgh0NpPj9xsl8f14E(TR)GnjeAqukbDOGpp1mQudH5jjHZzXt9BNfxkb1sCW3YEgvsDkyMqr(5t86NylnubzuUuFXrE7k8eUcgLKZk1thxl(yOr(29qPVnvAaXwFpfpRhOS27VtPPLkfNrLW(x1xmDs7m1gQQLU8TfmyqpdvG9hhGj4fAWbK0ibe)ynVBcwwmS)GbhoZ(BLjscBXf(dFS3kID2WQd8nGvAW7OHBDxupMwDdjaFdqJX255rbxB01piV6PjC5T1pqVMDYLBEBa)FRXzsatXnGItXvDoVrmiDDGwRX8FDWoQdW2m()RJ0KoqQTbOnApl7Xb8hwopEhoBznSD9gn02)yR7Ko0AJdQTq)jojlEVzh8ADk33hTDRXgKeupHBVArWo9Nc2oUR26)Pn2g0)RJtCJBSnp75kTi471PU62u(B7k)H2YNogB2T5q7xl5UmE1EyIDuiO5BG(Nr9VOrD7lIoh9oFs9LeEnrlnP5ksW7HfCbh)zAVB9VcREBY3p]]
 )
 spec:RegisterPack(
     "Guardian (wowsims.com)",
-    20261125000,
-    [[Hekili:T31EVnoos(pl(F8zJUhhNhoDVdIBGBXGz35WDlwSzU)1okw0XABzldj5KndmYN9TiPEW3pKLTt2wZa0jrpQ6xvSyrYIfln7Yz)(S7ddYrZ(Bxn(QBV8YRMmE84z3N)6w0S73gS47bpb)YMG1W)(x2fKggfS5Thg8sYlzrRZgTiz9q8Z9ACsqiMwpUlko)32m7rLKnBlAXS7)L)X))V9l)8tfuB29RIcdr0xbLTqlF(53EiFf6ThkU2fltsrpJsF7Hq0YGDX5V9W)9F))9ThGl)2dmKyx0fy2MDry6UOWlwIsdIFefKErW24Slccd2Mh9mAe8xJ(NzjBg(zGnPbBYIb4hc)EcMTrzV9qqyyYM)l4x(o61SrV9WVeKh8ZkGZG)VF73bISkpFB2pFXfpfLVA3Jyj4cHhDiqta1bpoE54XOBwU4RxJjlAjAtgajGtjlb4c)8phK(9SVhbItWgatPqJYpTC3Mqma)1u0M)ic)B)d0tOnG4LhLSHs64KxaGGcIZxbu(3wVnjnhi3VI1bcAx4fYkuWliVAuwEgigOn5Oum1FzvumCZh3TC5i4jMdcX6r72ocA(ttwc3B29blWSoB6IG4450)yoMoFgB)axn)ZrlNksG3(FkETpn9ILfYY8ugr5ZHrzBJdED(JiqEME1emvgKN80tXOrHvAR(Kw250lG6J1rJIt(20lh3NWsL0EuyYlBg2V3HcQjMbf7BoFBkklBxk6aHfTznlpzd6Z7YqZbBL5pTiC6Lcq76XUOVCGzrBEA(2eIWBIF30g87XcdEbAFRt0MQyljHR6sS4LNSBXkxLNbuMUiid6HmhtI90RanWBdsrKln0cNtr)ZDpJ20aBkg(sfyws5IqViyZcu8C8J8z8)mN0lf7AK80cO5lMrZUnzRIwMtHtPrFworPgK(ekVrGP8HpTyXK1GfwZ203ewdobstEj)KZvTgH(W5buhAy6Jn)2RgjnYwnfTo5z08f7sZqearEymurXXbpgxCl4TkawgkE5C69Tq6GhtGXOwbU2IGH)vtC69WuNCl(xHGFVzlGxKJ8Cqp6RjY3VVbRL1HOHEdP1GhtWT(CysaZFjkoKGl(2zc8kim5XxhLLbTUwOC(QK0nzAPh5vPpJBgdfDsQ0BLxHTPOKfO4OCu11Iau)QTbF04c86jmsaAncSN3SaFZGuNPyfKRUepMj4R4VEjytEMlKVYnzf1REqgItjhChBZ3Ho8YkC)vHr6Rf)i80ct3TnV0kd3qohM38t2hApBLsc17XKSS(9O(jgfbso(V9L8aUJJrBEc7Yjnji18yOcpC)qeL2cx3fRsSfySw9vCscChQSvYfYB4cPtrlaVFPqhZuemjAzEatG)XG8VnUY5p7ZBH4On4PkRf45bBaNcBXtnTG60xWMruakncnFzuk1FTm12x6kyxC5eNafYUTa9rRHUOf2bj7YZIcrtgkBjumbAYLlGqTVYTeLlJlYTmA7Igagq6sZqWU8K5b55WQIvOUmko7Le)HkqVn)ZjjBQuOLYzTFeIS2V86v0GEzz0XHfzDBHkQKNuhjdGrHH(e7lT3Sn72xGLZS6ia3b9kasXBt4Zi8mINNhbZBCScjYMBjox08UJ7j4XUEwg7YYdI2aREdFDlCieMdd8sr)bNRPbzOC88JYgTgOeMAZLEWcvqL7lYfh2x1vlB3KOHlg4w88l0JSVGwQWjlEIARrBumWq)EBXOeLHsHFw74FGGYCFDJ)qBwyO4DBqzZJJEALkhJf2hSpfVfMsM2FGOSii67l(7xIYxfTzIvqQZfBj(IdwaCphvGn4bGP0GThYUB64AFA8p2(IqCCN4DxKKLdqAaV76wwMKCWxGcwFQuPrHZ2AHRcMu)QGvrzV1wgVY9(wMSyx20Ro0EHd6b)V2EDms6qjBo4D1nsbmZ1G5zblrdzmm7lEp)vsw0sL2qCkhkxPU)W9G0pArLjyLyJnLxh8V6pOuuXXuEFpjbrKazyRHPtke(vO4qYBw6ZBxkEns9lOt4RG(wIeW4Pw95dRzmv1G5mI8JWclTnhkIlq45HvAW62H5YLEDgOXCFyFMHijOIDUlLxISS6EIThsMmaX81WqEklkgb9ez8WSMfxA4DfvjW6AtlMcoxZCgSuXGq3cvcRBVwHGzVeTfr0pMuxvTTkuFdy6yPBOcXRclSfRhdhYoHzbJ19kUHI3BDWUy(xGCLYNKAatUemTPQOYx8O1spzuRpXsb6WyU26Y5nx3qkNJEfyzrWddhwRujxn2uJHEFklssIXDz4UvHd4VD5iqkm4pQG7)KKIVQjI9LkBsm4fJEdmDMdRHo5fITY7r9EdT7vk49vj1hWAjPtyc)wH2xnKfo9CqAeg70nH7zWpru4C820gIW(yYZiX7dtPNED(wWw6ZB3LIaG8Cq8oeSYTb16k(vPTxKT4fThdnVGQdfgKNK(koWJlI2gdZ2zeAdrfITgkFkIcE5U0xRUjELLj4WyUjpB0IDPPWd(TP3a2W98(TMqhiu)RvjxPrBlePIXIWxOSl00RhAH9ynuXTJwVnfmYdNNTc0bvprpJVVLx2fLAXZq24d6g19ckT6UezkkmjghExWckzru(RKgSb41l)jYqnZle4H3n92XdDv5Cfr58JR8FZqY)bsyrKxJHbZWrIaqbEepAhlId(BWUI7P8PgW8yFzY(bd0yrVxL5m4c67qdHf1iGrgMasib26O30l3Z907hyQf0iSu2fS8MgB3gEgTmaDJQ2G7WUIm1g8XuAvlRGJVHvdLGD0p1LCHGMGg22JEpYpdoi8jFsiJwnFmeHHFjGHf9HkI7vcx4j9nMGf2A7ORjLn)k0bF9jurtZNcroznbkAE(tiYQMKWenohfCJ5Lt(64YB7jeHt5hGlSYycq0ICXscp4eNoK8Dqgr8j4a5TCl)gejLCcnirSMKpdsgK8jWGbE0A5VGieuLWc8Tt6YxbrkvNGcQEFcezYpbTgTL6bpZhbjNZgtab6RYN)b6PqjK8kFdKD(KZtTQf9Pk)cKgVM6VvZ2krVRH8jqEOlAcei(IoM)asYMIegOvYxargPjbbOu2C(biBWzoHamMpaIet3UtrFxD7)VuJSW(bj92Vd3VFjpNgdkJj472(7l5)Izd9B3nixw352(5lIWQnWVDHxt2)ErOrwBeJh769hJ0YJ3rO6LWh8mE5gCH3R4AIr27r0QOnH2z)sYQNs2LvTRps4GUTuYnfAwC)n7vF9Rk7AaDEb9yE40RVDSCtvA0wbu0tqDiJKcrogbR35LK08vKK8VptCoOMj6IgH6RFDbDJrpJiZBeiKMh9MsvvX(6OuszJBrzJhanCWO9QvXU(WmiXKC(sWt)J4nKsgu8mxj(sd(U)OYsReqsAZKc1e(EAXH8(xvYBMTVYhQkogqPEX7ucqPx9EmU1jHUJIwP9GqwwXD0jaYYGfeQAyVnk3d7LrO4WQ9Gmynq(IrX2Z6ezO)7pVPjEjfLFP8jGCJciWKTNhkiK7u5XocWfA17MEPM(yx1EjcI08BmMIqfYHQmeIT1EVCpw20Z9qXOkvS76yxcmy3UUi((NXOTEW76q3UUuS9fFm30LJKNo(2bpDuxHZ7Mo56(fVLqllEEbVouVNrDP57(1bBc4Y7dE6YM7h1VAzEmEGALdA4lnMem7BM(Uh7zvPtehk8Rht7a8sJOz7WLEkWQ6PqMvuDkssNDZEMiTq)ns7zCWRKv4PUBrrVM9k5I(P0DoM6fE9uktyeRQqDRVR)aJoKn6MX8ohouZYRMSV3aoRUVnDWx)0LmdqRX5FLWsVm3cNlAjlDfO4bRDS(Plhp8BvleG(mSD2lxh3q2b7THPfXbVWdjYvereZJPdqKhrdEiBQpZyp4qVZRk)QwlwLEifxaxByJIxgxdns7XU(rjH72ZUSvfFhpekZgqYRKT2GSFzAsnYHmK6hs)H4(k8JP4rdJLU2YTmv9m9RHb8I4dSu79QNqlBF9nS713SE3v9voTZHAyRbDWW(kNM7(UuZRBrIDls06Ie)yMAEdvf37AxchXLr25PVZtFNN(psE668035PVjE6J2a895GgevSIJCufbOR(UWpirAI(dqSXA1Iy)D3L3mECFYFSDr(C4c4yIjCuNzIy21Jv7vvCv4xoz4jDRAQxxAnF2Ry9x85tGTGxiMgcMsyj8WZw5F)ECR)ZoznM8lKgcsZVdhijokJZ7nA6L8oi5XRbZNEFKg5Ca64Lq5sSj6yLA5CC6yMK5kfPJC6MZXZtvINZX0ZxkO7amkhI4uHItvAPl0SF0tqDxnZ8GNTwQQlGT2jP15i6Pi915nMpZjYohyAPuANJMhqYTR20pQfsZD(bkoSeExdTIo4uFxWPxopDRMsS1KGNFEh0rbAL0Hxy422lX45L8tskYZXY2kz5fmGBR0MNJSTqc0ZBG8rpv659NFktQEEFPVVtVEoS(Enr75az1sFRzAL30JDk3l6c9DuY3Z7J5h(0W39wk7AgZW9qtiF(gU3dPMVmIA3K0NJ(BvpglFE27tS10ZQq8utK9(3esxrw9FMjQzT8C1yhWGZq1HObDA)0t4n8o1Fek4aOFbVYMo0l26vWSAnoFk)evOuKpXFSkgXpt6ZZNTIr8liZ)GHPfxwJd1bcRYx7CHk7blZTpYdheiodFElC1S1hmCirtZdSEC(KxWXKZXh)c(olVZ(myWbUJ0hedoE0IFAmu3vRsR6z06CMtMdExHu5(Nldn0Usm8kAEoZOk3Zv8P6vufDpNPBXGEhLpMgcth549z1GxtDw(aBWbHJ1NAdHoqhRp6gCS5i853G3a8)0(qCWp(158tYb)yfFS(4CWH9pkFMomm0a)Wa9egPObFWo44178pDhU5qzaN)dL0B29GhSmGKcF3wjFmqXFExHNg(XFJ8zJTiL2M9NNDp3a)W7oP8Bb6S7vgAbGqPWeosJcMDVTvk7r0uMLd82m0M0gqRrrsbdURndURh7c3lumZUNPjg3KujxmHIbZ0BmZ0BApMwhigmFNyMV3oU(LldeIhirreuWm9w7cRiIjRi2mNve9evHpbdGV4U9h7AdDrYTh6ema(Qza8LjUWkRXDOwkyc3b(Z)Cr8oGFT07lgu)P3jGQ0Bhgtxo2oOAGTISDHASIrGf)OFHZyHU6T2J5w8u(LdWs1y0s8kCjeKk62Sgw1HiHfw0HrDksje6l6HSK(8HtWihAsqsi8w0lzLfCDGrCKXMJpIpbiHamrpPLatmOiSOJV1xxSriKx0pzj5PX6WgrjcdtyriKu0ZNPUofwBEfrectS4j7AMEn1EaLKg(WHqM3IO3iJury(Toejecpe93u7UmxnlmgeecjjEreNuGO4AiahmthJoihjujSOeZfDEaWr9We7Cm4heEOZlGySkCXbOxX9GW9jUOhnhAJAitUMOo8wZCWy4my7mXFDEE8fxKcDX0OMjL)npX11)Mj6bSmtrKo4c1XrowhohSdIS9NmR4mJ79UfldMb2QdBIGs(ADUHkJ1alQoGOf0cX5OoqheGRZ3gjOdhruxfKdFIYbbXItaReXK0SsXiGoNUvnmFRiGsNN2LC5sJr05DQx5xUxrGPoN1PrB1GTdozESMgw(KhwhPeXIOB0nLsNAcTRMmJ8gKtweqRB6M48yQXq1slQlPNfbC6MSQAW5CQzn7E2S7c7YhZmFhMRuX2ovzvNlZQeSkoB4AfZZKbWzGPTXiBHIVQ3L8gXZ6jwMUr3iGQMKSumu1utwlqMpfLvLyt3GC67AR9u9EEQvRkLklRHOa)wlrRh6b)vcB1ZhLH1cty6g)hWuFTC4KwmhovvZbTLZHU65Gw1Zvu1ZpWAa)QWRowshmuthA7I6ql7Iu38D5BzAQJ)k47BTFL1LRUnpE)XT6VQuD5)uG9rDPXgYTIc7XRQWQutOBE1slY0hfGQ(AdvwuepOQI4rPSiE4ts8EsTXQy663ODTb8Re1h1BtlGShufKvBjKTvRHSUxezByvKTrLrwxRJSN7cj7E1lO9GSIVIyfRDVtewHRxMXTujM94j16w(6b5C0S5NC4aQTN9Rc49dJ)wOLAI2fLdD8ewBLhnvNUIvOPQvORLRq)QxHTyblSjvSqtLSWUL52Tm3UL52Kkx47V15EelEHMN49eTjZq3qcDdj0nKWhuhIDdj0nKqJhsqxgvuvMAB6A6EFxWBB9n(cRl1TVwYRnUM7LiXZcHRRvcxcU0MMEId7BgwwRpUeMzjR8inxeJeAMHiZs2ufYH8VkNUnZvNNNzDh2MUdBt3HTP7W2u6KR7W2y74MOeR5Dh2gge1DyBeN7q3HTXarjct3HTP7W20DyB6oSnDh2MUdBt3HTP7W2qCp1DyB6oSnU2I(o(W2OFOa(ddJxHDTg4BvmbHRTnguJ4uizgASmceBy(sb7IvgkrDtaLD4lXQSmTAavVeFYiQMNNUxHO0APZ1JyuQOihru(MHRxHT8OxULXa2suf5dLPnfOkE4A4nTeMXBoUaHpKNwI(OTqEAdDkI5PMwhlrH0PWG6wjBwvCq1aklrM0LqJ2U1WzmO8kYKTArrM1FMdHq1LWvE2qkxCv9iQM(y8jBO5m(Z9nCNYbmQ9bKfx(Ue)v3a1bfawDOx7eW1et2dSwrt4PUj2QpoThTshnbp6MZQMy328kjTpbVvhy1nhwtXZDaV1KUa6QJL6cyJCmEvYicnnxOPjSr7j(wv34cRCVc8RgglfYwFJfCz5V0wHOMWmDX3qnLPZuWNaeRJV6IsHQyg3SYunHnxBzXhuY4xzPMBPVb6ITSopzIXwwccogCzDsS2D(Xq8MpAv1AcISeH4cfG3fZ6ArtzCPTeZyVlQ1SoamfRAlRZwo8XfaqB1UUMXQJFTo)u6IF9hLayRBjTJTOGBLGABSDWqCU15ovvCUh0YHmwUnXXaDRttRZhTuSVBBjPrb)wNuODt(mm25HxETjSw3yasf(AEdyxQ22Lj6xPh72SCBtWULDoCGGlH(cAoXmXu24S3wm(qzOu4N1d)nqqbZgsWHknvDz44RTniuHHMQsVIja5FkNA2dV(YVY12gqRueIdwa4lVS2ijKgUvDv5FS97lc24DI3US6eWpkvll2QgyZ7YdvZRpuuz7WtsBD9L0ne9XZpa(CfmqB)EgHFOK9DvS)vmQjSsMG5zblrd5IuV4nBGMtP9b3ryw3wixAPQWno1XnUZK(bhRm0Ruk4EmRd(x1N53TGzX(99KKsrkKHTFW7yh9jxHIdjVBPx5IDFR8Wdt2ptrAqois2ufx60Cmjs)J7sZmpD2hrPGpyXzYCJUb)lo6esvvKQP6vD7s)Ngk1z1ZBGGbUPiwEnAWL6j2IkBsso2sEA3PygIkMzHM(1ARiwTLjjZkDDXyYUHJUjKyaWCB7OsoOy3g1xwAmMunnJxAl8lVeTfrZsnhAhQSJu0UmG1pG2rqfVCDcsWSqiHEhvVf7Du8IRd2fl8gKlv(Of9zixdMKA1ohw8S1QcUA3b5XlpQsQnX1fFpLwmAhi9e2V0C1(GfSvkPRgBSfsVRTQdlf7Tkp(sxoICM107xSG))KuJrvZg7lvDIY07nLEdmDMhehN8cXc6SO61U5MyWrAyeNseBdtt7TOuX0xLw5GW(eBrGGoztmHdDy1UnmudApv4LhoBYVvSrAoCoTHr23boLXIYZbX7q4v13DkM7ofZDNI5)t)um3xh9MEjx1p42XyuzOD0mYu2Bm1PA22z0azO6IG4De3sMAh(ykUQfwWhio)yZXR(ZW51TEiq9dOzlj7yorW5DPBxx621LUDgvkIsHlz8ux62DstITU0TRfZUTU0TlTlD76s3ojW2LUD88UlD745Bx62PdcDPBxx62PMXDPBxEx621LUDDPB37H0TJp)R82Vfj4DqhjyEyZU)VI(EuC0Bpm4xtsrpJRxF4Bp7F)d]]
+    20261125005,
+    [[Hekili:S31EVnoos(pl(F8zJUhhNe7U7DqCdClgShMd3T4WM9(34OyrhRTLT8PhjBgyKp7hFjjskw8HSCCY2AgGoj6rv)yXIflwSyP7U8U)(D3ggKJU7VE10R(YLxE18PtNF3T5VShD3T7dw9JGhX)YUGT4)9)Oiinmky3R3p65KNZI2MnzvY2XKN7L4KGqcTEOiko)33D3dAjB2E0Q7U93(B)V)(V9RpYP2D3UjkmeXEfu2kq(8RVEF(g0R3ZV2fRtsrpHsF9(q06GI48xV)F))5)617Xx(17firr0fe2MDryAru4fRrPbXpGcsViyFC2fbHb7ZJEcnb)xt(hzj7g)zmBsd2LfJHFi(3tiSnk717dcdt29VH)LFGEjBYR3)Bb5b)Qg4m6)(3)7yISjpFF2VEXfpgLVP4bsl4cLhDmMMyuh8W01tNIMTE13UMqw0A0UmmKWCkzngU4F(Nds)r2pIWnNGDymLI7u(L1f7cja8VKI29hrKF7VHEeTd38YJs2XiDCYZyGGcIZ3GP8VVDFsAoMC)fImqr6IFHmUaEf9vJYYZWnd0UCukH6pVjkgFZhkwVEc(jwIBeBNuSFcU7pnzn(E3DBWkcRZwSkioEj7pwsOZNj6p4RM)5O1lujWR)N8x7tlUi4)RaJ(v0BrE2ryK9qq(IPdPDE0RVmcJOD5JhoWeLWDHpHI7acruv6aYuE5JJkR591ltf6Q)Cyu2(4Gxw(ac3FV4Q5uEKN84JXOjHvAtdPA(lzxanKOdnjo57lUC6qkl1s7jHjpVRda1CZGs8nxUpfLLvKIosyXu7ZYt2H(CrgAjES0YhxfU4sfOD9uxKxoWSODpUCFcTXBIFZ6c(9a3GGcT)It0MjyljHRYssZlpPy1gxBpJymDvqg2cYscjoWUcUdEFqkIEPXw4Ck6Fu8eAxl0Pe4lRblskxA0Rc2TcBcH8iFM8plPwXQThiJMVAgnf7Y2eToNbNsL(SCQqni9rKTr(6btLvL3uSysBWcRf76BdRXgbstEo)nNRGkH(W5rmdAe6tu)oOhjTsxnfTn5j0YvfPzikGOpmbQO44GhI53c)wCGLHIxVKDFlKo4He8C4BWM2IWUhPN4S7rOo9wYVcf)EZwmEroYZrdyVMkF)XoIugcrJ9gsBXwmXM1xIDsA5ZrXHuCj3ptHhNW0hFBuwgU31M3kBss3Lbsp6RYEg3ug4dsQKBLxrSROKfO4OCu11IWO(fBt(ayc865cTa0wewFE3kYndsDMIvqU6sYyMIp(F9CWU8mxiVKZxYpOaXzKdFhB(7WMEzdz8QYm91nFI7CPPf7Zl1YiDKlXRR4r7tTNTrlHg8qsw2Wbm7etIWTCYF7l5X4oogT7rIjN0KGuZZHQ8WddrmARCDx0kjAGXGYR4Ke8DyTTsUqFdxiDkAf26xkEGzkcViJM8G5W93Nwz8x85TqC0oIRYGappyh2OWEIRPCQZEbBkrbO0i0Y1rPm71nP2HstbfXLooHfif7X0hTfpeLRhKuKNffIMpUPMa3bA6L5qO2w5EQWvWe5EbPnVdqaKU0neuKNSmippy1p0iUm2Co0O5pwd6TzFojzxLaTSDwBhH2whwE9kAWUCt0jHLMYwUiQKNmdjJWZcJhtCOuFZM3TpJxoZMtaChnGde(Bt5ZeIhXlZJW(novtlYMzjjt0YMJhOyXU2lJIS8GODi2ACTWHqSpm4xk6pKmnnkdLt8pkBYwmLiuBzJhKlcQmFrV44H6UAz)wdA4IcUfl)kJihQiL4gzjoQTfVuFn6ud2tqjkdLI)zTH)rkcZd1D(JTPHHIl2HYwgh94gDgg56hIpLSgMwMoCKABrPPFG)3phLVjA3CRGeYeBj(IdwH5EoIJn8dGDPHOpKDZIP120KFSd8qCCJ6DxLKLJH0izZ1DCBQHbEokeTPYAnAm2w34QGjZUkwROC0AhJ3MJ(wNSQiBXvh7OWrdW)p4OoHwAvtLCdsdLzfTfTuln1sfbPwiJ1mByKHbWM8R0JQWorFCBW)C4Ord4JsWDvh4)o2h7GLzbRrJBqGmsx6I5Cb3guCi9nlnCvKswOZqoDcFbl0Aqc8KIwnCJx4xQUzKfAYpGxDOnhHO2XWppE5cI2oeUCPPd(0bu(wpzaLrRsWApR0iDpaPM7BVFPFtcExOHBTbIVzkwclkXfLcxrvcEHRPCFSLubYWRfmi0TyHiAxRtiy2Zr7ru5JibOxKomstpZiil(QxfV(uI0kCSOFVkQRh0CdnV32GIy5xGELYNKPqrVewBQk468hTUnsN85tIuGnBKR9HsgL7SHmomIXgcjTffBmsyTsKC1utDgWwvwLKetgyiDlUj4VF5eYaFylsCU)lne8vDrIVuzxcKeUAMkcDwIxkCYZuDL3JY9wQ3RTHpuxR(iwsiZVhYBfAFrnw40tbPreSZ2RXNW2oIcxs2n6qeXWBEgnSDek94ll3J1L(8(IuegipfexGWlaBuTSsEXwhuzlzT3X4UxSOdfgKNK(cj(HRI2hJDuEcAhves0gkFkQaEDr6lv3K4AtcjAK7YZMSQinf)GFFXmSo8aVFR5unvdVwv7knApVjXNXHCHYHqlUESf2tKq8BhTDFkwjpCz2gSmO6jgy89T8YUiu5pdD)ly732ZO0Q7sBtrHjXKO0I1GswfL)cTdBezzVFIo)7sEdE8nl(Y0XUkCUIkC(5T9pBm9)WTqEauJXtMrcOagfKz8ydSOg4Nrmfpq7tns4X(68dJgbOrFqN6m2e0pWDeweJymkWeClKcBi6T4Ydsp9HrM6bnclTdblVPX(TXNrndSSrxFWnetrM6d(y2A13wXg(gxnvcXq)c18qboHnKEVp1iVtC)fLIVM7Vw50s(9wUKYgS8iXwQe4rAK0gqm3iiAvAJOcd)YtelYdDe3R8cXt6BmpqS13XwdSyAGabF48(OTP9HkNSMNhTpnpAoKX)86O1PsHBmVAu8jL32ZBdNsJbxyLX80Od5IL8YWjoDmPLrtejNhg03YT0WqLunZ7IgeRnPDrdfs58SWap6S0Sqfc6YRc5(jO0QOXSVv5rHU3NcrH0OauPTuo4zAtapLUU8KG9QYPjHrNcyMR9jTim5SG8IA1LgenMVMzVfy3Vy31qAp0CQlwEoO(IoMMdnABAYRHojTguzeqEmWOS50yOPcN58wWyAlOsmOnrJ9UqPPqJozLTTQXB)omTeAy50yqNmbF3sdHg2VeY7GUDF8Bk7ClTduryvEg0TWRnPzGk0OR9tWIDrLHEAppzpVQdrrWtKLBif(s(1uJC5dOnr7cTZ(10vhMuKvTVwnWbBJ3A2vae8Izh0F9RkhAGh8ILJ5HlU(ltB2vLgTxbfduehnrcVjhJWR355K08n0ZQXqH44WutGI2I(RFnNUXi8kAPMeJ2d8OZkfv8DNsBlvmUmLDEyOrc2Ux9k2LhMbjHKlxJT0)azB1AckzMRfFPb)WFuzPxctsw3KgXe5EG4O5UWvYBHnHZhQQohqPCX7mxqRv9bcM1PHMKH2g7XsZ2kzGofqwMSGsvd7Dt5U0VocfhwTtQbBXKNpl2brJiJ9pdem54vJDXOrQ2qVbhccjL6XcIMdQ8yhpKcD8nlUeym2vDx(Q0W)gJzYeVDOlrMe7Tp0CeRyweFSyuNi2DzSlb(SFxLuF)Zy0Kp6DvPFxL4BpZhZnv6ezPtUFWtd1v48MfZVEi)Tu6zj(f8YyylJqzJ8HTb7cKYRfz6kMBl1VAz6wEKsLJA6lavcH9feE4Xbrr6C1Pc)2PupGS0iw2CCPNnyDJuOEfvNjNmVBoiePf2Vr7pJdEHUcp9dl4JAoOLlWU0DoC9ISEkTjeJvri067goYObzJMzmVZOJbwE18ddgjP199fJ(2NUuycAaJ)vnw2LLw4mVNS0uGMhS2W6NUC64VxTqa2ZioyVCDCJfNS3gMwfh8SmKOxrfrcpgeGOpcaEOjTGWCpKqVllk)gOgRwlKQlGRl0rjlJRLkPdex)yJg3xo7TTQ474rJYScuZvYwRqoSmnWM4qgG9tP9qYyf55u8OJXYq7M9mvJm9RJbBfXhyP361aLE2HWDShG7wV5QHAD7CmaBnidgpuRBUh6t9W(fj2VirRls8JzQhowxCVRnjCcxgzVL(El99w6)izPR3sFVL(2yPpAhMVpf0IOIXpsvveGT6BUDqARj6pWnBIuLh7VBUC20PdP)X(v5lXxGetmLtKTqeZUEQERQQRc)Y5JFt3QM61LwZNdAw)LC(eyl4fQPHGPewIm9Sv(x205R)ZoznM8l0ocA3Vdh4kjktY7nE(L3YKJVMcFQTPjVejAtcZlrGYHcT99Dj)1pTjrV3W5uNo9sa60Ly9nyt0Pkf7L14oHjBV2M0joT7L45Bvc4Rme8CLk(oaJk7dVrO4Tk98v62p5jQVRQzEWZolL9vWw3K8(se9Tin(LvMpZj0Vey6Ou7x23H2NK)6v9J6G09hW1KwL4)WU5WMeP1hbaq3FKxAG1ddGSFhSzb6KJfGY0TD3beqUL)MCubKyzxDObuuG7QJpGez7GdsGScYh9JuGS983YdxGST033hZajS(E9ahibYQqauZ0kRPN6JEGQj03rhcbzBm)0FCeCVNYUKXmCp2dMGCh37HJOqte1Thwbj6Vx)CSYN3aFIXimRcjUM006FBiDfzH)QPuZ6M(QjoHH00uDZxsfjA2nFtvMa6DBxqqrVA7c65su1EB)IR4n8ER)2Ribq)ccOnzOxS1RGc2zC(T8lZI2M8B83OLjYRi5881ArXeG)bveexwJN3rcRk7vNjuzpOJU9Tn5OaXz4R6IRQT(GHJjQKEG1tZx6fzVhodFZxKhS8o7R)Ie4orFhyK91Q7(IWOFOwLu1ZOE6mNmheuERY9VsmgCBKnPPprf1zgj5oP8ROlkPotx(KENKVHmkUJC6(AYilPolFxzKGWP6lmJYaOt13Agj2Cc(QZiRa(VAF)zKN)6C(LOrEUIpwFtAKW(hLVongMAqEAGbkZu0IVtns86D(xSg3mOmsY(Hw6D3TylyzysQ85CM(ncM8vFg)04F8xPFnP5Pi5D)5YVhW4Fkemk8dNIDQinka)BuWPl(m3LJzfa1ecdL7e7AaIvPm4oPMbqQsrM7uAUcLKCuclaMxtCTHIrKt2ISGhrFIaTVygAZ7cO1Qipra3xndURN6c35cM7UvyibrfUQDje6kct)MzMoR7yADGRi89pzMVFzQGYmpWrEGenrCIW0lNAV1QczAiemZAnHBsx8MOiq1yIbnqXvt7sB3EWMOiq1aKcc(6Cx4L1q1iAaPkcrKpK(8qejAJIGkvlzNluvzUJakvBIAavluxAQAOhReeyXw6xLuxyR4T7yUfRLF9i0vngHjVcXefPQMoRHvDyLeHfZ1dNIUeL(QwjRCbqkemg5qBcSeL3QwkR0GRdMKJm2CmL8jOsuhzunMwcm1ajjIo5EFO4jrjpKBxS4dzJO0gJqOKOKeY3lDdD4ABEffjktSyj765wCtJ74QuiKOegYdnTurznboe9ikpuT3yYlqzpQ1f4ikjPwruDmqT5AiOqcUKXMMJgEjrus4cKfasKImXohdyeLhqwbuJVJlga9kwruU)NCroAoCq1qMEnfz41tnZbJHasCWK81L5XLU0kGIduntk)BzIdn(wiIlImtt0HKcp0jo(qohGiAB7AZcoZ4(GBX)ryIT6qnPkKHmdvgFgruDeryPdInuDWHOahY2gnqnNquxfyiFImefXQoGvIyAk(PzgqNt1VwMRFuqbzPDTuECzeDEN2F(L3FuyczSonApa2o6ejZAka6toaEIscqQSbYLsN6cTlMmJ8wKpGeqpdYDtso01AOAPh1LudKcoiNv1doNtlW7UvmZcjM8jmZ3P5kfSDtLo25sDmfRqrOKz5rcM2MJSdkaYEx2PupV102KpHkTrCNbQlYCK5tHrwl2GMKdEOn4jR)8uVK12QSSgco(TwMKp2dFFdSv7pQaRvCyAM)tycxpvEtlOkVvvufWsQsFnvbu8Cft88tSeWVQSSJLvfd1vLUUWQ0XMiH83vUNPTg(RGVV1FzrtUqB4(HtBfywR4YFxG9rCbOd5wHz(0vzM1jjMd5xDJfz6Jaq3yTXAlmPhvLj9KuAspENeVLwF64URphCTbYRe1hXBBlIZhvvCgSmo3P1Xz3lKZTSso3Qs5SR1Y5ZDXC(G(f0EuAXxr1Ib37eLv46LAChvMNpDTAOLVEughnR(1mCa16Z(vfk)PXElPNcCr54bEkRTYJUQ3UcgQPkgQRLmu)QzODyrdTnvnutLn0(L52Vm3(L52MQh67V15EclGOwC8gmzg6NsOFkH(Pe(GAqSFkH(PeA9ucqzurvPIUTRP79DrNUZ34lISeAFTAU24AUxIeplg1UwnQP4cmn9uN23mSSwJQPmZsw5r7UOkjSmdPjlftvihY)QC22mxDgOUR)akf0Cx37pGsgGw)buQ)ak1FaLenG0FaLSDeD0I18(dOKaI6pGsQtm3FaLmquAJP)ak1FaL6pGs9hqP(dOu)buQ)ak1FaLOMN6pGs9hqjx7rFhFaLGNkq(ae5vOQRb(EnoimZ2CqTItHup0ezeUzJ9xkOiwB4xHCavC6l1QIoRQtvVeFQdvqRPdiSU(vyWPJZGwbJ(q96pd8Afb(tEFwmG)u3s0f8kmXwlr2EeNya4Aj6SEf64tEzvNaylr2voCY2eG64HRHy2sOENDAbICyNTfbyBXD2g80e4zGUhBrc2Pyr7wXzxxWOHqLLOd7s8P72Y1ofvEfD4oTaOlA1ZL4y7qiJpBivk22EezzFu)AQQ5m(Z9nKZndAx3dilM9Djg4UbQJki4qOhCrqaXf)iRl8uEcT4c4yLFYkt8u38Gw3aq8ZBFvJ3NaOdbwO1rykM6JK1MGcQoelbtiHgXzxlJO00CrLNYgWkvGUHXCTCVc(oeJTyr2A84ll1T2k68uMb5YSEkZCwWNG0dXxOifP1vDzkOlW9qS5RwwaiJmgcMVX5T4EjOn((qwYuJVFdi4ya(HAXG7(MHy(FYQG90fvAjk9CbG3fU(6MM29gWsC79Ua2lAaW0(fyjwhndHphaGv2(AgRFpeGStbThcFu2ebi1PzweWDYglySFWWEnazov3EnmQJdBFZ(eh3SbijnKn6g7)qx3sA1gqa1ka3OvdZDE8LsFkRHMdOrrUxwb2LkRFzcQwAXUllT(uSBz3BhPysyOIKtndIBQCoypbFOmuk(N1t)nsralgw2XAvvDz64z2MeIROPRKbzcq(NQ0MTWBOSbzBcTYMqCWkm(YlRPxkPpE1qv5h7WbEahVr92Lvvd5zP64MTUj28USM1(6AgRTD8hUaGXsGf9StNDaY5Hze44EHgFvRNCdsBNnRqBA8A7Ifp98GfkTsLnnwIz2EjJhGNFRsxTQDru63g8pRpU57X9ShoW)d86XcwMfSgnUbfYiQaKn(K9KBqXH03T0WkFtmlp360TfwLg0ZaNnrXCNCtK26FOinZShPpGsXMrvDgzg0838tTtJcAtL3Av3U0eiFAqkxQNeKIUvjyvZvA6DkLHnhw5TQvLdQcoYPJHTbM61BZnuN26kTvH1X6IEMDDki3nmayPn2vlh0TFUGBhVX0wQv8cUCe9C0Eelpa1Wk6nzd61OemcCwq1lxNOjclMrz4r1BjEhnV42GIyL3GEPYhLR)sVgw5TAha5pBDdwQUXqF8YJjNwfzWcoKw9cWjdBXOwhg0A3uzJknJiyResxn1ypeSTTQdQN4Tkp6CxoHA8b2WiN))sJoJQUnXxQ60mciKRMmMqNLbXXjpt1GolIEWnPKaoAhJQBnIDmTD0IwbZqDsLJd72IIaZHrcHdDyfRTmCbGvKGYcda934BgMd1ia8u7fytVKMYtbXfiYkZ7pb99NG((tq))QFc6hcrVfxkv5n(YucQm0pAgzAhnM6u9c8mQGmwFb48gQzjt9dFmBU6BSyBGK8moNS8pdNv86PaHNqZwYkkCA0Z7tBr7KVpTffGBFAl2yCxFAl2N2IipstR(0w88I0k7259PTORaQpTf7tBX(0w0aJO0SpTfl6tBX76tBrBoa1N2InzxFAl2N2I)uM2I))dMNz0LT4OlBrnqDDSrYLBbEaubMrcy7WIlypsn7mZjZ6sqd3YVOuld051jiPJdWp]]
 )
 
 -- The hand-built lists the wowsims.com packs replace (wowsims packs plan, P9): a saved choice of one falls back to the

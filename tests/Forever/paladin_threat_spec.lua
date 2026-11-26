@@ -99,6 +99,19 @@ describe("Protection Paladin tank recovery", function()
         end
     )
 
+    it("can pick up a melee enemy with Consecration while single-target recovery sees crowd control", function()
+        local H = pull({ groundReady = true })
+        H.ctl.distance.target = 9
+        local before = H.ns.Facade.DebuffCount
+        H.ns.Facade.DebuffCount = function(spell, time)
+            if spell == 1324543 then
+                return 1
+            end
+            return before(spell, time)
+        end
+        assert.are.equal("consecration", first(H))
+    end)
+
     it("can recover a dungeon enemy identified by a matched nameplate", function()
         local H, loose, held = pull()
         H.ctl.guid[loose], H.ctl.guid[held] = secret, secret
@@ -149,7 +162,7 @@ describe("Protection Paladin tank recovery", function()
         assert.are.equal("cycle_previous", H.Hekili.Engine.Output.status.targetNavigation)
     end)
 
-    it("protects a selected enemy with observed breakable control during group recovery", function()
+    it("offers Consecration and holds targeted recovery spells on a controlled selection", function()
         local H, loose = pull({ groundReady = true, health = 180 })
         selectPlate(H, loose)
         fixture.read(H)
@@ -163,6 +176,9 @@ describe("Protection Paladin tank recovery", function()
             },
         }
         H.Fire("UNIT_AURA", "target")
+        assert.are.equal("consecration", fixture.read(H))
+        H.ctl.cooldown[ground] = { isActive = true, isOnGCD = false, startTime = H.ctl.now, duration = 20 }
+        H.Fire("SPELL_UPDATE_COOLDOWN")
         assert.is_nil(fixture.read(H))
     end)
 

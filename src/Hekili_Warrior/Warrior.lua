@@ -214,6 +214,7 @@ local unblockedAvg, UNBLOCKED_WEIGHT = 0, 0.2 -- an EMA of the unblocked post-ar
 local lastIncomingSwing = 0
 local warriorPlates, pullFirstSeen = {}, {}
 local pull = { updated = -1 }
+local area = { updated = -1, count = {}, visible = {}, engaged = {} }
 local recovery
 -- Each fight learns its own mobs' hits: a full block before the fight's first unblocked hit estimates 0.
 spec:RegisterEvent("PLAYER_REGEN_ENABLED", function()
@@ -1363,6 +1364,7 @@ spec:RegisterAbilities({
     demoralizing_shout = {
         id = 1160,
         expects = "debuff", -- no damage (DB2, wowsims): its ticket takes its own avoid only
+        areaDebuff = { aura = "demoralizing_shout", radius = 10, melee = REND },
         copy = rest(DEMORALIZING_SHOUT),
         cast = 0,
         cooldown = 0,
@@ -2515,7 +2517,7 @@ spec:RegisterEvent("NAME_PLATE_UNIT_ADDED", function(_, unit)
     unit = plain(unit)
     if type(unit) == "string" then
         warriorPlates[unit] = unit .. "target"
-        pull.updated = -1
+        pull.updated, area.updated = -1, -1
     end
 end)
 
@@ -2523,8 +2525,16 @@ spec:RegisterEvent("NAME_PLATE_UNIT_REMOVED", function(_, unit)
     unit = plain(unit)
     if type(unit) == "string" then
         warriorPlates[unit] = nil
-        pull.updated = -1
+        pull.updated, area.updated = -1, -1
     end
+end)
+
+spec:RegisterEvent("PLAYER_TARGET_CHANGED", function()
+    area.updated = -1
+end)
+
+spec:RegisterEvent("PLAYER_ENTERING_WORLD", function()
+    pull.updated, area.updated = -1, -1
 end)
 
 local function warriorVictim(unit)
@@ -2539,6 +2549,112 @@ local function warriorVictim(unit)
         end
     end
     return false, false
+end
+
+local areaRadii = { 5, 8, 10 }
+
+local function areaDistance(unit, melee)
+    local _, upper = Facade.LibRangeCheck:GetRange(unit)
+    upper = plain(upper)
+    if type(upper) == "number" and upper <= 5 then
+        return upper
+    end
+    if melee and plain(C_Spell.IsSpellInRange(melee, unit)) == true then
+        return 5
+    end
+    return type(upper) == "number" and upper or math.huge
+end
+
+local function protectionArea()
+    local time = state.now
+    if area.updated == time then
+        return area
+    end
+    area.updated, area.onMe = time, false
+    for _, radius in ipairs(areaRadii) do
+        area.count[radius], area.visible[radius], area.engaged[radius] = 0, 0, false
+    end
+
+    local guid = plain(Facade.UnitGUID("target"))
+    local melee = REND[knownRank(REND)] or SUNDER_ARMOR[knownRank(SUNDER_ARMOR)]
+    local targetDistance = areaDistance("target", melee)
+    local targetEngaged = Facade.TargetInPlayerCombat() == true
+
+    for unit, victim in pairs(warriorPlates) do
+        if
+            plain(Facade.UnitExists(unit)) == true
+            and plain(Facade.UnitCanAttack("player", unit)) == true
+            and plain(Facade.UnitIsPlayer(unit)) == false
+            and plain(Facade.UnitIsDead(unit)) == false
+        then
+            local distance = areaDistance(unit, melee)
+            local same = plain(Facade.UnitIsUnit(unit, "target"))
+            if same == nil and guid then
+                local other = plain(Facade.UnitGUID(unit))
+                if other then
+                    same = guid == other
+                end
+            end
+            if same == true then
+                targetDistance = min(targetDistance, distance)
+            end
+
+            if distance <= areaRadii[#areaRadii] then
+                local onMe, inParty = warriorVictim(victim)
+                local engaged = plain(Facade.UnitAffectingCombat(unit)) == true
+                    and (
+                        onMe
+                        or inParty
+                        or plain(Facade.UnitInParty(victim)) == true
+                        or type(Facade.UnitThreatSituation("player", unit)) == "number"
+                    )
+                area.onMe = area.onMe or engaged and onMe
+                for _, radius in ipairs(areaRadii) do
+                    if distance <= radius then
+                        area.visible[radius] = area.visible[radius] + 1
+                        if same == false then
+                            area.count[radius] = area.count[radius] + 1
+                        end
+                        area.engaged[radius] = area.engaged[radius] or engaged
+                    end
+                end
+            end
+        end
+    end
+
+    area.targetMelee = targetDistance <= 5
+    for _, radius in ipairs(areaRadii) do
+        local hasTarget = targetDistance <= radius
+        -- Two independently observed plates prove two enemies even when the client hides their link to the target.
+        area.count[radius] = max(area.visible[radius], area.count[radius] + (hasTarget and 1 or 0))
+        area.engaged[radius] = area.engaged[radius] or hasTarget and targetEngaged
+    end
+    return area
+end
+
+local function protectionAreaCount(radius, needsMeleeTarget)
+    -- The contextual priority requires a living, hostile NPC selected before sampling its range.
+    if state.combat == 0 or not state.prot_contextual then
+        return 0
+    end
+    local current = protectionArea()
+    if needsMeleeTarget and not current.targetMelee or not current.engaged[radius] then
+        return 0
+    end
+    if not state.prot_attack_target then
+        local _, instance = Facade.IsInInstance()
+        local role = Facade.GroupRole("player")
+        if instance ~= "party" or not (role == "TANK" or role == "NONE" and current.onMe) then
+            return 0
+        end
+    end
+    local count = current.count[radius]
+    if state.max_targets == 1 or state.toggle.mode == "single" then
+        return min(count, 1)
+    elseif state.toggle.mode == "aoe" then
+        return max(count, state.active_enemies)
+    end
+    return count
 end
 
 do
@@ -2578,6 +2694,11 @@ do
 
     spec:RegisterStateExpr("prot_recovery_pack", function()
         local current = recovery.evidence()
+        return current and current.other or false
+    end)
+
+    spec:RegisterStateExpr("prot_clap_pickup", function()
+        local current = recovery.evidence(true)
         return current and current.other or false
     end)
 
@@ -2800,16 +2921,15 @@ spec:RegisterStateExpr("prot_controlled_finisher", function()
 end)
 
 spec:RegisterStateExpr("prot_nearby_enemies", function()
-    if combat == 0 or not state.prot_contextual then
-        return 0
-    end
-    local nearby = warriorPull().nearby
-    if state.max_targets == 1 or state.toggle.mode == "single" then
-        return min(nearby, 1)
-    elseif state.toggle.mode == "aoe" then
-        return max(nearby, active_enemies)
-    end
-    return nearby
+    return protectionAreaCount(8)
+end)
+
+spec:RegisterStateExpr("prot_cleave_targets", function()
+    return protectionAreaCount(5, true)
+end)
+
+spec:RegisterStateExpr("prot_shout_targets", function()
+    return protectionAreaCount(10)
 end)
 
 spec:RegisterStateExpr("warrior_nearby_enemies", function()
@@ -3219,8 +3339,8 @@ spec:RegisterSetting("maintain_thunder_clap", false, {
 -- /hekili priority <name>.
 spec:RegisterPack(
     "Protection (wowsims.com)",
-    20261125000,
-    [[Hekili:T3vBZTTns4Fl(dNoPPUYYowPjzIZmjnTx7nT9YeNR9BIgscsINPi5rqAxFJh9B)2Db4BGeKGsuoPt7xsKijwS7d23WsSwZoF2NMD9swmF2VCXKlE(5NFX0jtMm764hc5ZUoKT4w2A4d(STW)(HOGy(Iy3a)D3m8(G7fUBfJxeSDe(Kp4fWwIuBEIRx8p6pBETeweYxm76F7TF8J)4)6JVkmJIZUEJ7YLC5W4IfnmBVA3nXB47UrDTZwfeXVJhT7ML8vSeV4D382p8t7UbU8UBkrKe3ZWPxC29SOi3GOZYN(ZyHEIZueym8LX)hrG)OtHPkI5l8abzj85aCQDf7UHTCzG)Fh(WT8heJ3DZ7zXSxvdln8N)XpbeztCCO4vND2A34njZrP4mThDeqtGZzZNSAYe(LRw8INbK9Bdc8wgCVVaN71R9aPgGjUaMQpYJzEUmK5Hj49Cw8MD38BUInW3U(Eop01Fn8P4i3B5id7VubBrSfUmp4sdFNxqaC1Vpj6byqVJhj4r3cdd(Y3LeXVLHFWlXNJc6p5UEt8iKN8ycH7ceBD3YIEy3nlya6k2eC)UB8cU)R3WzEiZaOj3x4Eho9GicpZ9BW)L4IfEUC)yL4S7Mhcsa0sosyo(b4de)hgGci8ajcUAKVVazLGcmG)vs8YaCbpmXdLnILOX8TByrRH)hV5BJJbnAC5kXFnh1jy0vsXN0NnmIhYIys1Mi()nXnIJpcih(8TGeZ8I4SLWhwHOcXPGeiNePOaJp(HXPtjapXWfeYNiIls2IS)wUhhiS4EGcWxNZrLb4(bjanHpmpz1krkSXsIdykQHQGbRwb0)xz(RtyraZ7XJfk2ivoUhu3aAHZaluQqa8H)coQY(BP3KHlEUCVLNISwCsKVutpdOr1iCuzCcS2McGkabzOfb(RCJ2MAOmhxWy(3IFF(dkolxnee64fBiSgu7Ulxj4JGhhG9(hakeIJvTIUIDhIDFAtI)s0YcuddbqaybFolcNGWcRKxtce8)ESTNIglG(xQwW1kk82OT4xj)eUBb(gSMiLmyTnwQtjaTt0IXDP40kZnOKapOOgMahSeNeaOJwT(brBzEQLFgUita3PkLuyWEpGSjY7j(XUEf4zeB9GNWhrds68C36gxqpjvIqypaVGqPNJCbSSehf45LHLPt6V6UioaTF)yIytnAFz2gYvDxuuxbeqANI6(Pk0b(i3tZ8AVG54nxO8CHW0wMlAc7MsKBDrIak9WdKdv585PK3KO4u47RJr15yj7J(K(D(IeCPISYx567I8FbZZvrbBbhAGa4PwZvo3qqQSUSFGuJtcZ(C(seNiDcaJDxRCcq6i(X8OOKWyC99TEEO)UpP4SRbdSu3oIK1R5cK7drVes)WQviA5dxMpvsZq3f3spqsibcPQrkbjEdguGc4qlg0Jcp2A04a9FSDopACfnZ1KRaYmdSirwzXgPqJAir8fbuWjxul)J8f36XfcugKUHqqqqUYLqd5wGTKnNc)OCUhSsgWcumr6)nt)BNkxcyq8u0Lrr3vKutRpEUXQvK5bcLoHYlieNLm8tnDHOtPU6uUisxyC9HaOeuqdLIxefGHKKH7s9Md8gYjqmFc1Pvzp(kGDLYpBvm(FjHPKtA6FA5LEIwLw7Z4qMuVd(4hsahiKAprzPNSfjrruqUu9xuA)WDFhfy3FrcegfNG3riTu1joqQhSGq1aPLHFG)xlHlPol5j1tISY1MhkWHJlN1JGr(wLs)CEmKAGVK(Iudxcu)Lp8TaJcP9HxEEkEJphbnzK3Ludamf8Ku0nTe7Y0UYslqc(sfz16OoFOcgvVrf63LL4NAgGcUqskYdHAnu6lUiFK59Afd9MIqHmUdKkRY(cM33bWAw6rHEmFYjlg2sg0uq(sbHzlZpH5bJ4FJUoFVRGfbUyyRrxBXLC(Cpjkyms6HKMn3ZzHb(O5gglrnFBcaWfVlKJj4edH5LGEKlYq557azjMa5FgeHzHjsa2XLyYqmfwxkjJ3LcNyKkPPfhbUI6b0QrMPpmJKUBjVkOTnEtuDyjBlPXSKUgmhFNVus(zy6rwaZpaIFc5P9)KE4Kjt4I(faf71apIUjZaOcIlGZpq(FOOtBNtMCKaRRllk6T3vAn4XxJbyKjYCQwyStPhjl0jKG)IDvZiOgpgKEkcWHu0zkjeyBnrbRawE21mcffJdree54RYYU1rXjGa4a5K5SEXYRo)u3vxH7UWbJQX)9yq3za9DjI7i9imqrRjY7TGsBZHCeoaZ6meSSglZnBaKTp4lz8DQ89gZP1JLLhjcFdobtBCSo)nojCWWtKYX45uOX07CRpeO(r5WkFNKWrdIqOWl41xjVMd(DNB5HX7(NvqLV6QZkrG(gumjS6C9GtmbxDuAKZvplg1pvyatfjQoFLjgTzc1ZAyva3AhkBgy9YS6qjvt9T8y5zlJwoc2k(OMx2rVa4SuEDbVkPa2HjFK6oZbpvoQihxn5rjAkJSsREV5knLAAYwaoB(QkJFulCVbLwdkzzMtvS1kArvJH4ObLL56zQOc7WpDDRLH0UtPgCoOToORIR5qkhj)lxH5opAxx6WGINchGhD3E9GZoGesLbY8ghKQMEoH3f6KL)WJgzW3mzG87JX81C9NIig99a52(NoyjNGwvkWiOgcQqPPDLpj6p4DxKY6zpIJCZUfz)qAhdF5X5LudY2Lcge4ERIL0)mPQiF5jfMn0YS3ySEdG9aK9B2S5kCOVNzUxqRj1yVM7qMwpwfDoFuoLKlGAerDrZJVi8gP26TJSaGn4KhEyCBpK99sTLbyBgyc1oZ5agC1LtY9YNpKsE8uc69mpVs(7kEDWBxn2A4T0MVNnnF(ktG8jSaFuC(kXELNU4aFSAuB1MSPKW1n62z5EWqzqdxApUOttNWaxbqGKWhRCl4ZCMGxfWaRcEeMOIG)5qkkYmYA2qGAJ6opBI(Oa1shzj4TqPtp4qQNGIeT7PkK5pPHy5Ajii9Dk)mzFbpjUj3sGsmwubdtpH9Ykm4qpxDXDWYtvD8kNv5V7JbfxDObj9trtuAXsK3Oe7jRONZcpwygFL94yvMRp94H18GA(HWPFud5rxCQnLhTMBmCYCuvpREiTeh1XmbEtlzcCNScaorybawfaXeQOH(YA1qpKWxNirAPq7qLpqIPHe1kC5rTYRF(ynP2PKPCdseJvvR)1xbRbJ3Y(9sz22YMkTK9RO596RUyADB1SSJdw8ginkzYE1qE9TVCsfmOZBOmFoTXmyb451r(vhpxr8P4ln)QflDsFHRw7dzOkh93aowFCO0VxKSKwojcmStPWRQBPIgK(IxYUC2k65JNoA0iDGAGeOagq5LSROujxBTUT7gs7j)6AR9Czfa1ZvwTW3M1GA0oHBG402yk295OS0rWE)rqf(kW3K5btSnuzpbpPyvp108KC8f73KysDmtvE6KrTgFZshiLyLxOZkVqow5BsZblkVlx8MZneUSdUkpYHr1wNvC2(ajvxDu8j4DfwXr9E3TJGWe1TInWG7gZ(vGuZQbgRdUQ66x3lck9sWsJ3WR1eABZ4RZXutzr1M40j(P5f)A8AC8vaosIElqEjDEPjcdpjg9UmpOIK8uIcffnBGINGednetnBgKN(ch5bQGhvoYzxiU(ldOlYqNtETuz)Zt2zsxZJXMxFq5msZF9N5I6qbpg1peJ3QErPovFq9ARNQeEeGOQ7hT06iatAlK4vkVWRu8RkgsF6sMrpCRKHOZNHI)3J0VRmH2KE5XmZcfuuk0EEGTIsRkTA6Cm5GNBP)OK)HH9KOJI5qwffSQyHHsG0r9bB2OrPnKrN)hZj5U3kgMc1ujLZAKLxuZ(FZKqjhxq2wMSnmv22J04pYsi4LftImARWjaurDUpiYB5a67f07l5mzuNXKsIQfqteE466zzVloCprk)36IChK2q9otXBPmcQFFt6Up6S3tAgSWkHWRG4nyb8iXU3t7iTuN(q6W0jIura0cb5J74oldIjg(1ME0guq0eut6f6PA2Ncy9RXLYauGeg2Q0q9f26wcVyANxU7A6MLGJJ7Y)jIaVajfAA9Vih96AE6M28y9c)xaQcvYcWOUbq7HgV5RN(yD3llB3ND01x(Imy6FUdBUNbifQMdsncr1C9ugL6LoRU6TBV(M2SUxPYRXyxuPw2DKPSjf52ktZHXbDPwjLRp4HnVDS8unwCIApUc0BYbSjIeXn(cB696UuyITrYa3FXmVuxcpPCAPP2gETfZHZFYnh63sGyUodzX5E(HkIDOMcnc9dpPCPawLe9awL86kqqo3x9LV1r2VZRq6vIZMkM187vn9W515moSP(Av3zsrSMY0NEZNdH4vBy0Ue48LaZ8O(vQCGzixDAVI0I3sHdVr9Asp4LQM2)vZ1aVPSahEqIvTzFwqb4WLABsRC0EKs2WY(6GmOWPLEXIxmXexxmdOg5ABsHAuNshEyfFZz87Lho)2ycVAoamFMnuC0RFz3m8LPIQ1ua5Z548t8Wv0d5G(gT5OJwhjqjiVV03FIWL9Z(bqaSp4foEy)EBhzMD9DaNdus7Vac4zdrG)HsiN(W3(f6VedQdP9S3n76cZbEtvhin76CmfOqKBmpYLrnQKgdmlgMxBPzge3onFML0uI4TtVlTLEfwaALQX4FejO)wo0fOv)SfwzASzpHFz0bdDVfg6K(srY2FOKjPxxk2JMBOlAUsoO3eRUOKx4WqwC(lt8IhdsK4t1iEkXkCG2lsS6B3GhnktwuKdRpk)w3PeOC9CdYL8m2)fSiHm)3y5kUwpm0SNTJa7FKBUIg6UIU0Ef13Ff1sbe8FHbnhTtEyfWolzhKiVuJiLoqXGj9KIdVJnCr9NzFZAj5eg5SZN0mR9SPvCcGtrv(16g2O2EsGyf9yRASY0jfyL0U6OiJ0X5S7GAJTZrJ9ZbjF6HeBs(k2ZhpPYiXPu4nDfiDnJcSBHUcPOeIKspCvJQ(6bht9rzwBUCNLqZOEmS(ifT8ZlJ5CO07CezmJAADeIl1JizIlPEgPcRvPRsiAABGIIN(HIK(qA4eIbm5SSyTMQilw0jk23kkhybViPq3BTjySCZQ0SCrPeR7RDVsDRUoyHOElUpFzb71I1GF21uTgigypst1IeiQ7ipy6mpqsIUJYp)SvR92sRylkx2URHScISVIEfJatTfdXw6UOZDqM2ZkTKkPE5DSVHzAS86T1XmeZBAhl6TqJSyjoY)6twOCjinS1xSj)MLAYMo3LnhR2SP9xzxZ9zdbn6HuSn93snGdrjtXguVCAt7btPI1MXCPxXnnF6EXpeYBJ19Z09U3ptOsNqBU091RPHILR)azaCwm7hU7e0O2FMTZ0jJYKYlAkJVcfyNytD3QwL1HLEsljvhw)bv7b0TBNq3Ei7MNzYBVbvNETnksLG)W38qT7BTN6EiRpBaDHJmOzOhk9jvj4Oj9TG7T5P1uLdl(2jpAq1GkI)tm4zZ7GLGj98e6bVT7zy4oKNrgRDqDRenR6zBKLkpl)KkSVOs33OslNkd7tu0MdAbk)xQN8t(Ei0pKmLmwS649uZ575ObFF26Xjjhzrto1pNijArZuwKpfjo17T)0xgPxDPTV3tt7LuhJZb0EU5OApHHg3EijS6zE3dQk2DUN77gIYMnEijaj365q)Kj39159(GBtkBaSk7u7stfRbpGBhluStU)7PoUY2wUAppZFewQNy6Xb9OXgvTjQo69BLUYrX(ksLQ3LMkoLPCZ7tG5G6tR6w3n2Ow9q65xQNu8rct(sO7SmPguNcKPS2)mOa1FD31(1Ex9Gw2uZvaTpboAS2Koq)h4FQEgZpzsyFf4)yhIFQ15)Q1exfXsLVI9OPXAsl22UgJeJUwtznw2Y2j7a3WHKvBjz09NfoSkNnTLZsOEHMpqM1YICoTL0MYp2wwuRPPMsaPqJJvzgSrlUhQCNf9UgjcMkxwPok7ZLqyvBTrIHPi5wAVAz)U1h2Rp)jUuz9xRW1pvEsccDT0th1MKRxww1d8L5lWqfGTPqTTCmlspl3DpLoBQRRuSmfiuFl7w1zDDQ16SOj0SU362ZnAlHaJVXutVcOgZoVP2UZcrUV67UdmFFjY0WBmSSd29Qj7AGfTj)1r73Xj45MZqOp6eVgeQwAfpBKM8TQ8CBpmO1EyZuYLT9Zxln03mQlQY(XLz2F1hv)vFu9NR(OQtgFhSbhz)3X0roPA(iw(JS1trAiw7mZKvGbT22(z3Y(F3TqU0CVcL9RVvdB4mUAFcTpEfBW7K(cNUnK(plxZu9)kycSbtX5h43665U7MHFV6hAC62Z()]]
+    20261125001,
+    [[Hekili:T316ZTTns8)w8hoDstDLLFO0MmXzMKM2R9M2EzI71(nrdjbjXZuK8iiTRVXJ(B)2Db4lqcsqjkN0P9lTsIK7JFyFHLyJND(SFz2nlzX8z)8ftU4fNF(ftNm58z3e)yiF2nHSf3XwdFWNTf(VFikiMVi2nWF3TdFi4bH7wX4fbBhH35JEbSLi1MN46f)d(ZMxlHfH8fZU53E7h)4p8V(4RcZO4SB24UCjx(yCXIg42R2DB8g(UBv)2zRcI43ZJ2D7s(kwIx8UBF7h(XD3c)8UBlrKe3Zq2lo7bwuKBq0z5S)mwON4mfbgdFz8)re4p6uGvrmFHhOilHphGS2vS7w2YLb()D4d3XFumE3TVNfZEvnI0WF6h(fGiBIJdfV6SZw7gVjzoQfNPDRJaAcsoB(KvtMWVA1IV(sGSFtqG3YGh8fiVxV2d0AaM4cGvFKhZ8CzOWdm49Cw8MD3(BUInW3U5bop01Fn8P4i374Oa7VubBrSfUmp4Ng(oVGa4x)UKOhHh6D8ibp6o4XGV8Tjr87y4h8s85OI(JUR3epcLjpMq4UaXw3TSOh3D7cgGUInbpS7wVGh(YnCMhkmaAY9fU3JShur4EEyd(FjPyHNl3pwPo7U9XGeaTKpjWJVh(aj)HbOcc3qIGREY3xGSsqbEG)vs8YaCbpmXd1nsKON5B2WIwd)F8IVnogSOXLRe)1C0MGr)sk(KEVHr8qwetA2eX)VjUrC8wa9WNVf0yMxeNTe(Wkevijf0ajtKQc88XpooLLa8ed)GqEhrCrYwu83Y94aHfpaua(6CoAmaxpibOj8H5jRwjsHnwsCatrn0emy1kG()kZFDclceEpESqjgP6XdG5gqlKdSqPbbih(l4Oj7VLErgU45Y9wEkkAXjr(sl9mGgnJWNktsG12uaubiOaTiWFLB02uhL54cgZ)o87ZFujz5MHGshVydH1Gz395gbFeI4aI3)aqHq8zvRORy3Jy3VSjXFj6zbMHHaiaIGpNfHmiSWk5nKcb)Fp22trNfW(l1k4gffEB0w8RuCc3TGCdEtKrgS2glTPeG1j6X4UuCAfEdgjWnkQriWhwItca0rVw)GOTmp1YpdxKjG7uLrk8WEpIIjk7j(XUEfKzeB9G7Whrds78C36gxWojvJqypa)bHYohLcyzjokWZldltz6V6Uioa9F)yIytnwFz(gYvDxuvxbeq6NI2(Pg0b(O0tCETxWC8IlurUqyAlZfDHDtjYDUiraJE4gYHQC58ukAsuCk89LXO5CSu8Xys)oFrcUurE5RC9Dr5VG75QOGTqanqb8uR5QGBiiv2w2pqAXjHzFoFjItKnbGXURvbbiBe)yEuusymU((wppmE3VOKSBahS0WoIK1R5cu6dXOeY4WQviA5dxMpvsZq3f3r3qsibcPMrkfjEdMuGs4qlg0Tc32A05aJFSDopACflZ1uOaYnd8irrzXgPsJwir8fbuYjx0k)J8f35XfcuhKHHqqqqHYLqdfwGTKnNs)OcUhSsMWcmmr6)vt)BNkxcyq(umKrXWvKwtRpEUXQvK5bcLnHkkiKNLC8tDDHStPH6uHisxyC9HeOeuqpkLVikatjjt3LgnhKnusGC(eQtRYE8vG4k1F2Qy8)LeMsoPR)PLx6jAvATptczs7o4JFibcGqM9eLLrYwKefrj5sTFrT9d3)TuID)fjqAuKbVJqAPPtCG0oybHQbspd)a)VucxsBwksQNezLRnpwqchxUQhbJITk1(58yO0aFj9fPoUeO(ZF4Babfk7d)55P4nEFe0KrExYmaWuissXW0sSlZ6kRSaj4lnKvRJ6YHkzu9ovyCxwIFQBaQ4cjPOieQ1qzS4IYrw0RvmmAkcfY8oqPSk)lGVVdG1SYJc9y(uqwmTLmPPGILckZwMFcZdEI)ng689UcweeIHTgdTfxk4ZdKQG5iPBs628aNfg4JUByUef)2eaGlEvOgtiigcZlb7ixuGYR3bQsmbQ)micRctKaIJljKHyjSUurgVlfoXmvsxlocCfTdOvJmxFGJKTBPOkOVnEr0CyjBlzXSK(nGhFRVut(jG9OiG1ha5pH60(FYiCYIjCX4cGH9AqgXWKzaub1fW5hP4pu2PTZjxosH1TLffJ27k9g84RXemYczovln2P0TKL6ekWFXUQveutedYofb4qk7mvecSTMOGvGip7ggHIIXHicIs81zv36OKeqbCGAYCwVy51NFQ7QRXDx4Gz14)Emy7mG(UeXDKregOO1e51wqLT5qbchGvDgcEwJL1MnaQ2hILm(Ev9EJ506XYYpjcFdoblBCSU8nojCWWtK6X45uQX0RCNpKO(j5Jv(kjHJgeHqHxWRVw(Bo43DUJhgV7Fwbv(IRpReb6BqXKYQl1doXeC1rTrYREwnQNvyctfjQYVYeJ2mH6EnSkGBTd1ndIEzrDOKQPXwEQm3YOLJGTIpQ5LDmkaYLYRl4VsgGDG5JuxzoePYrL546jpjrtzMvA17nxRzutmBbeS5lQ88JAr6ny0AWilZDQIVwrpQACehnOSoxVqfvyh(PRBT8iThuQHGdARd6M4AbKYrY)kuyEWJ2TLomO45ia4rpSxpeSdiH0yGCVXhs1tpNW7dDYQF4jJc4BMmq(9Xy9AU(treJ(EGCB)thSKtqRQeyeudbtO0YUYzI(nE)fPIE2T4i3SBrXpK2XWNFsEjZGSDPGjbEWQCj9VqQAYxErHzpAzXBm2VbWFaQ(nJBUch67zU7fSAsD2R5kKR1tvrNZhLtj5cOgru)O5NVi8gP26TJSbGneKhUzCBpK)9sTLbyBgyb1oZ5agC9vtYJYN)iLI4Pu0hyEELI3v83HOD14RHxsJFxonNFLjqodlihf5xjXRm7Id8XUrTvJztjLRB0TZ69GHYKgU0ECXGMoHbUcGajHpv5sWN5mbVkGbEf8iSqfb)tHwuuyK9SHa1gTDUCI(tbMLoYwWBHrNEYH0ibfjA3lvilEsd5Y1kqqg7u(zY)cUtCtULaLySPcgypH9Yom4q3xD5DW2tv95vbRYF3hdkU6qpKmofXO0MLiVqjXt2rpNfESWCyb(Id2YWSY10koEyLBtlgeY6rnudDr2AQgATqyOc4O6Cw9WzMwgQLc3IQaEtlvbCVC3)or4M)xfa5dQyD(YATopKuxNiXzPs7qToqIPHe1k8ZJAvw)0jAsltPq5gKigR6u)RVgwdgVL97LQQTLnuAP4xXY71xFX062Mz5GgS4nqjuYc9QH86BD5KkyqN3mzopTXnybe11r(vhpxr8P4lm)6flDsFzRwh)yOQ(83abvFAOmMxKSDwojcmLtPuRQlPYeK(sxY(5Sv0ZhpD0Or6a1ajqbcGkczxrPsH1ADl3nuYt(VRT2ZLD)tVoz1cFBEdQN2jCdKJ2gxXUZJYAhb79hbv4RaFlMhmX2qT8eIKID8uZYtkXxSFmXK5yMP80jJAn3M8nF5Gnr3LlEZ5gsW1HWBh5uFARnkjZY4GTGOk5eIicRsOTQ72rqO96q5bgcryowaukvnWyDWv1W16E(O2lblnzd)TMqBBE(6cM0uDpTPoDsEAEXVgp9JVbWrs1BbYlzZlDry4jNO315bv0KNtuOOQzdu8mumNH8GzCqEAjCKhacEu5SDDH46nVVl6qNl4SuB6ZlqzsxR9WM29xUkY8xxzUQouWJr7dX4TQxSPt1BuVx4zfsHxuHiIoIfv3O4jLx)u2VvLgzO56KGZLCJoveQFCpk8Tc)SPWoBYPpjvNkLQnprtr5wvAkDoGCWZ9ZFuQhWqD96Uu5XaQyhuflm0cHoUYAtX6L2udD(zmxOOKt0nLBbwxjdFDn77ltQKeOG8SmzByQ8ShLVQd0033V4VdQrdHivyHyrBfobGzLZdbrElhqFVGTAjp5rDgtkPQwanr4bkRN19Uel7eP(FNlkDqQ36JKHxsz4w)(f0D57CSlIdwyzt4vq8gSXvKA37PUtBVNpusjDkal4HGYbyqTmiMe4xB6wBWartrnzxOxUwFQG1VgxQkkbsyy7gd1xyRBj8IPDE5URLSvcooUl)Nic8cuDUSH1)Is0RR5UBAdy1R8FgykujZTrBdG2dnEXxp9P6UwwfJxE0Tx6TeG)5ov3EMutOgIf1tiQPxP6TZu5zL1dPrzVqKYRrMAJqdMoAcJnMp6LeRjDxuPBSDuMSPa12AAXHjbDPZbL7w2HX3o2SMg3QETVSD6DraEkrI4gFLd9ExikWyB0miqwmZlnqXZQKwI12iRT4oC(ZU7q)2qaZBxplJ1louvSd7nVrOF4jL3i(QKOhhN)YIlHK5sF1xFuhf)oVcP3xkB6FuZVzWNPdxAH9KLH1un707UBiKfBdJQ3NZxccZt6)sLJ7bfQt7L8v8skC4nQx03bVu10oPAUJWnvp3WdsTQToYcgahUwBtbIJ2Jc1gwowhuxfYw6vJDXetsDX6IAuQTPWQrDQW2HvInNjVxD4YBJLbRfaW8PoqjrV(LDZXVUZAqXtfE(7S)A6MCWyJ2CWhRJeOgKpv17pr4YPX(aiaof3chpCALTJmZU5EqYbkPn)(4PBqGJ5Fo9HV9Z0)ocOoIXZE3SBkWd8IQ5Nz2n5ykqHi3yEKlJgZgnbywmWxBPzge3onV0sAkr82P3v2sVclaTs1y8FceO)LiOlqR(jJRcBSzNIFEC(77(bWVt2lfjB)HsM0EDTypoA(DXYvkb9MA1fJ8chNVI838X5hj(unINsSchh7IeR(dl)tg1jlA9H1heDRpN)OE9cd6L8eI)zSkHc)xz5kU2jWV5iBhbX)ipAanmBaDz4aQF6aQLci4)1gSC0o7Cva7SIDqI8snIu6iXcU0tk(4DCCbQ)eNB2kjNWOKD(KMfTlNwjiaYIQYR1JBqTNOEsu0ZTQjktNuqusNjHIcsh5z3b1ghgHgNgbs)0tj2K(vCIfEw1rssP0B6gq6wgfe3cZ0qrnejLE6Qgn91toMgJYS1C55IG4OEoS(OeT9zUhK5mQzWhiPupJKjPKM4HkIwLzIGOPTjkkE2dks6dzCjibWuWYI9AQkm32Cuy7GuCGn7I0a9i1MGWYJArfDQ0qwqLdRhNDVkBRU5VGOElHoFzbF1I9FF2nuFgibypkr1IIhQ7Gly6KlqAIEqYp9IvRtMrRylQx2UJHSMHSVQEfNatd1bjw6HNZdoMoXfTugPERDSFCpAS16TnVhKWBA3k6daISrjoY)DtSqRsqAyBCytXmlnIiDEgrowdjs7VUUMNsecA0tNyBPVLgFeIsMYlOED1M2)LYeRnN5sV0BIF6rXpeYBJ39L6r37hgQSj04LESEnluSv9hOaGCXCC4UtqJw)z(otNmktlVOPQ9k0CDsm1dRAvfh2nDl1ECw725zThQi5strOnSC3RdbqQg8h(rFP94H90SVy97YVlsKbld90FpRgbhnTVfCVTOJM60xX3M4rdQgur9FMbpBENPemPNBF)Q1STej2K6Sd1gKjAh0S2qCvVcHSYVz5NSG9fv6(MlA5uuyFXD2CWiq9)k9cwYR7x)qTuYzXQJJtnNhh6xSzaDmIthNj0rYolgrN(5CarqVP636sjlhHH35ZJYDUY23BOP9JP7OE0gTN2tG34wSiLvV61kDgR9tZ8(pop2uWTKaKSQxh6(fB0QeOhNt(8bpKp2ayv2HYvMAsbEOUowOyNIS2tZlKTdm0EEo3iSuV4UJd6rpBu1ra6OpTq6ghfNkgv5sxzQPmMQVTpbMdAkJQBD34yg1dL4ELEHLhjm5ZHzlYKzqDgqMQ89tGbu)nBs73Wj1dwztn35pjXTifE)NSEQEnMhNLZA0W(kz9XoT8uRRZuBwJQP3bnnYtDCMNAYI0YHEI0UU2wunb3YPH6aR3xkQTux5(lchwJKM2YrHtVVRhOWAzp)M2sfq5N6ilA9Yut1suyUNQWH6E7FhHgzzXOxrQGPUhvAGO(uPewnvwKAykPSL(RwoUw9H)6lEM7Cu)njx9tlCKGqx7HZrDgV6LLv98HzXcm0quB6BzlNuGwg)RdSnNs1YuIq9DFB1GH1PjdZIzOY6rdBp3ZSecm(cen9grASq7MMAmlu5(ASXoWs3LitdVaTYby3RzeRbr0MYAhTFVr8xyUcH(yqYAqPAzsYSrBY3bZlS9Smw75LsPx2ooATmpAZOHak7VShZ(RXa6VgdO)CngqDY57GD4i))owoYjvRhjXU)ch9CugI1bZm5fyWQTT)Mhz)F0JqP08OUK9N(Og2WzC1XCzFIk2q0j9foDFi9)Mintn(MGlWgSeNVNFNRN7UBh(DQ)kptxE2))d]]
 )
 spec:RegisterPack(
     "Fury (wowsims.com)",

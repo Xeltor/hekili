@@ -578,7 +578,7 @@ spec:RegisterStateExpr("seal_up", function()
         or buff.seal_of_wisdom.up
 end)
 
--- A tracked fear or incapacitate is breakable by damage; a missing count for a learned control is ambiguous.
+-- Keep single-target recovery on its existing breakable-control policy.
 local function noCrowdControl(ranks, auraID, t)
     local count = Facade.DebuffCount(auraID, t)
     return count == 0 or count == nil and knownRank(ranks) == 0
@@ -682,8 +682,8 @@ do
     end)
 
     spec:RegisterStateExpr("prot_paladin_ground_pickup", function()
-        local sample = recovery.evidence()
-        return sample and sample.otherMelee or false
+        local sample = recovery.evidence(true)
+        return sample and sample.otherMelee and not sample.criticalOther or false
     end)
 
     spec:RegisterStateExpr("prot_paladin_loose_melee", function()
@@ -915,17 +915,16 @@ spec:RegisterStateExpr("prot_pal_stun_to_heal", function()
     return canHealAfterStun(action.flash_of_light, manaLeft) or canHealAfterStun(action.holy_light, manaLeft)
 end)
 
+local function hostileNPC(unit)
+    return plain(Facade.UnitExists(unit)) == true
+        and plain(Facade.UnitCanAttack("player", unit)) == true
+        and plain(Facade.UnitIsDead(unit)) == false
+        and plain(Facade.UnitIsPlayer(unit)) == false
+end
+
 spec:RegisterStateExpr("prot_pal_attack_target", function()
     local instance = paladinContext()
-    if
-        not instance
-        or debuff.repentance.up
-        or debuff.turn_undead.up
-        or plain(Facade.UnitExists("target")) ~= true
-        or plain(Facade.UnitCanAttack("player", "target")) ~= true
-        or plain(Facade.UnitIsDead("target")) ~= false
-        or plain(Facade.UnitIsPlayer("target")) ~= false
-    then
+    if not instance or debuff.repentance.up or debuff.turn_undead.up or not hostileNPC("target") then
         return false
     end
     if target.is_dummy or Facade.TargetInPlayerCombat() == true then
@@ -989,52 +988,62 @@ spec:RegisterStateExpr("prot_pal_solo_dispel", function()
         and state.prot_pal_self_utility
 end)
 
--- A nearby plate is a reason to spend mana on an area spell only if it is fighting our group.
--- An idle or unrelated hostile in the same radius makes that cast unsafe. Cache the live observations
--- for the evaluation; simulated cooldowns and mana below still change between forecast slots.
-local packTime, packTarget, packCount, packSafe
+local function inGroundRange(unit, probe)
+    if plain(Facade.C_Spell.IsSpellInRange(probe, unit)) == true then
+        return true
+    end
+    local _, far = Facade.LibRangeCheck:GetRange(unit)
+    far = plain(far)
+    return type(far) == "number" and far <= 8
+end
+
+local function plateInOurFight(unit, victim)
+    if plain(Facade.UnitAffectingCombat(unit)) ~= true then
+        return false
+    end
+    local raid = plain(Facade.UnitInRaid(victim))
+    return plain(Facade.UnitIsUnit(victim, "player")) == true
+        or plain(Facade.UnitIsUnit(victim, "pet")) == true
+        or plain(Facade.UnitInParty(victim)) == true
+        or type(raid) == "number" and raid > 0
+        or type(plain(Facade.UnitThreatSituation("player", unit))) == "number"
+        or type(plain(Facade.UnitThreatSituation("pet", unit))) == "number"
+end
+
+-- Consecration is centered on the caster. Two readable plates establish two enemies in its radius
+-- even if their relationship to the selected target is hidden. Stay with an existing nearby fight.
+local packTime, packTarget, packNearby
 local function groundPack()
     local t, key = Facade.GetTime(), Facade.TargetMemoryKey()
     if t == packTime and key == packTarget then
-        return packCount, packSafe
+        return packNearby
     end
     packTime, packTarget = t, key
-    packCount, packSafe = 1, true
+    packNearby = false
+    if plain(Facade.UnitAffectingCombat("player")) ~= true then
+        return false
+    end
     local probe = HOLY_STRIKE[knownRank(HOLY_STRIKE)] or 6603
+    local selectedNearby = hostileNPC("target") and inGroundRange("target", probe)
+    local selectedEngaged = Facade.TargetInPlayerCombat() == true
+    local foughtNearby = selectedNearby and selectedEngaged
+    local count, distinct = 0, false
     for unit, victim in pairs(recovery.plates) do
-        local isCurrent = plain(Facade.UnitIsUnit(unit, "target"))
-        if
-            isCurrent ~= true
-            and plain(Facade.UnitExists(unit)) == true
-            and plain(Facade.UnitIsDead(unit)) == false
-            and plain(Facade.UnitCanAttack("player", unit)) == true
-        then
-            local lo, hi = Facade.LibRangeCheck:GetRange(unit)
-            local near = plain(Facade.C_Spell.IsSpellInRange(probe, unit)) == true or (type(hi) == "number" and hi <= 8)
-            if near or not (type(lo) == "number" and lo >= 8) then
-                local raid = plain(Facade.UnitInRaid(victim))
-                if
-                    plain(Facade.UnitAffectingCombat(unit)) ~= true
-                    or plain(Facade.UnitIsPlayer(unit)) ~= false
-                    or not (
-                        type(plain(Facade.UnitThreatSituation("player", unit))) == "number"
-                        or plain(Facade.UnitIsUnit(victim, "player")) == true
-                        or plain(Facade.UnitInParty(victim)) == true
-                        or type(raid) == "number" and raid > 0
-                    )
-                then
-                    packSafe = false
-                elseif near and isCurrent == false then
-                    packCount = packCount + 1
-                end
+        if hostileNPC(unit) and inGroundRange(unit, probe) then
+            local same = plain(Facade.UnitIsUnit(unit, "target"))
+            count, distinct = count + 1, distinct or same == false
+            foughtNearby = foughtNearby or same == true and selectedEngaged or plateInOurFight(unit, victim)
+            if foughtNearby and (count >= 2 or selectedNearby and distinct) then
+                packNearby = true
+                break
             end
         end
     end
-    return packCount, packSafe
+    return packNearby
 end
 
 spec:RegisterStateExpr("prot_pal_pack", function()
-    return state.max_targets ~= 1 and state.toggle.mode ~= "single" and groundPack() > 1
+    return state.max_targets ~= 1 and state.toggle.mode ~= "single" and groundPack()
 end)
 
 spec:RegisterStateExpr("prot_pal_tanking", function()
@@ -1167,16 +1176,25 @@ spec:RegisterStateExpr("prot_pal_spare_mana", function()
 end)
 
 spec:RegisterStateExpr("prot_pal_ground_safe", function()
-    local _, safe = groundPack()
-    return safe and debuff.repentance.down and debuff.turn_undead.down and paladinNoBreakableControl()
+    return paladinContext() ~= nil
+        and hostileNPC("target")
+        and (target.is_dummy or Facade.TargetInPlayerCombat() == true)
 end)
 
+local function canConsecrate()
+    local consecration = state.action.consecration
+    return consecration.known
+        and not consecration.disabled
+        and state.prot_pal_spare_mana >= consecration.cost
+        and state.debuff.consecrated_ground.remains <= state.gcd.max
+end
+
 spec:RegisterStateExpr("prot_pal_can_consecrate", function()
-    return state.prot_pal_ground_safe
-        and action.consecration.known
-        and not action.consecration.disabled
-        and state.prot_pal_spare_mana >= action.consecration.cost
-        and debuff.consecrated_ground.remains <= gcd.max
+    return state.prot_pal_ground_safe and canConsecrate()
+end)
+
+spec:RegisterStateExpr("prot_pal_consecrate_pack", function()
+    return state.prot_pal_pack and canConsecrate()
 end)
 
 -- A self absorb can help through a target switch or with no enemy selected. Read player combat
@@ -2189,8 +2207,8 @@ spec:RegisterPack(
 )
 spec:RegisterPack(
     "Protection (wowsims.com)",
-    20261125000,
-    [[Hekili:TZvuVnoUr4Fl(fxB0T2ooXBtx0eGT4qr3IRloGCpBzAjABErs0GKkPUiW)27qkzBrksjsBNDVdyF4UZXsA(Mz4OVzgo888BM)RZFkbjWZ)60jt)4n3mD2KjtM)Ky3w88N2IIFgTg(qokd(3)cJkWXccnF)IbVsFLtY4JIPzdL35UukkrkTLfKuXxYNV0QG5BXXGK(8p)5F6lF9tBpkX5pTHKKGlFmmpUf0(0(fIn49lQ(UXROm8ly2(fj4vOIuX(fF(x(59lGVE)cnHuqglHNpElkfLqYhFc(XOTP8Xvcye8hJarNo8daumuopfmKe4Zuj0e((fOKeA(Fc(WZ4D8r7x8tib6twuPb)NV8RGq2ieB5FA841eXMILsRySXToeKjO5OLtwnzc(UvX3F7iWTYORiPGRhP0s(OTmm8WlrIh2qt3fLswVr8HecFBkAx0sCk91hMn5dKvpuDxt6lORxNIhbMgoNtEbZ7lT6iWfeTKSoAdgLU)F3q8)5hgVkfX3erxzfK79gKyex0ckonJRgcmPWX0cE0Qc2onHUSy1Qr6xFuc918tYodrYfW)OUMd5JfmYYc5fIqfmKgchf0kcon50FkVXOmcNtYxBxSj4xONVm73RuMJm1UrpNdgODi5GpuUG3Wp5crbk)zjyk)y9Nw5fBhKJU9CmN3gAdg0ZeW3oyDAyQSSH9h0t9TfBFBGZ7YIgxSD4WH2vzuHGgHecGn8dfCm8iRIwhN8Wn2vBUaXev3V)Hm9kdgnxUk2coGtIUGlJgXjV1ewgIKebOSDO9qchg3bNaqPgfZk4Oem7K(y7QxOoDiO5WY0j96DHt79Kj79I)69H16QYv9nJHYKxAfnUG)WuVWZt(P)WWkDL4IK2RGMJHspYKp2afUYWxCAkAzkoAlLWbve02gxc(mgXXJQ)Iliqbodc(z8OLfPVIyMkN(7gFCMe2wELaEB4LDsIdoVGHl9lMi0ynmiv4UUuHsFzu5L8vfKYhcJ3GYt4gaEZStRqp2kFaodZwJZJ31KSbLbxtgC8BaPljghQrXff5rqaudbd)TyJkOOvV2TtcYRzcb8sceAj)M2xBoFusiVaPII4BKVKAi2PDjwonLgrYYkYjIDwKQ8glBx4Qj5MROGGoXxQEVf4xG4brFZyhGJhZyfBf8(jyv8Pmtc4JLjO7TKY597v(OJiqiR8VR(ZxH2qi53m541PfcojbdFtLKAOxvzyEr6fiugygrhX3hU6d2KSVlvfbiggmSICTN(3kswdH)5IMCBAcqk9YNoIHrjAUu(RKvIORHKIH)doMHuR4Mp4AgTihkUHe)m4URLmpp64ZH73t7zkKVxlQEg98YXuOjqOmlqj6sLRUzGF0GuxvlchYM(mUXdLsPGqZWPyC)xXOTYeqK)h(XjNJ7VuyvHLAx5OeIqPWBgqtZN9kZzcsPtydfYp2Me9QgU6LD2oNDWLDoZ70bHv25fk3w15PEl7emuWG8fGsMpV1(RgcqLkQQmvurmmoHMPXSAKD3cqvXmzWRAQqn4LAbJMcVrxDfsEmcEdKiK7nuFhC268RZQLraNUkck6nfysllUWIk3O(I4umc0xFY2uwZw)M12LHwtITwAx4v9TTGrwT7IuNWb1GMZ)YiDSgPrhQNICMzgYARGeguPxSCHkkPqRiex9U94f17Mhv()Opv(3rc6g9SzVgKJxV9ESmsaMk5CGLdkZArdn6(YHw89Q5RQClQAl9W11njZXflLmnA4PgAnjcCuAsOREYsiCw8I2Rc3B(QW9Eu6r7QtxVQDj1PeaYwRdwlSTrbh1w5ufYMHYrp(qvS1X7EumLloRcGEF1E7nG8kSMVXFL4ySup9GPb9GuMYxiR8ggaO6rjsqYWpmzOULCBdl52jT6OBiAd3n()szXeEM)g1LPphWRHIyVM0auLPnuLPD4AoIOszGvfbkTmK8WR3jvTWmcNlZ2M82HMiBEhgjGVwKpjfmjYxd(hBBS55QwEVFNxdacyBq7y)TKLcv6GGU9tkYY2vlc5WE03mVDJSsHs02u2DZ60jr4GEnitv(J3IP0uzYWAxGHL1mX)7pmWYfLXysb9xMmCyB(dp0zhfonOzHdh0i5)wUxGrvFr)EwlYWR1jVkKY5BMweC1gyWrRc6nnDUSlMxXIThsfxHey3FGX7hVDsm61F1w7gwG2zDkwtavZoN)0lyghUzJdjrkHl4QtMr5bsa(4xvNuJkx68)bCP6nop)RZMC4qcm)PtTxp)PygrGzee8jpgf1HTXyUa0O2b8(AaQVRbHc6XnIqI6T(J65BMAiENbIheVExAwHiWU5KOnZfAg0)wXZzcNAjuKG8rhGOLb7SrOJuwsf4VAOabGu79tEYwQFjicuYniJzbWV3H1BTltF0nBTB6z)MNrdNst4Vzyc1YpkzcoAs12tG2nK67gGeGBM4YjDyWG1LxB7AtRBBJcQoyU(4S6q5)U54EICU9xM3Us)6GO7oF1pVNyyG6xhuI3m70ZxF(JndiczSJkKnPgT4zosgBoWipDA1NiPcttcsdmVDINcwF1WTlV2Opv4BYDAAZVh4FAUOkvWK90qfMwlhO28o9uZ0ggPcqtgZUbukSdhCZZeutooVIKoLq6pgJgvviLjxBtZP5ur9jr3utMvxXyh7RXj2MJbvjEtIrxI3OBUWaXKD7GqR3kJtjEXdHvPcM0CUSt9P06uP0MpRcaxf9vR1cNsZ5GBvs2KT68JacyCRkKnjPU0GJqX3vvEN6p1lOuYYKk6m7TYVreR6YXKsWeXz(3CLNt5vbBxnro7AyO6q2r1vtVAwQLjcRuGokFA6vXMDbURMlx2CyVwtZ19iK(DZCQv2RlMUQbxhsXcDpa72MGDNTLCRRMKlNP9vrtdrDm5t7ihH)9j5yf)Qm1BLM7IjURnqj8XHRG7Q0BSRjLlr4UURxl0D8)ChsUpvbENjPU5J4C)oCO(F73UJ7mts0ThVBIXJlV(mB9g1pu2pLMF(CRun0GLlzM8kf1vsNok3mG5r21W6vQHzUGZQ20auQZys41Is6Ao(ktY3YT9OO33xdtPTotPOp38W1UoN9)3PH)RSAxPJommMWn3ltr1ovakn05oF0ARlbOJFtoUaTpxpPHoZ1MmFTzmVWdsGsxDLfTTbZCU6R58AMzM)7a4ohyZ1azpMJZmZCEEVX11lvT0BFzNkbL247g10oXRVd)xbPVjXAHX35zz4B8HzqzpMzWQPMFNphd(uR7mxP06Kr5YoaekSdBhNUCkulUtLEyM(WpRnGJfH7ZfHhLj)rxK(Dv9PJZtHsMUiNBnNEDVMq(9v)p988FCAk(XPPWZZ6Gk6l0KZbHGhzHDr6PZtga(DCgle)4muyZq8(mu0w0xG)mp45VPcA)opO0TU2uO6)Go0u)SDxxQo2439bfTSqTaSHckX)c)mjLSFXG)z1pjoQlp)))]]
+    20261125002,
+    [[Hekili:TZvupkoos4Fl8chOBoGMUzU(gD0sZPvNU50EJwPEFMGjXaE7KyuStZXPw8B)k7KaX2Xj2a9m7knpS7stsQVQkx5RQYLxwC3IFDXZrioEXxNoz6hV7UPZMmz6IN5h2Hx88ou4lOnWhsrjW)(xYOCCiNqtpUCWE6EgjHnkKMmuCNhIPOiH0wLtI5FjDXQgfmBhoeK0N)5p)tF5RFA3jjU45TKOiCXJHzHTG2NoUKVfFCz53nEnnd)ko74Yi8AuEm)4Yp)l)8XLWxFCPIqYjJfWZgVdfJIiPJpd)y0Uy24sbmc(JrGOJh(baQmuklgmKi4Zub0e2XLOOiA6Fc(Wl4dSrhx(tio6tnOsd(pF5xbHSLZ3X(04XBi8T5RewXyTBDiitqZrRMSEYe8dRdF8(rGBnJUMedUEKulzJ2LHHhEfIpFln(qqmzZw(hIiSDXOdbRWX09ZNn5dK1ZlVRj950nBIXJatdNYiVIz9fwDa4ccwr2eSfJIp(Vne)FE(41Xi22a66gb5rNbjeX4TGIvZ4MHqMq4yAolyDE2bfHUkF96rQxFueDF6zzNGiPC4FKxZI8X8mYQCXfcq5zifeojO1eCC05)uCJbjegJKUPzXgHFLE5YSFVczosx7g9skyGndjd8HIfCd)Kne5O0xeGj9J1FAPxSDqo52tXmwBOnyqpDaFRY6uWuAzd7pON8BZ392aR3vdAC(UHdh2SkJY50aeNdSHFiNHHhzDWMWO531SAZ4OmE597EitVIGr9LR8DGd4SOZzIOrC0BMWMHirbak7g2CiHfJRYjauQbHz5mueo7S(00vVsDQkOPAz6SE9UWP9EYK9EXF9(WADt5Q(MXqPZlTMgMZMp1j8CKF6pmSs3iUiH9YPPyO0JeXJnqIRi8fhhJwfJd2rjmqfbT14sWNXigEu9xCbbYXjqWFglyvE8EuMUYP(UXhNjGTLxjG3gE9GG4GXYZWf(fDemwd9sfEOlvOWxguCjxvbH8HW4TO0iMgG3n78k0tTYhGtWzBWPHhmjBqjW1ebh)gq6scX(AumEEAaeaziy4V5BLbfT61UFIxEnDiGxsGqlX30(AZLJse5vivuaBR4LunXoTlXYOX0asssEkHFObPkUXI2fUzs2Cffe0z(s57Ta)cepW7Rh7aC84SS8DCw)iSm(uKjb8XIe09wrzS(9kE0reiKv83L)5EOnes6DtoDDAoNrIWW3ukjd9QmdZRcVaHMbMrWj8DHRUYMe9DjRiaLHbdlpv5P)T8Onq4Fk3KBtracPx80bzyuKIlLTNSMhClKui8FWHzi5kU(dUjJMNcf3qcFbC31sMNgC65WQ5EdPqJEqPuaqDPwL3mWbQrClR3GbzmFbB8qXuki0eCmg3FpgTtKKH8)Wpn5sCXfcRm0t5kNKqakgI(HgJVyV)fcsHtylfYb2MeDQoT6Lw2oVS3LwoZzkF)kT8kLBR68uNLDegkkqeKxWU5S2FZqaQgrwjPKUjdJJOjkSNAzWBaOYyMe4vnzOg8IlpJg3Vx1viPHi4nqcxS)p9TWlRYHoRgRpoEDauyBmWwwuardQSrneHXyeOVUKrPOUS(M1VLG2qcBS8n)RSBxEgz9HRsD8hunAo3lv0YAKcDOAAWz6zbRTcsYGQ5cflubr5QS5w6p7PRQ)mhQU)jxQUVJKWg9L1CDgNUE79r1VNkdSGZbwoOznwyGrhww0IVxnyvMBrw)OdUUUjzoTyjLPwtn1qZKiWs5hLQG5Y056ocCSSH2de661KRPgdpqUX6uBVyHAEDzHMjOu0tZlJloD3JcPm(fv8Y7R23Cdc7Hf2TUReNcpo)AKiOaEpbs3jEzQ0BObGShIaojbpFYqvl5Edl5(jT6OneTM7g)FPzHewI7g11Ppv4zOinxpPhQYudvzAhUMtikvgyvHJIlcjREhoQSfJr4urMYO3QAYZ8o0sE6nXruEMaI61nwVlgvB9rDt9r1UCm3Hr3COMQLZB84Taap2pYo2Ojr9kfoiOT7O8KKd1cfQ2SCZKRgPo8Lr1u2DtV0jJ3GEgSMs)XBHuASiJvTlKHff2W(7Zh0WffXycb9xMmCyB(dh0zlv3mWm7ELgj(3InLlO8l63RXkbCADYPQDS(k4PjICwWL7KadT2R30ujTUAcKgSDFklYNa7(d0E)4TZIrTiP26jObOTwqsJzAQzNlE(vCgdUzTtRqmHXzYJirXjda(4xLhzIsx6I)bCP6D3U4RZMunT(fpFUh4fphMr44mcc(KdZeQAVgwWbnQDaFSgGQT27lON2TabQ37oQxUzQG4dAiwjE1wPAecpB5sG2mBOPr)3iEwt4ulHIaKpAbeLmyxmcDKYsOa)vnfWdKAVPVZ2s9lbrGcUbrmla(JwS(gBf0fDRPEcDSPWlORqHj830mHA5hfmbNmPAnU3UHuVLDba3nXMtQAcD1LxBBTsR7TIeQoyU(4S6q5(wUyF0y29x63Uu)6GO7bx1pNhDNN6xhuI3n78ZxFqGMbe(m)pjY6uJn4zorgRp5ghDA1hnOetDcsnmVFIJcwD1WUlV2miL4RZDQBZVh4FEaLsvqN9utfMwlhOYGhDuZuMkOeqDgZUbuiSQtq5fcQohNtrsNti9hJzuklKsNR10CmhpPlj6MQZSAlg7uFnwXwFEKsXRtmAt8ADZ5hi6SBvcTERmwLOttdvcJovMnBrDCPwbwzqPsaSvyxT2hSknRtqvkzDgPlFv2J5EkrwNi6Ada8fFBvYDUhuNGsklD6MlS)j3MvRStg9x71rCM7nq544wLW2vJIZUfgQkKDub10BML2WOzLkqhLin9MyZ2a3wdKRmN6AJPY6Ewo)UzGXs71gtx5eK9PGGUNKCBJsUZwpU3wJWfdx(MOP(Oo68PDKJW9EHSSIFtg)SuZTXe31MK4)CPLWDt6)12iRfi8q31K57U6FPtR2Lk9EqNux)rSUNgwu)V9BPXd6jj62J3nX4PLxxgYTr9df9mP4NV0QrDD44sqSLWOJsf9yWGDn1CPAOZJFr1v6HsDbJKU2kCxduxAsUwQSdfS((AysT1A6a1by7V215q4)onfEPvBlvs1Ws83CVofvz88sn06ot0ABhEOJFtMBF7ZDtyOZSTjWxmB3vorFPszlvxBtiXT1G2NeVeC9KuvGBDYj3cKDyGkZ0tm58oixVEYcV91D8aKAJR7Ms7mSUofEjKUMTQfQDRhQGVXNQaP9ONQQMA(D(af4sbPZSL7QtQJR7KiiX2VTf665kBWDk1d98eofI7Z5tW(buWHAz)On29UkZ0YbBqktBKZTM8UUxJl((Y)3aEXpowd)4yn44Hoqg95BYzVqWHSW2i9u5j9a)ooSd8FCygAYqC(Wm0w0NN)Wh44VYak)Yhi1TU25M6)ehyQFnDxxRoA8lHGKwMlxa2sbL4FHFHetoUCW)S8hjg5Lx8)p]]
 )
 spec:RegisterPack(
     "Holy Shock (wowsims.com)",

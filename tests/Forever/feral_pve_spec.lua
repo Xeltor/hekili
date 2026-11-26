@@ -259,7 +259,7 @@ describe("Feral leveling and group tanking", function()
         o.form = "bear_form"
         assert.are.equal("cancel_buff", (druid(o)))
     end)
-    it("does not Swipe through an idle bystander even if another mob is engaged", function()
+    it("Swipes a confirmed outdoor pack with an idle mob in melee", function()
         local o = {
             known = forms,
             form = "bear_form",
@@ -271,7 +271,7 @@ describe("Feral leveling and group tanking", function()
                 H.Fire("NAME_PLATE_UNIT_ADDED", "nameplate2")
             end,
         }
-        assert.are.equal("maul", (druid(o)))
+        assert.are.equal("swipe_bear", (druid(o)))
     end)
     it("keeps both packs flexible outdoors and shifts a Cat under direct pressure", function()
         for _, spec in ipairs({ "Feral", "Guardian" }) do

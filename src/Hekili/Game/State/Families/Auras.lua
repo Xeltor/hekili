@@ -433,6 +433,23 @@ function I.DebuffApply(s, j, ability, cast, expires, stacks, t, applied)
     return s == I.curSlot, before
 end
 
+I.On(Obs.AreaDebuff, function(o, t)
+    local slot, ability = o.b, o.a
+    local key = I.targetKeys[slot]
+    if not key or key == "" or I.targetKeyGenerations[slot] ~= o.c then
+        return
+    end
+    local area = I.ab.obj[ability].areaDebuff
+    local j = U.byKey[area.aura]
+    local duration = j and U.obj[j].duration
+    if type(duration) ~= "number" or o.t + duration <= t or I.DebuffImmune(j, key, o.t) then
+        return
+    end
+    if I.DebuffApply(slot, j, ability, o.t, o.t + duration, 1, t, o.t) then
+        I.AuraOurs(2, j, 0)
+    end
+end)
+
 function I.DebuffUndo(guid, ability, cast, t)
     local s
     if type(guid) == "string" and guid ~= "" then

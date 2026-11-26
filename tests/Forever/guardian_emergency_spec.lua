@@ -67,7 +67,7 @@ describe("Guardian emergency threat and regeneration", function()
         end
     end)
 
-    it("preserves the cooldown for a single miss and protects bystanders, control and a co-tank", function()
+    it("requires two confirmed loose mobs and holds Roar on boss encounters", function()
         for _, change in ipairs({
             function(c)
                 c.unitIs.nameplate1 = "target"
@@ -96,12 +96,6 @@ describe("Guardian emergency threat and regeneration", function()
             function(c)
                 c.exists.boss1 = true
             end,
-            function(c)
-                c.auras.nameplate1 = { HARMFUL = { { spellId = 118, sourceUnit = "party2" } }, HELPFUL = {} }
-            end,
-            function(c)
-                c.auras.nameplate1 = { HARMFUL = { { spellId = SECRET, sourceUnit = "party2" } }, HELPFUL = {} }
-            end,
         }) do
             local first = loosePack({}, function(_, c)
                 change(c)
@@ -110,19 +104,21 @@ describe("Guardian emergency threat and regeneration", function()
         end
     end)
 
-    it("checks the whole effect area even after finding two loose enemies", function()
+    it("uses Roar for two confirmed loose enemies regardless of other plates or readable control", function()
         local distance, idle = 3, false
         local function third(H, c)
             c.exists.party3, c.isPlayer.party3, c.groupRoles.party3 = true, true, "TANK"
             c.exists.nameplate2, c.guid.nameplate2, c.level.nameplate2 = true, "Creature-3", 36
             c.distance.nameplate2, c.unitCombat.nameplate2, c.threat.nameplate2 = distance, not idle, 0
             c.exists.nameplate2target, c.unitIs.nameplate2target, c.inParty.nameplate2target = true, "party3", true
+            c.auras.nameplate1 = { HARMFUL = { { spellId = 118, sourceUnit = "party2" } }, HELPFUL = {} }
+            c.auras.target.HARMFUL = { { spellId = SECRET, sourceUnit = "party2" } }
             H.Fire("NAME_PLATE_UNIT_ADDED", "nameplate2")
         end
-        assert.are_not.equal("challenging_roar", (loosePack({}, third)))
+        assert.are.equal("challenging_roar", (loosePack({}, third)))
         idle = true
-        assert.are_not.equal("challenging_roar", (loosePack({}, third)))
-        distance = 35
+        assert.are.equal("challenging_roar", (loosePack({}, third)))
+        distance = SECRET
         assert.are.equal("challenging_roar", (loosePack({}, third)))
     end)
 

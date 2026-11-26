@@ -412,6 +412,12 @@ function M.new()
     function api.IsStealthed()
         return ctl.stealthed
     end
+    function api.IsSwimming()
+        return ctl.swimming or false
+    end
+    function api.IsOutdoors()
+        return ctl.instanceType == "none"
+    end
     function api.UnitCreatureFamily() end -- no pet
     function api.UnitRangedDamage()
         local r = ctl.ranged

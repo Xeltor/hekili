@@ -4,6 +4,12 @@ local addon, ns = ...
 local Hekili, Facade = _G[addon], ns.Facade
 local C_Spell, GetTime, issecretvalue = Facade.C_Spell, Facade.GetTime, Facade.issecretvalue
 local partyUnits = { "party1", "party2", "party3", "party4" }
+local plateUnits, plateVictims = {}, {}
+for i = 1, 40 do
+    local unit = "nameplate" .. i
+    plateUnits[i], plateVictims[i] = unit, unit .. "target"
+end
+
 local function plain(value)
     if not issecretvalue(value) then
         return value
@@ -31,7 +37,18 @@ function Hekili:NewTankRecovery(spec, config)
     for i = 1, 40 do
         raidUnits[i] = "raid" .. i
     end
-    local sample = {}
+    local targetSample, areaSample = {}, {}
+
+    -- Existing plates may have appeared before the class subscribed to their added events.
+    spec:RegisterEvent("PLAYER_ENTERING_WORLD", function(_, login, reload)
+        if plain(login) ~= true and plain(reload) ~= true then
+            return
+        end
+        for i, unit in ipairs(plateUnits) do
+            plates[unit] = plain(Facade.UnitExists(unit)) == true and plateVictims[i] or nil
+        end
+        targetSample.time, areaSample.time = nil, nil
+    end)
 
     -- A matched plate may fill a hidden answer under Map. A readable answer on the selected unit
     -- takes precedence, including a negative one (dead, idle, out of range or on the other tank).
@@ -51,14 +68,16 @@ function Hekili:NewTankRecovery(spec, config)
         return value
     end
 
-    local function eligibleEnemy(unit, raid, plate)
+    local function eligibleEnemy(unit, raid, plate, area)
         if
             unitFact(unit, plate, Facade.UnitExists) ~= true
             or unitFact(unit, plate, Facade.UnitCanAttack, "player") ~= true
             or unitFact(unit, plate, Facade.UnitIsPlayer) ~= false
             or unitFact(unit, plate, Facade.UnitIsDead) ~= false
             or unitFact(unit, plate, Facade.UnitAffectingCombat) ~= true
-            or config.avoidUnit and (config.avoidUnit(unit) == true or plate and config.avoidUnit(plate) == true)
+            or not area
+                and config.avoidUnit
+                and (config.avoidUnit(unit) == true or plate and config.avoidUnit(plate) == true)
         then
             return false
         end
@@ -160,9 +179,9 @@ function Hekili:NewTankRecovery(spec, config)
         return false
     end
 
-    local function recoveryGroup()
+    local function recoveryGroup(area)
         local size = plain(Facade.GetNumGroupMembers())
-        if type(size) ~= "number" or size < 2 or (config.safePack and not config.safePack()) then
+        if type(size) ~= "number" or size < 2 or (not area and config.safePack and not config.safePack()) then
             return
         end
         local _, instance = Facade.IsInInstance()
@@ -237,7 +256,7 @@ function Hekili:NewTankRecovery(spec, config)
         return member and member ~= "player" and Facade.GroupRole(member) == "TANK" or false
     end
 
-    local function currentThreat(raid, key, spell)
+    local function currentThreat(raid, key, spell, area)
         if raid == nil or not spell then
             return
         end
@@ -246,7 +265,7 @@ function Hekili:NewTankRecovery(spec, config)
             return
         end
         if
-            not eligibleEnemy("target", raid, plate)
+            not eligibleEnemy("target", raid, plate, area)
             or unitFact("target", plate, C_Spell.IsSpellInRange, spell) ~= true
         then
             return
@@ -276,7 +295,8 @@ function Hekili:NewTankRecovery(spec, config)
         return state.spec[config.specKey] or config.alternateSpecKey and state.spec[config.alternateSpecKey]
     end
 
-    local function threatEvidence()
+    -- Area abilities use the same recovery witnesses without the single-target crowd-control filters.
+    local function threatEvidence(area)
         if
             not activeSpec()
             or not state.settings.cycle
@@ -295,19 +315,20 @@ function Hekili:NewTankRecovery(spec, config)
         end
         local time = GetTime()
         local generation = type(key) == "number" and Facade.TargetMemoryGeneration(key)
+        local sample = area and areaSample or targetSample
         if sample.time == time and sample.key == key and sample.generation == generation then
             return sample
         end
         sample.time, sample.key, sample.generation = time, key, generation
         sample.loose, sample.other, sample.builder, sample.criticalOther = false, false, false, false
         sample.looseMelee, sample.otherMelee, sample.criticalMelee, sample.otherTauntable = false, false, false, false
-        local raid, role = recoveryGroup()
+        local raid, role = recoveryGroup(area)
         if raid == nil then
             return sample
         end
         local spell = rangeSpell()
         local melee = config.rangeSpell and config.meleeSpell() or nil
-        local status, member, plate = currentThreat(raid, key, spell)
+        local status, member, plate = currentThreat(raid, key, spell, area)
         local held = status == 3 and member == "player"
         local victim = (status == 0 or status == 1) and looseMember(member, raid)
         if not held and not victim then
@@ -330,7 +351,11 @@ function Hekili:NewTankRecovery(spec, config)
             local guid = plain(Facade.UnitGUID(plate))
             local other = currentPlate and plate ~= currentPlate
                 or type(key) == "string" and type(guid) == "string" and guid ~= key
-            if other and eligibleEnemy(plate, raid) and plain(C_Spell.IsSpellInRange(spell, plate)) == true then
+            if
+                other
+                and eligibleEnemy(plate, raid, nil, area)
+                and plain(C_Spell.IsSpellInRange(spell, plate)) == true
+            then
                 local threat = plain(Facade.UnitThreatSituation("player", plate))
                 local loose = (held or seekCritical)
                     and (threat == 0 or threat == 1)

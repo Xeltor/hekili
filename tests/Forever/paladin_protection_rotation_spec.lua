@@ -1,4 +1,5 @@
 local fixture = require("Forever.helpers.paladin_protection")
+local SECRET = require("Game.State.helpers.fake_api").SECRET
 local paladin, read = fixture.paladin, fixture.read
 local strike, fury, righteous, rf, shield, ground = 679, 1311649, 20154, 25780, 20925, 26573
 
@@ -160,10 +161,10 @@ describe("Protection Paladin field priorities", function()
         end
     end)
 
-    it("protects a selected crowd-controlled enemy from a new swing, spell or area effect", function()
+    it("protects a selected crowd-controlled enemy from a new single-target swing or spell", function()
         for _, control in ipairs({ 1324538, 1324543 }) do
             local H = paladin(30, 500, {
-                known = { 6603, 20066, 2878, strike, ground },
+                known = { 6603, 20066, 2878, strike },
                 buffs = { fury },
                 classification = "elite",
                 autoAttack = false,
@@ -193,30 +194,105 @@ describe("Protection Paladin field priorities", function()
         H.Fire("NAME_PLATE_UNIT_ADDED", unit)
     end
 
-    it("places Consecration on engaged packs, keeps a melee attack's mana and avoids idle bystanders", function()
+    it("prefers Consecration on confirmed packs when mana and mode allow it", function()
         local function pick(mana, situation)
             local H = paladin(30, mana, {
-                known = { ground, strike },
+                known = { ground, strike, 2878 },
                 buffs = { rf, fury },
                 group = 4,
                 role = "TANK",
-                instance = situation == "raid" and "raid" or "party",
-                classification = situation == "single" and "normal" or "elite",
+                instance = "party",
             })
-            if situation ~= "single" then
+            if situation == "pack" or situation == "unknown bystander" or situation == "single mode" then
                 addMob(H, true)
-                if situation == "idle" or situation == "raid" or situation == "distant" then
-                    addMob(H, false, 2, situation == "distant" and 35 or 7)
-                end
+            elseif situation == "idle" then
+                addMob(H, false)
+            elseif situation == "distant" then
+                addMob(H, true, 1, 35)
+            end
+            if situation == "unknown bystander" or situation == "unknown only" then
+                addMob(H, false, 2)
+                H.ctl.distance.nameplate2 = SECRET
+            elseif situation == "single mode" then
+                H.Hekili:FireToggle("mode", "single")
             end
             return read(H)
         end
         assert.are.equal("consecration", pick(300, "pack"))
         assert.are.equal("holy_strike", pick(135, "pack"))
         assert.are.equal("holy_strike", pick(300, "single"))
-        assert.are.equal("holy_strike", pick(300, "idle"))
-        assert.are.equal("holy_strike", pick(300, "raid"))
-        assert.are.equal("consecration", pick(300, "distant"))
+        assert.are.equal("consecration", pick(300, "idle"))
+        assert.are.equal("consecration", pick(300, "unknown bystander"))
+        assert.are.equal("holy_strike", pick(300, "unknown only"))
+        assert.are.equal("holy_strike", pick(300, "distant"))
+        assert.are.equal("holy_strike", pick(300, "single mode"))
+    end)
+
+    it("can cast Consecration while the selected enemy is crowd-controlled", function()
+        local H = paladin(30, 500, {
+            known = { ground, strike, 2878 },
+            buffs = { rf, fury },
+            group = 4,
+            role = "TANK",
+            instance = "party",
+        })
+        addMob(H, true)
+        H.ctl.auras.target.HARMFUL = {
+            {
+                spellId = 1324543,
+                expirationTime = H.ctl.now + 10,
+                duration = 10,
+                applications = 1,
+                sourceUnit = "player",
+            },
+        }
+        H.Fire("UNIT_AURA", "target")
+        assert.are.equal("consecration", read(H))
+    end)
+
+    it("ground-targets two nearby nameplates when the selected target's range and identity are hidden", function()
+        local function pick(plates, prepull)
+            local H = paladin(30, 500, {
+                known = { ground, strike },
+                buffs = { rf, fury },
+                group = 4,
+                role = "TANK",
+                instance = "party",
+                prepull = prepull,
+                engaged = true,
+            })
+            local c = H.ctl
+            c.distance.target, c.guid.target = SECRET, SECRET
+            for i = 1, plates do
+                addMob(H, true, i)
+                local unit = "nameplate" .. i
+                c.unitIs[unit], c.guid[unit] = SECRET, SECRET
+            end
+            H.Fire("PLAYER_TARGET_CHANGED")
+            return read(H)
+        end
+        assert.are_not.equal("consecration", pick(1))
+        assert.are.equal("consecration", pick(2))
+        assert.are_not.equal("consecration", pick(2, true))
+    end)
+
+    it("keeps Consecration on a nearby fight while a different enemy is selected", function()
+        local function pick(engagedPlate)
+            local H = paladin(30, 500, {
+                known = { ground, strike },
+                buffs = { rf, fury },
+                group = 4,
+                role = "TANK",
+                instance = "party",
+                idleTarget = true,
+                distance = 20,
+            })
+            addMob(H, engagedPlate, 1)
+            addMob(H, false, 2)
+            return read(H)
+        end
+        assert.are.equal("consecration", pick(true))
+        assert.are_not.equal("consecration", pick(false))
     end)
 
     it("uses Hammer of Justice only for a real cast on a reachable, non-boss enemy", function()

@@ -76,7 +76,13 @@ return require("tools.wowsims.feral_pve")({
     -- 2026-10-22 extended to Guardian, Fable for the owner 2026-11-17); Lacerate (every line) and Demoralizing Roar at 2
     focus = { maul = 2, lacerate = 2, demoralizing_roar = 2 },
     -- In a group the spell can confirm melee reach even when the distance bracket spans five yards.
-    heldRangeEvidence = { ["target.within5"] = { primal_bite = groupMelee, lacerate = groupMelee, maul = groupMelee } },
+    heldRangeEvidence = {
+        ["target.within5"] = {
+            primal_bite = "(" .. groupMelee .. "|buff.berserk.up&feral_bear_contact&feral_spell_range)",
+            lacerate = groupMelee,
+            maul = groupMelee,
+        },
+    },
     maintenance = { demoralizing_roar = { setting = "maintain_demoralizing_roar", orWhen = "feral_defensive_roar" } },
     leveling = {},
 })

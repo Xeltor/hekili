@@ -43,7 +43,6 @@
 -- Block holds the GCD; wowsims.lua M.READY); live 6.0 / 17.2 / 17.2 (was 10.2 / 14.6 at L40 / L60; rage-starved, gap
 -- CK; L60 at its limit; the seeds 1-20 sweep behind the limits predates this export).
 local melee = "&target.within5&!target.outside5"
-local clapRange = "&target.within8&!target.outside8"
 local contextual = "prot_contextual&prot_attack_target&combat>0"
 local targetThreat = "prot_threat_spend"
 local packThreat = "(prot_threat_spend|prot_pack_threat_spend)"
@@ -153,7 +152,7 @@ return {
     -- Rule 15: the raid debuff, a setting off in game and on in the harness (the user's ruling, 2026-10-21); Thunder
     -- Clap stays always on here, as wowsims has it (the user's ruling: not a Protection option)
     maintenance = { demoralizing_shout = { setting = "maintain_demoralizing_shout", orWhen = "prot_contextual" } },
-    condition = {},
+    condition = { sweeping_strikes = "(prot_sustained&active_enemies>1)|(prot_cleave_targets>1)" },
     guard = {
         -- The simulator opens with a stance swap for Retaliation. Outdoor and dungeon pulls use the lines below.
         battle_stance = "prot_sustained",
@@ -172,7 +171,7 @@ return {
         cleave = "prot_sustained&(prot_dump_reserve=0|" .. dumpBudget("cleave") .. ")",
         battle_shout = "prot_attack_target&(prot_sustained|combat=0)&" .. rageBudget("battle_shout"),
         death_wish = "prot_attack_target&(prot_sustained|!prot_threat_spend)&" .. rageBudget("death_wish"),
-        sweeping_strikes = "prot_attack_target&" .. rageBudget("sweeping_strikes"),
+        sweeping_strikes = rageBudget("sweeping_strikes"),
         bloodthirst = "prot_attack_target&" .. rageBudget("bloodthirst", targetThreat),
         mortal_strike = "prot_attack_target&" .. rageBudget("mortal_strike", targetThreat),
         blood_fury = "prot_attack_target",
@@ -240,7 +239,7 @@ return {
         },
         {
             before = "death_wish",
-            line = "thunder_clap,if=prot_recovery_pack&" .. rageBudget("thunder_clap", "prot_recovery_pack"),
+            line = "thunder_clap,if=prot_clap_pickup&" .. rageBudget("thunder_clap", "prot_clap_pickup"),
         },
         { before = "death_wish", line = "recover_threat,use_off_gcd=1,if=prot_recovery_pack" },
         { before = "death_wish", line = "auto_attack,use_off_gcd=1,if=combat>0&prot_start_attack" },
@@ -264,10 +263,7 @@ return {
         },
         {
             before = "sweeping_strikes",
-            line = "thunder_clap,if=" .. contextual .. clapRange .. "&prot_nearby_enemies>1&" .. rageBudget(
-                "thunder_clap",
-                packThreat
-            ),
+            line = "thunder_clap,if=prot_nearby_enemies>1&" .. rageBudget("thunder_clap", packThreat),
         },
         { before = "sweeping_strikes", line = "shield_slam,if=" .. threatAttacks .. "&" .. slamBudget },
         {
@@ -291,20 +287,15 @@ return {
         },
         {
             before = "sweeping_strikes",
-            line = "demoralizing_shout,if="
-                .. contextual
-                .. "&!"
+            line = "demoralizing_shout,if=prot_shout_targets>0&!"
                 .. packThreat
-                .. "&toggle.defensives&target.within10&!target.outside10&!execute_phase"
-                .. "&debuff.demoralizing_shout.down&(prot_nearby_enemies>1|prot_melee_target)&"
+                .. "&toggle.defensives&!execute_phase"
+                .. "&debuff.demoralizing_shout.down&(prot_shout_targets>1|prot_melee_target)&"
                 .. rageBudget("demoralizing_shout"),
         },
         {
             before = "sweeping_strikes",
-            line = "thunder_clap,if="
-                .. contextual
-                .. clapRange
-                .. "&debuff.thunder_clap.down&prot_melee_target&!prot_short_pull&"
+            line = "thunder_clap,if=prot_nearby_enemies>0&debuff.thunder_clap.down&prot_melee_target&!prot_short_pull&"
                 .. rageBudget("thunder_clap", packThreat),
         },
         {
@@ -318,10 +309,7 @@ return {
         -- abilities still lead, and the usual reserve and end-of-pull pooling rules still apply.
         {
             before = "sweeping_strikes",
-            line = "cleave,use_off_gcd=1,focus=2,if="
-                .. contextual
-                .. melee
-                .. "&prot_nearby_enemies>1&prot_current_rage>=80&"
+            line = "cleave,use_off_gcd=1,focus=2,if=prot_cleave_targets>1&prot_current_rage>=80&"
                 .. dumpBudget("cleave"),
         },
         {
@@ -329,7 +317,7 @@ return {
             line = "heroic_strike,use_off_gcd=1,focus=2,if="
                 .. contextual
                 .. melee
-                .. "&prot_nearby_enemies<=1&!(arms_open_world&arms_short_pull&execute_phase)&prot_current_rage>=80&"
+                .. "&prot_cleave_targets<=1&!(arms_open_world&arms_short_pull&execute_phase)&prot_current_rage>=80&"
                 .. dumpBudget("heroic_strike"),
         },
         {
@@ -378,18 +366,14 @@ return {
         },
         {
             before = "sweeping_strikes",
-            line = "cleave,use_off_gcd=1,focus=2,if="
-                .. contextual
-                .. melee
-                .. "&prot_nearby_enemies>1&"
-                .. dumpBudget("cleave"),
+            line = "cleave,use_off_gcd=1,focus=2,if=prot_cleave_targets>1&" .. dumpBudget("cleave"),
         },
         {
             before = "sweeping_strikes",
             line = "heroic_strike,use_off_gcd=1,focus=2,if="
                 .. contextual
                 .. melee
-                .. "&prot_nearby_enemies<=1&!(arms_open_world&arms_short_pull&execute_phase)&"
+                .. "&prot_cleave_targets<=1&!(arms_open_world&arms_short_pull&execute_phase)&"
                 .. dumpBudget("heroic_strike"),
         },
         -- The simulator has no kill window. Keep the original max-level placement before Bloodthirst.

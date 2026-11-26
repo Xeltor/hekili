@@ -48,6 +48,31 @@ describe("the Druid loop worlds", function()
 end)
 
 describe("the Feral loop world's press", function()
+    it("offers Aquatic and Travel Form only where the fixture allows their cast", function()
+        local C = dlw.Feral
+        local character = C.character()
+        local H = headless.new({ character = character, pack = C.PACK })
+        local W = scenarios.world(setmetatable({ form = character.form }, { __index = C.WORLD }), 1)
+        local player, answers = W.ents[1], {}
+        for _, entry in ipairs(C.usable(H)) do
+            answers[entry[1]] = entry[2]
+        end
+        local function check(key, allowed)
+            assert.are.equal(allowed, (C.resolve(key, H).requires(W, player)))
+            local answer = answers[C.IDS[key][1]]
+            assert.are.same({ allowed, false }, { answer(W, player, 100, { [0] = 1000 }) })
+        end
+
+        check("aquatic_form", false)
+        check("travel_form", false)
+        H.ctl.swimming = true
+        check("aquatic_form", true)
+        check("travel_form", false)
+        H.ctl.swimming, H.ctl.instanceType = false, "none"
+        check("aquatic_form", false)
+        check("travel_form", true)
+    end)
+
     -- druid_loop_world prices the GCD kind from the ability as the engine reads it (no function branch of its own, as
     -- druid_world has): the kit's form-dependent kind resolves through the engine's ability table (ledger L757)
     it(

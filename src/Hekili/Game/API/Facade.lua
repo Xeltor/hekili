@@ -1974,6 +1974,7 @@ Facade.DebuffImmunity = VS.DebuffImmunity
 Facade.DebuffRepeatBlocked = VS.DebuffRepeatBlocked
 Facade.DebuffBlocked = VS.DebuffBlocked
 Facade.DebuffCycleBlocked = VS.DebuffCycleBlocked
+Facade.DebuffBeforePendingPoint = VS.DebuffBeforePendingPoint
 
 -- Scalar evidence from the existing event-driven player aura walk, including untracked harmful effects.
 function Facade.PlayerDebuffByDispel(kind, t)

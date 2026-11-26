@@ -468,6 +468,11 @@ local function formOk(a, e)
     return true
 end
 
+local function formLocationAllows(key, H)
+    return (key ~= "aquatic_form" or H.api.IsSwimming() == true)
+        and (key ~= "travel_form" or H.api.IsOutdoors() == true)
+end
+
 -- Every rank's range of FERAL_RANGE's kit abilities, known or not (the client's spell data): { [spellID] = { min, max } }.
 local function ranges(w, knownRanges)
     local out = {}
@@ -660,6 +665,9 @@ local function content(name)
         end
         p.requires = function(W, e)
             local ok, why = formOk(a, e)
+            if ok and not formLocationAllows(key, H) then
+                return false, "form unavailable here"
+            end
             if ok and m.requires then
                 ok, why = m.requires(W, e)
             end
@@ -698,7 +706,8 @@ local function content(name)
                 local cpt = ({ rage = RAGE, energy = ENERGY, mana = MANA })[a.spendType]
                 local covered = X.covered[a.id]
                 local function answer(W, e, power, view)
-                    if not formOk(a, e) or (m.requires and not m.requires(W, e)) then
+                    -- Check the form's location restriction before using it as an affordability probe.
+                    if not formLocationAllows(key, H) or not formOk(a, e) or (m.requires and not m.requires(W, e)) then
                         return false, false
                     end
                     -- Clearcasting from the world's truth (an answer is the client's, and no instance's state is the

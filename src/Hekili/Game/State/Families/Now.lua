@@ -136,6 +136,14 @@ local rdV1, rdT1, rdV2, rdT2 = {}, {}, {}, {}
 local castE, castL, castSp, castPin = 0, 0, 0, 0
 local ptA, ptT, ptR, ptV0, ptSwap, ptGo, ptV, ptVT = 0, -1, 0, 0, 0, 0, 0, -1
 local hHeld, hC, hT, hGUID = false, 0, 0, false
+
+-- Forecast from the earlier debuff while a matched miss or an unchanged point count awaits a verdict.
+function VS.DebuffBeforePendingPoint(key)
+    if ptA ~= 0 and ptGo == 0 and ptSwap == I.curSwapN and (hHeld or ptVT >= ptT and ptV == ptV0) then
+        return I.DebuffBeforeCast(key, hHeld and hGUID or nil, ptA, ptT)
+    end
+end
+
 -- (L1832, owner 2026-11-25 "guard every refund") By cost slot: the success time of the latest cast whose avoid would
 -- refund it, while that refund is unsettled (-1 none), and the window end of an earlier such cast a newer one replaced
 -- (rfOld). Settled: an undo or the CDM verdict booked it, or the landing was proven (Obs.Landed, the point fact, a lit

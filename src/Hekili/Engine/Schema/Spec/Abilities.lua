@@ -61,12 +61,13 @@ local SEQUENCE_GATES = { form = true, noform = true, buff = true, nobuff = true 
 local KnownRank = Facade.KnownRank
 
 
--- Compatibility for saved content without a `now` handler. Modeled debuffs are rolled back by the aura family.
-local function trackMisses( spec, key, data )
-    local missedAt, auraOf = spec.missedAt, spec.missAura
+-- A miss must not leave that cast's speculative application in the simulator. The aura family settles modeled
+-- debuffs and keeps the previous application while it waits for the point result.
+local function trackMisses( spec, key, data, modeled )
+    local missedAt, auraOf, modeledAuras = spec.missedAt, spec.missAura, spec.modeledMissAuras
     if not missedAt then
-        missedAt, auraOf = {}, {}
-        spec.missedAt, spec.missAura = missedAt, auraOf
+        missedAt, auraOf, modeledAuras = {}, {}, {}
+        spec.missedAt, spec.missAura, spec.modeledMissAuras = missedAt, auraOf, modeledAuras
         local function onRow( timestamp, subtype, _, sourceGUID, _, _, _, _, _, _, _, spellID )
             local aura = subtype == "SPELL_MISSED" and sourceGUID == state.GUID and auraOf[ spellID ]
             if aura then missedAt[ aura ] = timestamp end
@@ -75,7 +76,18 @@ local function trackMisses( spec, key, data )
         spec:RegisterHook( "reset_precast", function()
             if now == query_time then
                 for aura, t in pairs( missedAt ) do
-                    if t > 0 and debuff[ aura ].up and abs( debuff[ aura ].applied - t ) < 0.01 then
+                    local applied, expires, previous, stacks
+                    if modeledAuras[ aura ] then
+                        applied, expires, previous, stacks = Facade.DebuffBeforePendingPoint( aura )
+                    end
+                    if applied and abs( debuff[ aura ].applied - applied ) < 0.01 then
+                        if expires > now then
+                            local d = debuff[ aura ]
+                            d.expires, d.applied, d.count = expires, previous, stacks
+                        else
+                            removeDebuff( "target", aura )
+                        end
+                    elseif t > 0 and debuff[ aura ].up and abs( debuff[ aura ].applied - t ) < 0.01 then
                         removeDebuff( "target", aura )
                     end
                 end
@@ -84,6 +96,10 @@ local function trackMisses( spec, key, data )
     end
     local aura = data.missable == true and key or data.missable
     missedAt[ aura ] = 0
+    if modeled then
+        modeledAuras[ aura ] = true
+        return
+    end
     auraOf[ data.id ] = aura
     local copy = data.copy
     if type( copy ) == "number" then auraOf[ copy ] = aura end
@@ -463,7 +479,7 @@ local methods = {
             self:RegisterAuras( a.auras )
         end
 
-        if data.missable and not a.funcs.now then trackMisses( self, ability, data ) end
+        if data.missable then trackMisses( self, ability, data, a.funcs.now ~= nil ) end
     end,
 
     RegisterAbilities = function( self, abilities )

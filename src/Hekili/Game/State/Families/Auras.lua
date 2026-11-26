@@ -465,6 +465,26 @@ local function debuffCastSlot(guid, ability, cast)
     return I.CastSlot(ability, cast) or I.curSlot
 end
 
+-- The simulator can use the previous application while the cast awaits evidence that it landed.
+function I.DebuffBeforeCast(key, guid, ability, cast)
+    local j = U.byKey[key]
+    local s = debuffCastSlot(guid, ability, cast)
+    if not j or s ~= I.curSlot or U.n < 2 or (I.curSwapT < cast and I.AuraLitSince(j, cast)) then
+        return
+    end
+    local entry = undo[s][j]
+    local seen = U.rec[2][j].last.observed
+    if
+        entry.ability == ability
+        and entry.cast == cast
+        and (s ~= 0 or entry.swap == I.curSwapN)
+        and U.applied[2][j] == entry.applied
+        and not (seen.t >= entry.written and seen.event == Obs.Read)
+    then
+        return entry.applied, entry.expires, entry.previous, entry.stacks
+    end
+end
+
 -- A confirmed landing still owns the modelled aura after a foreign miss row. Move its application
 -- off the cast's stamp so a compatibility miss hook cannot discard it.
 function I.DebuffReanchor(guid, ability, cast, t)
@@ -495,7 +515,7 @@ function I.DebuffUndo(guid, ability, cast, t, pointConfirmed)
     if not s or s < 0 or U.n < 2 then
         return false
     end
-    local lit, changedCurrent = false, false
+    local lit = false
     for j = 1, U.nAura do
         local entry = undo[s][j]
         if entry.ability == ability and entry.cast == cast and (s ~= 0 or entry.swap == I.curSwapN) then
@@ -508,9 +528,8 @@ function I.DebuffUndo(guid, ability, cast, t, pointConfirmed)
                 lit = lit or I.curSwapT < cast and I.AuraLitSince(j, cast)
                 local seen = U.rec[2][j].last.observed
                 if U.applied[2][j] == entry.applied and not (seen.t >= entry.written and seen.event == Obs.Read) then
-                    local was, wasStacks = U.exp0[2][j], U.stacks[2][j]
+                    local was = U.exp0[2][j]
                     set(2, j, expires, entry.previous, entry.stacks, t, "modelled", Obs.Avoided, true)
-                    changedCurrent = changedCurrent or was ~= expires or wasStacks ~= entry.stacks
                     if expires == 0 then
                         I.AuraUndone(j, cast, entry.expires, t)
                     end
@@ -526,9 +545,6 @@ function I.DebuffUndo(guid, ability, cast, t, pointConfirmed)
                 end
             end
         end
-    end
-    if pointConfirmed and changedCurrent and not lit then
-        D.full[2] = true -- like a viewer verdict, a confirmed miss releases the stale countdown
     end
     return lit
 end

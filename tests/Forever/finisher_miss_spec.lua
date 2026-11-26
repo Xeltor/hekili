@@ -266,6 +266,17 @@ describe("Forever Feral: the combo point fact (lane cp-fact, L1832)", function()
         odd = { act = "MISS", lag = 0.474 },
         expect = { { 0.004, "shred" } },
     }
+    it("an early matched Rake miss suppresses the speculative bleed while its point is pending", function()
+        local W, T = run({ bleed = "rake", act = "MISS", row = 0.004 })
+        local checked = false
+        for _, p in ipairs(W.pubs) do
+            if p.t >= T + 0.004 and p.t < T + PT_AVOID then
+                checked = true
+                assert.are.equal("rake", p.raw, fw.timeline(W, T, 0.4))
+            end
+        end
+        assert.is_true(checked)
+    end)
     it("a landed Rake, our swing's MISS in its frame (core band), secret: its point keeps it up, no refund", function()
         expectPass(NEAR)
     end)
@@ -274,7 +285,7 @@ describe("Forever Feral: the combo point fact (lane cp-fact, L1832)", function()
     end)
     -- the old same-frame tie (finisher-miss-trace s36): our swing still owes its row (its MISS comes at a tail lag), so
     -- it takes Rake's own-ms avoid in its core band; the point that never came undoes Rake at the first read past
-    -- PT_AVOID (the information time, run's), and the proven rollback releases the steady icon on that publish
+    -- PT_AVOID (the information time, run's), wherever its miss row was attributed.
     for _, act in ipairs(ACTS) do
         it(("a %s Rake tied to our open swing, secret: the missing point undoes it"):format(act), function()
             expectPass({

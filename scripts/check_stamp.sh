@@ -11,7 +11,7 @@
 set -euo pipefail
 
 # Environment the check's parts read (tests/tools/test_check_stamp.py keeps it complete); LC_* are added as set.
-ENV_VARS="HEKILI_AB LHV_SEEDS LHV_FROM LHV_REPORT ACC_LIVE_ARM DETECT_WRITE HEKILI_LOOP_HOLD HEKILI_LOOP_STEADY ARMS_RECS ENUS_GOLDEN TIMING STYLE_OPTIONS CLASSIC_DRAW TIMELINE_DRAW PACK_DATE WOWSIMS WOWSIMS_CLI WOWSIMS_OUT WOWSIMS_TREES ROWFEED WOWDB HOME BUSTED BUSTED_JOBS LUA_INIT LUA_PATH LUA_CPATH WOW_DB2 LANG TZ PYTHONPATH PATH"
+ENV_VARS="HEKILI_AB LHV_SEEDS LHV_FROM LHV_REPORT ACC_LIVE_ARM DETECT_WRITE HEKILI_LOOP_HOLD HEKILI_LOOP_STEADY ARMS_RECS ENUS_GOLDEN TIMING STYLE_OPTIONS CLASSIC_DRAW TIMELINE_DRAW PACK_DATE WOWSIMS WOWSIMS_CLI WOWSIMS_OUT WOWSIMS_TREES ROWFEED WOWDB HOME BUSTED BUSTED_JOBS LUA_VM LJ_JIT LUA_INIT LUA_PATH LUA_CPATH WOW_DB2 LANG TZ PYTHONPATH PATH"
 
 env_lines() {
     local n
@@ -41,7 +41,7 @@ worktree_lines() {
         if [ -f "$p" ]; then
             printf '%s\n' "$p" >>"$TMP/files"
         elif [ -d "$p" ]; then
-            printf 'W dir %s\t%s\n' "$(find "$p/" -type f -printf '%P %s %T@ %m\n' | sort | md5sum | cut -d' ' -f1)" "$p"
+            printf 'W dir %s\t%s\n' "$(cd "$p" && find . -type f -exec stat -c '%n %s %.9Y %a' {} + | sort | md5sum | cut -d' ' -f1)" "$p"
         else
             printf 'W other %s\t%s\n' "$(readlink "$p" || echo -)" "$p"
         fi
@@ -73,6 +73,9 @@ toolchain_lines() {
     else
         echo "T rocks missing"
     fi
+    for f in .lj/bin/*; do
+        if [ -f "$f" ]; then echo "T $f $(md5sum <"$f" | cut -d' ' -f1)"; fi
+    done
     echo "T stylua $(version stylua --version)"
     echo "T lua-language-server $(version lua-language-server --version)"
     echo "T python3 $(version python3 -V)"

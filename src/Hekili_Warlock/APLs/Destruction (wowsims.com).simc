@@ -8,11 +8,22 @@
 # Setting death_coil_defensive_health (player health threshold, percent), default 35.
 # Setting assigned_curse (choice of curseOptions: elements, nocurse, recklessness, weakness), default elements in game and in the harness.
 # Deviation: precombat #1: the pre-pull time uses the kit's base cast time; wowsims uses the hasted cast.
+# Deviation: default #4: remainingTime is the target's time to die on this line: its value is lost if this target dies first (owner rule, L1902).
+# Deviation: default #11: remainingTime is the target's time to die on this line: its value is lost if this target dies first (owner rule, L1902).
+# Deviation: default #13: remainingTime is the target's time to die on this line: its value is lost if this target dies first (owner rule, L1902).
+# Deviation: default #14: remainingTime is the target's time to die on this line: its value is lost if this target dies first (owner rule, L1902).
 # Cycle: single_multi_target_curse_logic #2 changeTarget -> #1 curse_of_the_elements, curse_of_recklessness, curse_of_weakness: cycle_targets=1 (shown with Recommend Target Swaps on)
+# Deviation: multi_target_dot_logic #1: remainingTime is the target's time to die on this line: its value is lost if this target dies first (owner rule, L1902).
+# Deviation: multi_target_dot_logic #4: remainingTime is the target's time to die on this line: its value is lost if this target dies first (owner rule, L1902).
 # Cycle: multi_target_dot_logic #5 changeTarget -> #4 immolate: cycle_targets=1 (shown with Recommend Target Swaps on)
 # Deviation: multi_target_dot_logic #5: the swap's other terms (dotBaseDuration, dotIsActive, numberTargets, remainingTime, variableRef, warlockAssignedCurseIsActive, warlockIsAssignedCurse) are not carried; the list's order gives them
+# Deviation: multi_target_dot_logic #6: remainingTime is the target's time to die on this line: its value is lost if this target dies first (owner rule, L1902).
 # Cycle: multi_target_dot_logic #7 changeTarget -> #6 corruption: cycle_targets=1 (shown with Recommend Target Swaps on)
 # Deviation: multi_target_dot_logic #7: the swap's other terms (dotBaseDuration, dotIsActive, numberTargets, remainingTime, variableRef, warlockAssignedCurseIsActive, warlockIsAssignedCurse) are not carried; the list's order gives them
+# Deviation: single_target_dot_logic #1: remainingTime is the target's time to die on this line: its value is lost if this target dies first (owner rule, L1902).
+# Deviation: single_target_dot_logic #2: remainingTime is the target's time to die on this line: its value is lost if this target dies first (owner rule, L1902).
+# Deviation: single_target_dot_logic #3: remainingTime is the target's time to die on this line: its value is lost if this target dies first (owner rule, L1902).
+# Deviation: single_target_dot_logic #4: remainingTime is the target's time to die on this line: its value is lost if this target dies first (owner rule, L1902).
 # Dropped (movement): default #3: unitIsMoving
 # Movement: default #3 reaches default: hellfire
 # Omitted: precombat #2: petAttack
@@ -52,50 +63,93 @@ actions.precombat+=/summon_incubus,if=warlock_can_summon&talent.demonic_pact.ena
 actions.precombat+=/create_healthstone,if=warlock_can_prepare&warlock_needs_healthstone&!action.create_healthstone.executing
 actions.precombat+=/demon_armor,if=warlock_can_prepare&buff.demon_armor.down
 actions.precombat+=/demon_skin,if=warlock_can_prepare&!action.demon_armor.known&buff.demon_skin.down&(!action.demon_armor.known|buff.demon_armor.down)
-actions.precombat+=/shadow_bolt,if=warlock_contextual&warlock_engaged&buff.shadow_trance.up&warlock_spell_in_range
-actions.precombat+=/drain_soul,if=warlock_contextual&warlock_engaged&combat>0&!moving&!boss&!target.is_boss&warlock_shard_count<2&!warlock_health_low&!action.drain_soul.executing&warlock_shard_target&warlock_continue_drain_soul
-actions.precombat+=/drain_soul,display_target_below=25,if=warlock_contextual&warlock_engaged&combat>0&!moving&!boss&!target.is_boss&warlock_shard_count<2&!warlock_health_low&!action.drain_soul.executing&warlock_shard_target
-actions.precombat+=/blood_fury,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|(warlock_contextual&warlock_engaged&(!warlock_short_pull|warlock_cleave)&!warlock_target_low))&buff.blood_fury.down
-actions.precombat+=/eureka,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|(warlock_contextual&warlock_engaged&(!warlock_short_pull|warlock_cleave)&!warlock_target_low))&buff.eureka.down&warlock_eureka_setup
-actions.precombat+=/curse_of_the_elements,if=warlock_contextual&warlock_engaged&!warlock_short_pull&settings.assigned_curse='elements'&debuff.curse_of_the_elements.down&warlock_spell_in_range
-actions.precombat+=/curse_of_recklessness,if=warlock_contextual&warlock_engaged&!warlock_short_pull&settings.assigned_curse='recklessness'&debuff.curse_of_recklessness.down&warlock_spell_in_range
-actions.precombat+=/curse_of_weakness,if=warlock_contextual&warlock_engaged&!warlock_short_pull&settings.assigned_curse='weakness'&debuff.curse_of_weakness.down&warlock_spell_in_range
-actions.precombat+=/rain_of_fire,if=warlock_contextual&warlock_engaged&combat>0&warlock_aoe&!moving
-actions.precombat+=/bane_of_havoc,use_off_gcd=1,other_target=1,if=warlock_contextual&warlock_engaged&!warlock_short_pull&combat>0&warlock_cleave&!(active_dot.bane_of_havoc>0)
-actions.precombat+=/conflagrate,if=warlock_contextual&warlock_engaged&(talent.shadow_and_flame.rank=5|(action.immolate.known&debuff.immolate.remains<=3)|(warlock_short_pull&warlock_target_low))&warlock_spell_in_range
-actions.precombat+=/immolate,if=warlock_contextual&warlock_engaged&debuff.immolate.remains<=action.immolate.cast&!action.immolate.executing&!(warlock_short_pull&warlock_target_low)&(!moving|action.immolate.cast=0)&warlock_spell_in_range
-actions.precombat+=/shadowburn,if=warlock_contextual&warlock_engaged&combat>0&warlock_target_low&(warlock_shard_count>=2|talent.shadow_and_flame.rank=5)&warlock_spell_in_range
-actions.precombat+=/corruption,if=warlock_contextual&warlock_engaged&!warlock_short_pull&debuff.corruption.remains<=action.corruption.cast&!action.corruption.executing&(!moving|action.corruption.cast=0)&warlock_spell_in_range
-actions.precombat+=/amplify_curse,use_off_gcd=1,if=warlock_contextual&warlock_engaged&!warlock_short_pull&(!action.bane_of_agony.known|debuff.bane_of_agony.down)&(!action.bane_of_doom.known|debuff.bane_of_doom.down)&(!action.bane_of_havoc.known|debuff.bane_of_havoc.down)&combat>0&warlock_can_amplify_agony&(!action.bane_of_agony.known|action.bane_of_agony.ready)&buff.amplify_curse.down
-actions.precombat+=/bane_of_agony,if=warlock_contextual&warlock_engaged&!warlock_short_pull&(!action.bane_of_agony.known|debuff.bane_of_agony.down)&(!action.bane_of_doom.known|debuff.bane_of_doom.down)&(!action.bane_of_havoc.known|debuff.bane_of_havoc.down)&warlock_spell_in_range
-actions.precombat+=/corruption,cycle_targets=1,max_cycle_targets=2,if=warlock_contextual&warlock_engaged&!warlock_short_pull&combat>0&true_active_enemies=2&warlock_cleave&active_dot.corruption=1&debuff.corruption.down&!action.corruption.executing&(!moving|action.corruption.cast=0)
-actions.precombat+=/corruption,if=warlock_contextual&warlock_engaged&warlock_short_pull&!warlock_target_low&debuff.corruption.down&!action.corruption.executing&(level<10|moving&action.corruption.cast=0)&(!moving|action.corruption.cast=0)&warlock_spell_in_range
-actions.precombat+=/berserking,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|(warlock_contextual&warlock_engaged&(!warlock_short_pull|warlock_cleave)&!warlock_target_low))&buff.berserking.down
-actions.precombat+=/eureka,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|(warlock_contextual&warlock_engaged&(!warlock_short_pull|warlock_cleave)&!warlock_target_low))&buff.eureka.down&action.shadow_bolt.known&!action.incinerate.known
-actions.precombat+=/shadowburn,if=warlock_contextual&warlock_engaged&combat>0&talent.shadow_and_flame.rank=5&warlock_spell_in_range
-actions.precombat+=/bane_of_agony,if=warlock_contextual&warlock_engaged&warlock_short_pull&moving&!warlock_target_low&(!action.bane_of_agony.known|debuff.bane_of_agony.down)&(!action.bane_of_doom.known|debuff.bane_of_doom.down)&(!action.bane_of_havoc.known|debuff.bane_of_havoc.down)&warlock_spell_in_range
-actions.precombat+=/life_tap,if=warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&toggle.defensives&!moving&!warlock_target_low&mana.hi<0.30*mana.max&warlock_can_tap_for_drain&!prev_gcd.1.life_tap&!warlock_restorative_filler&warlock_life_tap_safe
-actions.precombat+=/drain_life,if=warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&warlock_damage_display&toggle.defensives&!moving&!warlock_health_low&!warlock_target_low&warlock_leveling_drain&mana.lo>=action.drain_life.cost&(warlock_restorative_filler|mana.pct_lo<55|!(level>=20))&warlock_spell_in_range
-actions.precombat+=/life_tap,display_below=100,if=warlock_contextual&warlock_engaged&warlock_filler_fits&combat>0&mana.hi<0.50*mana.max
-actions.precombat+=/shoot,if=warlock_contextual&warlock_engaged&warlock_filler_fits&(warlock_short_pull&(!(level>=20)|mana.pct_lo<55|warlock_target_low)|(warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&action.shadow_bolt.known&!action.incinerate.known&warlock_wand_over_bolt))
-actions.precombat+=/incinerate,if=warlock_contextual&warlock_engaged&warlock_filler_fits&!(warlock_wanding&(warlock_short_pull&(!(level>=20)|mana.pct_lo<55|warlock_target_low)|(warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&action.shadow_bolt.known&!action.incinerate.known&warlock_wand_over_bolt)))&(!moving|action.incinerate.cast=0)&warlock_spell_in_range
-actions.precombat+=/shadow_bolt,if=warlock_contextual&warlock_engaged&warlock_filler_fits&!(warlock_wanding&(warlock_short_pull&(!(level>=20)|mana.pct_lo<55|warlock_target_low)|(warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&action.shadow_bolt.known&!action.incinerate.known&warlock_wand_over_bolt)))&(!moving|action.shadow_bolt.cast=0)&warlock_spell_in_range
-actions.precombat+=/shoot,if=warlock_contextual&warlock_engaged&warlock_filler_fits
-actions.precombat+=/auto_attack,use_off_gcd=1,if=warlock_contextual&warlock_engaged
-actions.precombat+=/curse_of_tongues,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.casting.up&debuff.curse_of_tongues.down
-actions.precombat+=/curse_of_exhaustion,if=warlock_pvp_pressure&warlock_spell_in_range&warlock_pvp_kiting&debuff.curse_of_exhaustion.down&(!action.curse_of_tongues.known|debuff.curse_of_tongues.down)
-actions.precombat+=/shadow_bolt,if=warlock_pvp_pressure&warlock_spell_in_range&buff.shadow_trance.up
-actions.precombat+=/shadowburn,if=warlock_pvp_pressure&warlock_spell_in_range&warlock_target_low&warlock_shard_count>0
-actions.precombat+=/conflagrate,if=warlock_pvp_pressure&warlock_spell_in_range
-actions.precombat+=/immolate,if=warlock_pvp_pressure&warlock_spell_in_range&!moving&debuff.immolate.down&!warlock_target_low&!action.immolate.executing
-actions.precombat+=/corruption,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.corruption.down&!warlock_target_low&(!moving|action.corruption.cast=0)&!action.corruption.executing
-actions.precombat+=/siphon_life,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.siphon_life.down&!warlock_target_low
-actions.precombat+=/bane_of_agony,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.bane_of_agony.down&!warlock_target_low&(!action.bane_of_havoc.known|debuff.bane_of_havoc.down)
-actions.precombat+=/incinerate,if=warlock_pvp_pressure&warlock_spell_in_range&!moving&warlock_filler_fits
-actions.precombat+=/shadow_bolt,if=warlock_pvp_pressure&warlock_spell_in_range&!moving&warlock_filler_fits
-actions.precombat+=/shoot,if=warlock_pvp_pressure&warlock_filler_fits
-actions.precombat+=/soul_fire,if=warlock_sustained
+actions.precombat+=/call_action_list,name=precombat_field,use_off_gcd=1,if=warlock_contextual|warlock_pvp_target
+actions.precombat+=/soul_fire,if=action.soul_fire.time_since>action.soul_fire.travel_time&warlock_sustained
 actions.precombat+=/immolate,if=!debuff.immolate.up&warlock_sustained
+actions.precombat_field=shadow_bolt,if=warlock_contextual&warlock_engaged&buff.shadow_trance.up&warlock_spell_in_range
+actions.precombat_field+=/drain_soul,if=warlock_contextual&warlock_engaged&combat>0&!moving&!boss&!target.is_boss&warlock_shard_count<2&!warlock_health_low&!action.drain_soul.executing&warlock_shard_target&warlock_continue_drain_soul
+actions.precombat_field+=/drain_soul,display_target_below=25,if=warlock_contextual&warlock_engaged&combat>0&!moving&!boss&!target.is_boss&warlock_shard_count<2&!warlock_health_low&!action.drain_soul.executing&warlock_shard_target
+actions.precombat_field+=/blood_fury,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|(warlock_contextual&warlock_engaged&(!warlock_short_pull|warlock_cleave)&!warlock_target_low))&buff.blood_fury.down
+actions.precombat_field+=/eureka,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|(warlock_contextual&warlock_engaged&(!warlock_short_pull|warlock_cleave)&!warlock_target_low))&buff.eureka.down&warlock_eureka_setup
+actions.precombat_field+=/curse_of_the_elements,if=warlock_contextual&warlock_engaged&!warlock_short_pull&settings.assigned_curse='elements'&debuff.curse_of_the_elements.down&warlock_spell_in_range
+actions.precombat_field+=/curse_of_recklessness,if=warlock_contextual&warlock_engaged&!warlock_short_pull&settings.assigned_curse='recklessness'&debuff.curse_of_recklessness.down&warlock_spell_in_range
+actions.precombat_field+=/curse_of_weakness,if=warlock_contextual&warlock_engaged&!warlock_short_pull&settings.assigned_curse='weakness'&debuff.curse_of_weakness.down&warlock_spell_in_range
+actions.precombat_field+=/rain_of_fire,if=warlock_contextual&warlock_engaged&combat>0&warlock_aoe&!moving
+actions.precombat_field+=/bane_of_havoc,use_off_gcd=1,other_target=1,if=warlock_contextual&warlock_engaged&!warlock_short_pull&combat>0&warlock_cleave&!(active_dot.bane_of_havoc>0)
+actions.precombat_field+=/conflagrate,if=warlock_contextual&warlock_engaged&(talent.shadow_and_flame.rank=5|(action.immolate.known&debuff.immolate.remains<=3)|(warlock_short_pull&warlock_target_low))&warlock_spell_in_range
+actions.precombat_field+=/immolate,if=warlock_contextual&warlock_engaged&debuff.immolate.remains<=action.immolate.cast&!action.immolate.executing&!(warlock_short_pull&warlock_target_low)&(!moving|action.immolate.cast=0)&warlock_spell_in_range
+actions.precombat_field+=/shadowburn,if=warlock_contextual&warlock_engaged&combat>0&warlock_target_low&(warlock_shard_count>=2|talent.shadow_and_flame.rank=5)&warlock_spell_in_range
+actions.precombat_field+=/corruption,if=warlock_contextual&warlock_engaged&!warlock_short_pull&debuff.corruption.remains<=action.corruption.cast&!action.corruption.executing&(!moving|action.corruption.cast=0)&warlock_spell_in_range
+actions.precombat_field+=/amplify_curse,use_off_gcd=1,if=warlock_contextual&warlock_engaged&!warlock_short_pull&(!action.bane_of_agony.known|debuff.bane_of_agony.down)&(!action.bane_of_doom.known|debuff.bane_of_doom.down)&(!action.bane_of_havoc.known|debuff.bane_of_havoc.down)&combat>0&warlock_can_amplify_agony&(!action.bane_of_agony.known|action.bane_of_agony.ready)&buff.amplify_curse.down
+actions.precombat_field+=/bane_of_agony,if=warlock_contextual&warlock_engaged&!warlock_short_pull&(!action.bane_of_agony.known|debuff.bane_of_agony.down)&(!action.bane_of_doom.known|debuff.bane_of_doom.down)&(!action.bane_of_havoc.known|debuff.bane_of_havoc.down)&warlock_spell_in_range
+actions.precombat_field+=/corruption,cycle_targets=1,max_cycle_targets=2,if=warlock_contextual&warlock_engaged&!warlock_short_pull&combat>0&true_active_enemies=2&warlock_cleave&active_dot.corruption=1&debuff.corruption.down&!action.corruption.executing&(!moving|action.corruption.cast=0)
+actions.precombat_field+=/corruption,if=warlock_contextual&warlock_engaged&warlock_short_pull&!warlock_target_low&debuff.corruption.down&!action.corruption.executing&(level<10|moving&action.corruption.cast=0)&(!moving|action.corruption.cast=0)&warlock_spell_in_range
+actions.precombat_field+=/berserking,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|(warlock_contextual&warlock_engaged&(!warlock_short_pull|warlock_cleave)&!warlock_target_low))&buff.berserking.down
+actions.precombat_field+=/eureka,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|(warlock_contextual&warlock_engaged&(!warlock_short_pull|warlock_cleave)&!warlock_target_low))&buff.eureka.down&action.shadow_bolt.known&!action.incinerate.known
+actions.precombat_field+=/shadowburn,if=warlock_contextual&warlock_engaged&combat>0&talent.shadow_and_flame.rank=5&warlock_spell_in_range
+actions.precombat_field+=/bane_of_agony,if=warlock_contextual&warlock_engaged&warlock_short_pull&moving&!warlock_target_low&(!action.bane_of_agony.known|debuff.bane_of_agony.down)&(!action.bane_of_doom.known|debuff.bane_of_doom.down)&(!action.bane_of_havoc.known|debuff.bane_of_havoc.down)&warlock_spell_in_range
+actions.precombat_field+=/life_tap,if=warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&toggle.defensives&!moving&!warlock_target_low&mana.hi<0.30*mana.max&warlock_can_tap_for_drain&!prev_gcd.1.life_tap&!warlock_restorative_filler&warlock_life_tap_safe
+actions.precombat_field+=/drain_life,if=warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&warlock_damage_display&toggle.defensives&!moving&!warlock_health_low&!warlock_target_low&warlock_leveling_drain&mana.lo>=action.drain_life.cost&(warlock_restorative_filler|mana.pct_lo<55|!(level>=20))&warlock_spell_in_range
+actions.precombat_field+=/life_tap,display_below=100,if=warlock_contextual&warlock_engaged&warlock_filler_fits&combat>0&mana.hi<0.50*mana.max
+actions.precombat_field+=/shoot,if=warlock_contextual&warlock_engaged&warlock_filler_fits&(warlock_short_pull&(!(level>=20)|mana.pct_lo<55|warlock_target_low)|(warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&action.shadow_bolt.known&!action.incinerate.known&warlock_wand_over_bolt))
+actions.precombat_field+=/incinerate,if=warlock_contextual&warlock_engaged&warlock_filler_fits&!(warlock_wanding&(warlock_short_pull&(!(level>=20)|mana.pct_lo<55|warlock_target_low)|(warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&action.shadow_bolt.known&!action.incinerate.known&warlock_wand_over_bolt)))&(!moving|action.incinerate.cast=0)&warlock_spell_in_range
+actions.precombat_field+=/shadow_bolt,if=warlock_contextual&warlock_engaged&warlock_filler_fits&!(warlock_wanding&(warlock_short_pull&(!(level>=20)|mana.pct_lo<55|warlock_target_low)|(warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&action.shadow_bolt.known&!action.incinerate.known&warlock_wand_over_bolt)))&(!moving|action.shadow_bolt.cast=0)&warlock_spell_in_range
+actions.precombat_field+=/shoot,if=warlock_contextual&warlock_engaged&warlock_filler_fits
+actions.precombat_field+=/auto_attack,use_off_gcd=1,if=warlock_contextual&warlock_engaged
+actions.precombat_field+=/curse_of_tongues,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.casting.up&debuff.curse_of_tongues.down
+actions.precombat_field+=/curse_of_exhaustion,if=warlock_pvp_pressure&warlock_spell_in_range&warlock_pvp_kiting&debuff.curse_of_exhaustion.down&(!action.curse_of_tongues.known|debuff.curse_of_tongues.down)
+actions.precombat_field+=/shadow_bolt,if=warlock_pvp_pressure&warlock_spell_in_range&buff.shadow_trance.up
+actions.precombat_field+=/shadowburn,if=warlock_pvp_pressure&warlock_spell_in_range&warlock_target_low&warlock_shard_count>0
+actions.precombat_field+=/conflagrate,if=warlock_pvp_pressure&warlock_spell_in_range
+actions.precombat_field+=/immolate,if=warlock_pvp_pressure&warlock_spell_in_range&!moving&debuff.immolate.down&!warlock_target_low&!action.immolate.executing
+actions.precombat_field+=/corruption,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.corruption.down&!warlock_target_low&(!moving|action.corruption.cast=0)&!action.corruption.executing
+actions.precombat_field+=/siphon_life,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.siphon_life.down&!warlock_target_low
+actions.precombat_field+=/bane_of_agony,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.bane_of_agony.down&!warlock_target_low&(!action.bane_of_havoc.known|debuff.bane_of_havoc.down)
+actions.precombat_field+=/incinerate,if=warlock_pvp_pressure&warlock_spell_in_range&!moving&warlock_filler_fits
+actions.precombat_field+=/shadow_bolt,if=warlock_pvp_pressure&warlock_spell_in_range&!moving&warlock_filler_fits
+actions.precombat_field+=/shoot,if=warlock_pvp_pressure&warlock_filler_fits
+actions.field=shadow_bolt,focus=1,if=warlock_contextual&warlock_engaged&buff.shadow_trance.up&warlock_spell_in_range
+actions.field+=/drain_soul,if=warlock_contextual&warlock_engaged&combat>0&!moving&!boss&!target.is_boss&warlock_shard_count<2&!warlock_health_low&!action.drain_soul.executing&warlock_shard_target&warlock_continue_drain_soul
+actions.field+=/drain_soul,display_target_below=25,if=warlock_contextual&warlock_engaged&combat>0&!moving&!boss&!target.is_boss&warlock_shard_count<2&!warlock_health_low&!action.drain_soul.executing&warlock_shard_target
+actions.field+=/blood_fury,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|(warlock_contextual&warlock_engaged&(!warlock_short_pull|warlock_cleave)&!warlock_target_low))&buff.blood_fury.down
+actions.field+=/eureka,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|(warlock_contextual&warlock_engaged&(!warlock_short_pull|warlock_cleave)&!warlock_target_low))&buff.eureka.down&warlock_eureka_setup
+actions.field+=/curse_of_the_elements,focus=2,if=warlock_contextual&warlock_engaged&!warlock_short_pull&settings.assigned_curse='elements'&debuff.curse_of_the_elements.down&warlock_spell_in_range
+actions.field+=/curse_of_recklessness,focus=2,if=warlock_contextual&warlock_engaged&!warlock_short_pull&settings.assigned_curse='recklessness'&debuff.curse_of_recklessness.down&warlock_spell_in_range
+actions.field+=/curse_of_weakness,focus=2,if=warlock_contextual&warlock_engaged&!warlock_short_pull&settings.assigned_curse='weakness'&debuff.curse_of_weakness.down&warlock_spell_in_range
+actions.field+=/rain_of_fire,if=warlock_contextual&warlock_engaged&combat>0&warlock_aoe&!moving
+actions.field+=/bane_of_havoc,use_off_gcd=1,other_target=1,if=warlock_contextual&warlock_engaged&!warlock_short_pull&combat>0&warlock_cleave&!(active_dot.bane_of_havoc>0)
+actions.field+=/conflagrate,if=warlock_contextual&warlock_engaged&(talent.shadow_and_flame.rank=5|(action.immolate.known&debuff.immolate.remains<=3)|(warlock_short_pull&warlock_target_low))&warlock_spell_in_range
+actions.field+=/immolate,focus=2,if=warlock_contextual&warlock_engaged&debuff.immolate.remains<=action.immolate.cast&!action.immolate.executing&!(warlock_short_pull&warlock_target_low)&(!moving|action.immolate.cast=0)&warlock_spell_in_range
+actions.field+=/shadowburn,if=warlock_contextual&warlock_engaged&combat>0&warlock_target_low&(warlock_shard_count>=2|talent.shadow_and_flame.rank=5)&warlock_spell_in_range
+actions.field+=/corruption,focus=2,if=warlock_contextual&warlock_engaged&!warlock_short_pull&debuff.corruption.remains<=action.corruption.cast&!action.corruption.executing&(!moving|action.corruption.cast=0)&warlock_spell_in_range
+actions.field+=/amplify_curse,use_off_gcd=1,if=warlock_contextual&warlock_engaged&!warlock_short_pull&(!action.bane_of_agony.known|debuff.bane_of_agony.down)&(!action.bane_of_doom.known|debuff.bane_of_doom.down)&(!action.bane_of_havoc.known|debuff.bane_of_havoc.down)&combat>0&warlock_can_amplify_agony&(!action.bane_of_agony.known|action.bane_of_agony.ready)&buff.amplify_curse.down
+actions.field+=/bane_of_agony,focus=2,if=warlock_contextual&warlock_engaged&!warlock_short_pull&(!action.bane_of_agony.known|debuff.bane_of_agony.down)&(!action.bane_of_doom.known|debuff.bane_of_doom.down)&(!action.bane_of_havoc.known|debuff.bane_of_havoc.down)&warlock_spell_in_range
+actions.field+=/corruption,cycle_targets=1,max_cycle_targets=2,focus=2,if=warlock_contextual&warlock_engaged&!warlock_short_pull&combat>0&true_active_enemies=2&warlock_cleave&active_dot.corruption=1&debuff.corruption.down&!action.corruption.executing&(!moving|action.corruption.cast=0)
+actions.field+=/corruption,focus=2,if=warlock_contextual&warlock_engaged&warlock_short_pull&!warlock_target_low&debuff.corruption.down&!action.corruption.executing&(level<10|moving&action.corruption.cast=0)&(!moving|action.corruption.cast=0)&warlock_spell_in_range
+actions.field+=/berserking,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|(warlock_contextual&warlock_engaged&(!warlock_short_pull|warlock_cleave)&!warlock_target_low))&buff.berserking.down
+actions.field+=/eureka,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|(warlock_contextual&warlock_engaged&(!warlock_short_pull|warlock_cleave)&!warlock_target_low))&buff.eureka.down&action.shadow_bolt.known&!action.incinerate.known
+actions.field+=/shadowburn,if=warlock_contextual&warlock_engaged&combat>0&talent.shadow_and_flame.rank=5&warlock_spell_in_range
+actions.field+=/bane_of_agony,focus=2,if=warlock_contextual&warlock_engaged&warlock_short_pull&moving&!warlock_target_low&(!action.bane_of_agony.known|debuff.bane_of_agony.down)&(!action.bane_of_doom.known|debuff.bane_of_doom.down)&(!action.bane_of_havoc.known|debuff.bane_of_havoc.down)&warlock_spell_in_range
+actions.field+=/life_tap,if=warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&toggle.defensives&!moving&!warlock_target_low&mana.hi<0.30*mana.max&warlock_can_tap_for_drain&!prev_gcd.1.life_tap&!warlock_restorative_filler&warlock_life_tap_safe
+actions.field+=/drain_life,if=warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&warlock_damage_display&toggle.defensives&!moving&!warlock_health_low&!warlock_target_low&warlock_leveling_drain&mana.lo>=action.drain_life.cost&(warlock_restorative_filler|mana.pct_lo<55|!(level>=20))&warlock_spell_in_range
+actions.field+=/life_tap,display_below=100,if=warlock_contextual&warlock_engaged&warlock_filler_fits&combat>0&mana.hi<0.50*mana.max
+actions.field+=/shoot,if=warlock_contextual&warlock_engaged&warlock_filler_fits&(warlock_short_pull&(!(level>=20)|mana.pct_lo<55|warlock_target_low)|(warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&action.shadow_bolt.known&!action.incinerate.known&warlock_wand_over_bolt))
+actions.field+=/incinerate,if=warlock_contextual&warlock_engaged&warlock_filler_fits&!(warlock_wanding&(warlock_short_pull&(!(level>=20)|mana.pct_lo<55|warlock_target_low)|(warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&action.shadow_bolt.known&!action.incinerate.known&warlock_wand_over_bolt)))&(!moving|action.incinerate.cast=0)&warlock_spell_in_range
+actions.field+=/shadow_bolt,if=warlock_contextual&warlock_engaged&warlock_filler_fits&!(warlock_wanding&(warlock_short_pull&(!(level>=20)|mana.pct_lo<55|warlock_target_low)|(warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&action.shadow_bolt.known&!action.incinerate.known&warlock_wand_over_bolt)))&(!moving|action.shadow_bolt.cast=0)&warlock_spell_in_range
+actions.field+=/shoot,if=warlock_contextual&warlock_engaged&warlock_filler_fits
+actions.field+=/auto_attack,use_off_gcd=1,if=warlock_contextual&warlock_engaged
+actions.field+=/curse_of_tongues,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.casting.up&debuff.curse_of_tongues.down
+actions.field+=/curse_of_exhaustion,if=warlock_pvp_pressure&warlock_spell_in_range&warlock_pvp_kiting&debuff.curse_of_exhaustion.down&(!action.curse_of_tongues.known|debuff.curse_of_tongues.down)
+actions.field+=/shadow_bolt,if=warlock_pvp_pressure&warlock_spell_in_range&buff.shadow_trance.up
+actions.field+=/shadowburn,if=warlock_pvp_pressure&warlock_spell_in_range&warlock_target_low&warlock_shard_count>0
+actions.field+=/conflagrate,if=warlock_pvp_pressure&warlock_spell_in_range
+actions.field+=/immolate,if=warlock_pvp_pressure&warlock_spell_in_range&!moving&debuff.immolate.down&!warlock_target_low&!action.immolate.executing
+actions.field+=/corruption,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.corruption.down&!warlock_target_low&(!moving|action.corruption.cast=0)&!action.corruption.executing
+actions.field+=/siphon_life,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.siphon_life.down&!warlock_target_low
+actions.field+=/bane_of_agony,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.bane_of_agony.down&!warlock_target_low&(!action.bane_of_havoc.known|debuff.bane_of_havoc.down)
+actions.field+=/incinerate,if=warlock_pvp_pressure&warlock_spell_in_range&!moving&warlock_filler_fits
+actions.field+=/shadow_bolt,if=warlock_pvp_pressure&warlock_spell_in_range&!moving&warlock_filler_fits
+actions.field+=/shoot,if=warlock_pvp_pressure&warlock_filler_fits
 actions=health_funnel,display_pet_below=30,if=combat>0&warlock_funnel_available
 actions+=/will_to_survive,if=warlock_alive&warlock_stunned
 actions+=/will_of_the_forsaken,if=warlock_alive&warlock_forsaken_control
@@ -125,63 +179,22 @@ actions+=/summon_incubus,if=warlock_can_summon&talent.demonic_pact.enabled&buff.
 actions+=/create_healthstone,if=warlock_can_prepare&warlock_needs_healthstone&!action.create_healthstone.executing
 actions+=/demon_armor,if=warlock_can_prepare&buff.demon_armor.down
 actions+=/demon_skin,if=warlock_can_prepare&!action.demon_armor.known&buff.demon_skin.down&(!action.demon_armor.known|buff.demon_armor.down)
-actions+=/shadow_bolt,focus=1,if=warlock_contextual&warlock_engaged&buff.shadow_trance.up&warlock_spell_in_range
-actions+=/drain_soul,if=warlock_contextual&warlock_engaged&combat>0&!moving&!boss&!target.is_boss&warlock_shard_count<2&!warlock_health_low&!action.drain_soul.executing&warlock_shard_target&warlock_continue_drain_soul
-actions+=/drain_soul,display_target_below=25,if=warlock_contextual&warlock_engaged&combat>0&!moving&!boss&!target.is_boss&warlock_shard_count<2&!warlock_health_low&!action.drain_soul.executing&warlock_shard_target
-actions+=/blood_fury,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|(warlock_contextual&warlock_engaged&(!warlock_short_pull|warlock_cleave)&!warlock_target_low))&buff.blood_fury.down
-actions+=/eureka,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|(warlock_contextual&warlock_engaged&(!warlock_short_pull|warlock_cleave)&!warlock_target_low))&buff.eureka.down&warlock_eureka_setup
-actions+=/curse_of_the_elements,focus=2,if=warlock_contextual&warlock_engaged&!warlock_short_pull&settings.assigned_curse='elements'&debuff.curse_of_the_elements.down&warlock_spell_in_range
-actions+=/curse_of_recklessness,focus=2,if=warlock_contextual&warlock_engaged&!warlock_short_pull&settings.assigned_curse='recklessness'&debuff.curse_of_recklessness.down&warlock_spell_in_range
-actions+=/curse_of_weakness,focus=2,if=warlock_contextual&warlock_engaged&!warlock_short_pull&settings.assigned_curse='weakness'&debuff.curse_of_weakness.down&warlock_spell_in_range
-actions+=/rain_of_fire,if=warlock_contextual&warlock_engaged&combat>0&warlock_aoe&!moving
-actions+=/bane_of_havoc,use_off_gcd=1,other_target=1,if=warlock_contextual&warlock_engaged&!warlock_short_pull&combat>0&warlock_cleave&!(active_dot.bane_of_havoc>0)
-actions+=/conflagrate,if=warlock_contextual&warlock_engaged&(talent.shadow_and_flame.rank=5|(action.immolate.known&debuff.immolate.remains<=3)|(warlock_short_pull&warlock_target_low))&warlock_spell_in_range
-actions+=/immolate,focus=2,if=warlock_contextual&warlock_engaged&debuff.immolate.remains<=action.immolate.cast&!action.immolate.executing&!(warlock_short_pull&warlock_target_low)&(!moving|action.immolate.cast=0)&warlock_spell_in_range
-actions+=/shadowburn,if=warlock_contextual&warlock_engaged&combat>0&warlock_target_low&(warlock_shard_count>=2|talent.shadow_and_flame.rank=5)&warlock_spell_in_range
-actions+=/corruption,focus=2,if=warlock_contextual&warlock_engaged&!warlock_short_pull&debuff.corruption.remains<=action.corruption.cast&!action.corruption.executing&(!moving|action.corruption.cast=0)&warlock_spell_in_range
-actions+=/amplify_curse,use_off_gcd=1,if=warlock_contextual&warlock_engaged&!warlock_short_pull&(!action.bane_of_agony.known|debuff.bane_of_agony.down)&(!action.bane_of_doom.known|debuff.bane_of_doom.down)&(!action.bane_of_havoc.known|debuff.bane_of_havoc.down)&combat>0&warlock_can_amplify_agony&(!action.bane_of_agony.known|action.bane_of_agony.ready)&buff.amplify_curse.down
-actions+=/bane_of_agony,focus=2,if=warlock_contextual&warlock_engaged&!warlock_short_pull&(!action.bane_of_agony.known|debuff.bane_of_agony.down)&(!action.bane_of_doom.known|debuff.bane_of_doom.down)&(!action.bane_of_havoc.known|debuff.bane_of_havoc.down)&warlock_spell_in_range
-actions+=/corruption,cycle_targets=1,max_cycle_targets=2,focus=2,if=warlock_contextual&warlock_engaged&!warlock_short_pull&combat>0&true_active_enemies=2&warlock_cleave&active_dot.corruption=1&debuff.corruption.down&!action.corruption.executing&(!moving|action.corruption.cast=0)
-actions+=/corruption,focus=2,if=warlock_contextual&warlock_engaged&warlock_short_pull&!warlock_target_low&debuff.corruption.down&!action.corruption.executing&(level<10|moving&action.corruption.cast=0)&(!moving|action.corruption.cast=0)&warlock_spell_in_range
-actions+=/berserking,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|(warlock_contextual&warlock_engaged&(!warlock_short_pull|warlock_cleave)&!warlock_target_low))&buff.berserking.down
-actions+=/eureka,use_off_gcd=1,if=combat>0&warlock_racial_cast_window&(warlock_pvp_pressure|(warlock_contextual&warlock_engaged&(!warlock_short_pull|warlock_cleave)&!warlock_target_low))&buff.eureka.down&action.shadow_bolt.known&!action.incinerate.known
-actions+=/shadowburn,if=warlock_contextual&warlock_engaged&combat>0&talent.shadow_and_flame.rank=5&warlock_spell_in_range
-actions+=/bane_of_agony,focus=2,if=warlock_contextual&warlock_engaged&warlock_short_pull&moving&!warlock_target_low&(!action.bane_of_agony.known|debuff.bane_of_agony.down)&(!action.bane_of_doom.known|debuff.bane_of_doom.down)&(!action.bane_of_havoc.known|debuff.bane_of_havoc.down)&warlock_spell_in_range
-actions+=/life_tap,if=warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&toggle.defensives&!moving&!warlock_target_low&mana.hi<0.30*mana.max&warlock_can_tap_for_drain&!prev_gcd.1.life_tap&!warlock_restorative_filler&warlock_life_tap_safe
-actions+=/drain_life,if=warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&warlock_damage_display&toggle.defensives&!moving&!warlock_health_low&!warlock_target_low&warlock_leveling_drain&mana.lo>=action.drain_life.cost&(warlock_restorative_filler|mana.pct_lo<55|!(level>=20))&warlock_spell_in_range
-actions+=/life_tap,display_below=100,if=warlock_contextual&warlock_engaged&warlock_filler_fits&combat>0&mana.hi<0.50*mana.max
-actions+=/shoot,if=warlock_contextual&warlock_engaged&warlock_filler_fits&(warlock_short_pull&(!(level>=20)|mana.pct_lo<55|warlock_target_low)|(warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&action.shadow_bolt.known&!action.incinerate.known&warlock_wand_over_bolt))
-actions+=/incinerate,if=warlock_contextual&warlock_engaged&warlock_filler_fits&!(warlock_wanding&(warlock_short_pull&(!(level>=20)|mana.pct_lo<55|warlock_target_low)|(warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&action.shadow_bolt.known&!action.incinerate.known&warlock_wand_over_bolt)))&(!moving|action.incinerate.cast=0)&warlock_spell_in_range
-actions+=/shadow_bolt,if=warlock_contextual&warlock_engaged&warlock_filler_fits&!(warlock_wanding&(warlock_short_pull&(!(level>=20)|mana.pct_lo<55|warlock_target_low)|(warlock_outdoors&warlock_short_pull&combat>0&warlock_defensive_target&action.shadow_bolt.known&!action.incinerate.known&warlock_wand_over_bolt)))&(!moving|action.shadow_bolt.cast=0)&warlock_spell_in_range
-actions+=/shoot,if=warlock_contextual&warlock_engaged&warlock_filler_fits
-actions+=/auto_attack,use_off_gcd=1,if=warlock_contextual&warlock_engaged
-actions+=/curse_of_tongues,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.casting.up&debuff.curse_of_tongues.down
-actions+=/curse_of_exhaustion,if=warlock_pvp_pressure&warlock_spell_in_range&warlock_pvp_kiting&debuff.curse_of_exhaustion.down&(!action.curse_of_tongues.known|debuff.curse_of_tongues.down)
-actions+=/shadow_bolt,if=warlock_pvp_pressure&warlock_spell_in_range&buff.shadow_trance.up
-actions+=/shadowburn,if=warlock_pvp_pressure&warlock_spell_in_range&warlock_target_low&warlock_shard_count>0
-actions+=/conflagrate,if=warlock_pvp_pressure&warlock_spell_in_range
-actions+=/immolate,if=warlock_pvp_pressure&warlock_spell_in_range&!moving&debuff.immolate.down&!warlock_target_low&!action.immolate.executing
-actions+=/corruption,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.corruption.down&!warlock_target_low&(!moving|action.corruption.cast=0)&!action.corruption.executing
-actions+=/siphon_life,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.siphon_life.down&!warlock_target_low
-actions+=/bane_of_agony,if=warlock_pvp_pressure&warlock_spell_in_range&debuff.bane_of_agony.down&!warlock_target_low&(!action.bane_of_havoc.known|debuff.bane_of_havoc.down)
-actions+=/incinerate,if=warlock_pvp_pressure&warlock_spell_in_range&!moving&warlock_filler_fits
-actions+=/shadow_bolt,if=warlock_pvp_pressure&warlock_spell_in_range&!moving&warlock_filler_fits
-actions+=/shoot,if=warlock_pvp_pressure&warlock_filler_fits
+actions+=/call_action_list,name=field,use_off_gcd=1,if=warlock_contextual|warlock_pvp_target
 actions+=/use_items,use_off_gcd=1,if=warlock_sustained
 actions+=/demonic_rune,use_off_gcd=1,if=warlock_sustained&warlock_sustained_demonic_rune
 actions+=/major_mana_potion,use_off_gcd=1,if=warlock_sustained
 actions+=/call_action_list,name=single_multi_target_curse_logic,if=warlock_sustained
 actions+=/hellfire,if=active_enemies>=3&toggle.movement&(active_enemies>=3&target.outside5)&warlock_sustained
-actions+=/bane_of_doom,focus=2,if=fight_remains>debuff.bane_of_doom.duration&warlock_sustained
+actions+=/bane_of_doom,focus=2,if=target.time_to_die>debuff.bane_of_doom.duration&warlock_sustained
 actions+=/bane_of_havoc,other_target=1,if=(active_enemies>1&!(active_dot.bane_of_havoc>0))&warlock_sustained
 actions+=/call_action_list,name=single_target_dot_logic,if=active_enemies=1&warlock_sustained
 actions+=/call_action_list,name=multi_target_dot_logic,if=active_enemies>1&warlock_sustained
 actions+=/conflagrate,if=((action.immolate.known&debuff.immolate.up)|!buff.shadow_and_flame_shadow.up)&warlock_sustained
 actions+=/shadowburn,if=warlock_sustained
-actions+=/call_action_list,name=cooldowns,if=((action.bane_of_doom.known&((!action.bane_of_doom.known|((fight_remains-5)/debuff.bane_of_doom.duration)<1)&(!action.bane_of_doom.known|!debuff.bane_of_doom.up)))|((action.bane_of_doom.known&debuff.bane_of_doom.up)|(active_enemies>=3&target.within5)))&warlock_sustained
+actions+=/call_action_list,name=cooldowns,if=((action.bane_of_doom.known&((!action.bane_of_doom.known|((target.time_to_die-5)/debuff.bane_of_doom.duration)<1)&(!action.bane_of_doom.known|!debuff.bane_of_doom.up)))|((action.bane_of_doom.known&debuff.bane_of_doom.up)|(active_enemies>=3&target.within5)))&warlock_sustained
 actions+=/hellfire,if=active_enemies>=3&target.within5&warlock_sustained
-actions+=/searing_pain,if=(!action.incinerate.known|(action.incinerate.cast+action.incinerate.travel_time)>fight_remains)&warlock_sustained
-actions+=/death_coil,if=(!action.searing_pain.known|action.searing_pain.cast>fight_remains)&warlock_sustained&warlock_damage_display&action.searing_pain.known
+actions+=/searing_pain,if=(!action.incinerate.known|(action.incinerate.cast+action.incinerate.travel_time)>target.time_to_die)&warlock_sustained
+actions+=/death_coil,if=(!action.searing_pain.known|action.searing_pain.cast>target.time_to_die)&warlock_sustained&warlock_damage_display&action.searing_pain.known
 actions+=/life_tap,if=(mana.pct_lo<35&fight_remains>60)&warlock_sustained&warlock_sustained_life_tap
 actions+=/immolate,focus=2,if=((!action.incinerate.known|debuff.immolate.remains<action.incinerate.cast)&warlock_sustained)&(action.incinerate.known|(action.shadow_bolt.known&debuff.immolate.remains<action.shadow_bolt.cast))
 actions+=/incinerate,if=warlock_sustained
@@ -191,14 +204,14 @@ actions+=/life_tap,if=warlock_sustained&warlock_sustained_life_tap&(!action.shad
 actions.single_multi_target_curse_logic=curse_of_the_elements,cycle_targets=1,focus=2,if=settings.assigned_curse='elements'&(!((settings.assigned_curse='elements'&debuff.curse_of_the_elements.up)|(action.curse_of_recklessness.known&settings.assigned_curse='recklessness'&debuff.curse_of_recklessness.up)|(action.curse_of_weakness.known&settings.assigned_curse='weakness'&debuff.curse_of_weakness.up))&!(settings.assigned_curse='nocurse'))
 actions.single_multi_target_curse_logic+=/curse_of_recklessness,cycle_targets=1,focus=2,if=settings.assigned_curse='recklessness'&(!((action.curse_of_the_elements.known&settings.assigned_curse='elements'&debuff.curse_of_the_elements.up)|(settings.assigned_curse='recklessness'&debuff.curse_of_recklessness.up)|(action.curse_of_weakness.known&settings.assigned_curse='weakness'&debuff.curse_of_weakness.up))&!(settings.assigned_curse='nocurse'))
 actions.single_multi_target_curse_logic+=/curse_of_weakness,cycle_targets=1,focus=2,if=settings.assigned_curse='weakness'&(!((action.curse_of_the_elements.known&settings.assigned_curse='elements'&debuff.curse_of_the_elements.up)|(action.curse_of_recklessness.known&settings.assigned_curse='recklessness'&debuff.curse_of_recklessness.up)|(settings.assigned_curse='weakness'&debuff.curse_of_weakness.up))&!(settings.assigned_curse='nocurse'))
-actions.multi_target_dot_logic=amplify_curse,use_off_gcd=1,if=((!action.bane_of_doom.known|!debuff.bane_of_doom.up)&(!action.bane_of_doom.known|((action.bane_of_doom.known&!cooldown.bane_of_doom.ready)|(action.bane_of_doom.known&fight_remains<debuff.bane_of_doom.duration)))&(!action.bane_of_agony.known|!debuff.bane_of_agony.up)&(!action.bane_of_havoc.known|!debuff.bane_of_havoc.up)&active_enemies<5)
+actions.multi_target_dot_logic=amplify_curse,use_off_gcd=1,if=((!action.bane_of_doom.known|!debuff.bane_of_doom.up)&(!action.bane_of_doom.known|((action.bane_of_doom.known&!cooldown.bane_of_doom.ready)|(action.bane_of_doom.known&target.time_to_die<debuff.bane_of_doom.duration)))&(!action.bane_of_agony.known|!debuff.bane_of_agony.up)&(!action.bane_of_havoc.known|!debuff.bane_of_havoc.up)&active_enemies<5)
 actions.multi_target_dot_logic+=/bane_of_agony,focus=2,if=((!action.bane_of_doom.known|!debuff.bane_of_doom.up)&!debuff.bane_of_agony.up&(!action.bane_of_havoc.known|!debuff.bane_of_havoc.up)&active_enemies<5)
-actions.multi_target_dot_logic+=/immolate,cycle_targets=1,focus=2,if=(!debuff.immolate.up&fight_remains>debuff.immolate.duration&(!(active_enemies>=3)|target.outside5))&warlock_sustained
-actions.multi_target_dot_logic+=/corruption,cycle_targets=1,focus=2,if=(!debuff.corruption.up&fight_remains>debuff.corruption.duration&(!(active_enemies>=3)|target.outside5))
-actions.single_target_dot_logic=amplify_curse,use_off_gcd=1,if=(!(action.bane_of_doom.known|action.bane_of_agony.known)|((!action.bane_of_doom.known|!debuff.bane_of_doom.up)&(!action.bane_of_doom.known|((action.bane_of_doom.known&!cooldown.bane_of_doom.ready)|(action.bane_of_doom.known&fight_remains<debuff.bane_of_doom.duration)))&(!action.bane_of_agony.known|!debuff.bane_of_agony.up)&(!action.bane_of_agony.known|fight_remains>debuff.bane_of_agony.duration)))
-actions.single_target_dot_logic+=/bane_of_agony,focus=2,if=((!action.bane_of_doom.known|!debuff.bane_of_doom.up)&!debuff.bane_of_agony.up&fight_remains>debuff.bane_of_agony.duration)
-actions.single_target_dot_logic+=/immolate,focus=2,if=(!debuff.immolate.up&fight_remains>debuff.immolate.duration)&warlock_sustained
-actions.single_target_dot_logic+=/corruption,focus=2,if=(!debuff.corruption.up&fight_remains>debuff.corruption.duration)
+actions.multi_target_dot_logic+=/immolate,cycle_targets=1,focus=2,if=(!debuff.immolate.up&target.time_to_die>debuff.immolate.duration&(!(active_enemies>=3)|target.outside5))&warlock_sustained
+actions.multi_target_dot_logic+=/corruption,cycle_targets=1,focus=2,if=(!debuff.corruption.up&target.time_to_die>debuff.corruption.duration&(!(active_enemies>=3)|target.outside5))
+actions.single_target_dot_logic=amplify_curse,use_off_gcd=1,if=(!(action.bane_of_doom.known|action.bane_of_agony.known)|((!action.bane_of_doom.known|!debuff.bane_of_doom.up)&(!action.bane_of_doom.known|((action.bane_of_doom.known&!cooldown.bane_of_doom.ready)|(action.bane_of_doom.known&target.time_to_die<debuff.bane_of_doom.duration)))&(!action.bane_of_agony.known|!debuff.bane_of_agony.up)&(!action.bane_of_agony.known|target.time_to_die>debuff.bane_of_agony.duration)))
+actions.single_target_dot_logic+=/bane_of_agony,focus=2,if=((!action.bane_of_doom.known|!debuff.bane_of_doom.up)&!debuff.bane_of_agony.up&target.time_to_die>debuff.bane_of_agony.duration)
+actions.single_target_dot_logic+=/immolate,focus=2,if=(!debuff.immolate.up&target.time_to_die>debuff.immolate.duration)&warlock_sustained
+actions.single_target_dot_logic+=/corruption,focus=2,if=(!debuff.corruption.up&target.time_to_die>debuff.corruption.duration)
 actions.cooldowns=eureka,use_off_gcd=1,if=(!action.bane_of_doom.known|((action.bane_of_doom.known&((!action.bane_of_doom.known|debuff.bane_of_doom.remains<8)&(!action.bane_of_doom.known|debuff.bane_of_doom.up)))|(action.bane_of_doom.known&!debuff.bane_of_doom.up)))&warlock_sustained&!moving&!warlock_incapacitated
 actions.cooldowns+=/blood_fury,use_off_gcd=1,if=(!action.bane_of_doom.known|((action.bane_of_doom.known&((!action.bane_of_doom.known|debuff.bane_of_doom.remains<15)&(!action.bane_of_doom.known|debuff.bane_of_doom.up)))|(action.bane_of_doom.known&!debuff.bane_of_doom.up)))&warlock_sustained&!moving&!warlock_incapacitated
 actions.cooldowns+=/berserking,use_off_gcd=1,if=(!action.bane_of_doom.known|((action.bane_of_doom.known&((!action.bane_of_doom.known|debuff.bane_of_doom.remains<15)&(!action.bane_of_doom.known|debuff.bane_of_doom.up)))|(action.bane_of_doom.known&!debuff.bane_of_doom.up)))&warlock_sustained&!moving&!warlock_incapacitated

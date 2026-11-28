@@ -266,6 +266,13 @@ describe("the replay world", function()
         assert.are.equal("demon", R.world(wo, 1).ents[2].creatureType)
     end)
 
+    it("uses the configured starting and maximum player health", function()
+        local R = replay.new(text(), H, O)
+        local settings = setmetatable({ playerHealth = 8700 }, { __index = WO })
+        local us = R.world(setmetatable({ tag = "-health" }, { __index = settings }), 1).ents[1]
+        assert.are.same({ 8700, 8700 }, { us.health, us.healthMax })
+    end)
+
     it("procs: a mapped proc emits no cast", function()
         local R = replay.new(text(), H, O)
         local W = at(R.world(setmetatable({ tag = "-p" }, { __index = WO }), 1), R.pull + 0.2)

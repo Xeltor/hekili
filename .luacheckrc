@@ -11,6 +11,7 @@ exclude_files = {
     "src/LibTimeToDie/Libs/",
     ".claude/",
     ".lua/",
+    ".lj/",
     ".release/",
     ".ab/",
     ".superpowers/", -- the plans' git-ignored scratch (briefs, reports, agents' throwaway scripts)
@@ -141,7 +142,10 @@ for _, k in ipairs(stateEnv) do
 end
 files["src/Hekili_Rogue/Rogue.lua"] = { globals = rogueEnv }
 -- The Paladin's further `state` names.
-local paladinEnv = { "mana", "combat", "addStack", "seal_up", "nextMH", "mainhand_speed", "query_time", "lastSwing" }
+local paladinEnv = {
+    "mana", "combat", "addStack", "seal_up", "nextMH", "mainhand_speed", "query_time", "lastSwing",
+    "mayGain", -- the belief's verb (Families/Now.lua): read in the Judgements' `now` only (Sanctified Judgement)
+}
 for _, k in ipairs(stateEnv) do
     paladinEnv[#paladinEnv + 1] = k
 end

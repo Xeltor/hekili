@@ -643,7 +643,7 @@ L["Not Set"] = "Nicht gesetzt"
 L["Pool for Next Entry (%s)"] = "Für nächsten Eintrag poolen (%s)"
 L["If checked, the addon will pool resources until the next entry has enough resources to use."] = "Wenn markiert, poolt das Addon Ressourcen, bis der nächste Eintrag genug Ressourcen hat."
 L["Pooling Time"] = "Pooling-Zeit"
-L["Specify the time, in seconds, as a number or as an expression that evaluates to a number.\nDefault is |cFFFFD1000.5|r.  An example expression would be |cFFFFD100energy.time_to_max|r."] = "Gib die Zeit in Sekunden an, als Zahl oder als Ausdruck, der eine Zahl ergibt.\nStandard ist |cFFFFD1000.5|r. Ein Beispielausdruck wäre |cFFFFD100energy.time_to_max|r."
+-- L["Kept with the line and in exports, but it has no effect here: the entries below this one wait while its conditions are true, and are shown from the time they stop being true."] = ""
 L["Extra Pooling"] = "Zusätzliches Pooling"
 L["Specify the amount of extra resources to pool in addition to what is needed for the next entry."] = "Lege fest, wie viele Ressourcen zusätzlich zu dem, was der nächste Eintrag braucht, gepoolt werden."
 L["Conditions"] = "Bedingungen"
@@ -875,6 +875,7 @@ L["could not load %s (%s)"] = "%s konnte nicht geladen werden (%s)"
 L["could not read your class at load; /reload"] = "deine Klasse ließ sich beim Laden nicht lesen; /reload"
 L["no Forever pack for %s; install %s"] = "kein Forever-Paket für %s; installiere %s"
 L["%s is for content API %s, this Hekili Forever for %s; update the older one"] = "%s ist für die Inhalts-API %s, dieses Hekili Forever für %s; aktualisiere das ältere"
+-- L["a content load check failed, so that content may be incomplete: %s"] = ""
 
 -- Hekili/UI/UI.lua
 L["Notifications"] = "Benachrichtigungen"
@@ -1042,7 +1043,11 @@ L["The lane's time axis, the ruler and the focus zone."] = "Die Zeitachse der Sp
 
 -- Hekili/Engine/Sim/Scripts.lua
 L["This priority compares %s with %d exact values; Hekili can watch %d. Those conditions use the nearest 1%% instead."] = "Diese Priorität vergleicht %s mit %d exakten Werten; Hekili kann %d beobachten. Diese Bedingungen nutzen stattdessen den nächsten 1-%%-Schritt."
+-- L["Priority '%s' list '%s' line %d reads the window '%s', which this priority does not declare, so that window reads as closed and the line may never fire, or fire differently. If this is a copy of a built-in priority, copy it again."] = ""
 L["Priority %s, list %s, line %d reads your health without health.known first. While Hekili cannot read your health it counts as full, so this line can show when it should not: start its condition with health.known&."] = "Priorität %s, Liste %s, Zeile %d liest deine Gesundheit ohne vorangestelltes health.known. Solange Hekili deine Gesundheit nicht lesen kann, gilt sie als voll, daher kann diese Zeile erscheinen, wenn sie es nicht sollte: Beginne ihre Bedingung mit health.known&."
 
 -- Hekili/Engine/Sim/Core.lua
 L["|cFFFF0000WARNING|r: This version of Hekili Forever is for a newer WoW Forever client; you should reinstall for %s."] = "|cFFFF0000WARNUNG|r: Diese Version von Hekili Forever ist für einen neueren Client von WoW Forever; installiere neu für %s."
+
+-- No longer used (the English changed or went away): reuse or delete
+L["Specify the time, in seconds, as a number or as an expression that evaluates to a number.\nDefault is |cFFFFD1000.5|r.  An example expression would be |cFFFFD100energy.time_to_max|r."] = "Gib die Zeit in Sekunden an, als Zahl oder als Ausdruck, der eine Zahl ergibt.\nStandard ist |cFFFFD1000.5|r. Ein Beispielausdruck wäre |cFFFFD100energy.time_to_max|r."

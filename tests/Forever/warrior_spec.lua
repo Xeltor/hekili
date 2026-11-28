@@ -1376,17 +1376,29 @@ describe("Forever Warrior", function()
         assert.is_truthy(src:find("-- Forever E7:[^\n]*\n        local regen = r%.regen or 0\n"))
         assert.is_nil(src:find("local regen = r.regen_combined", 1, true))
     end)
-    it("a real pull with no swing seen anchors the first swing at the combat start (core edit E8)", function()
-        local src = assert(io.open("src/Hekili/Engine/Sim/State.lua")):read("*a")
-        local next_oh = src:find("state.nextOH = ", 1, true)
-        local anchor = src:find(
-            "-- Forever E8:[^\n]*\n        if state%.combat > 0 and state%.swings%.mh_actual == 0 then\n"
-                .. "            state%.swings%.mh_pseudo = state%.combat\n"
-        )
-        assert.is_truthy(next_oh and anchor and next_oh < anchor)
-        local block = src:sub(anchor, assert(src:find("\n        end\n", anchor, true)))
-        assert.is_truthy(block:find("state.swings.oh_pseudo = state.combat + state.offhand_speed / 2", 1, true))
-        assert.is_truthy(block:find("state:ForecastSwingbasedResources()", 1, true))
+    it("anchors both swing forecasts to the pull before either hand is observed", function()
+        local headless = require("Game.harness.headless")
+        local ww = require("Forever.helpers.warrior_world")
+        local H = headless.new({ character = ww.Fury.character(), pack = ww.PACK })
+        local ctl, st = H.ctl, H.Hekili.State
+        assert(headless.cycle(H, ctl.now + 0.2))
+
+        ctl.now, ctl.combat = ctl.now + 1, true
+        H.Fire("PLAYER_REGEN_DISABLED")
+        assert(headless.cycle(H, ctl.now + 0.2))
+        st.reset("Primary", true)
+
+        assert.is_true(st.combat > 0)
+        assert.is_true(st.mainhand_speed > 0 and st.offhand_speed > 0)
+        assert.are.same({ 0, 0 }, { st.nextMH, st.nextOH })
+        local first = {}
+        for i = 1, st.rage.fcount do
+            local slice = st.rage.forecast[i]
+            first[slice.e] = first[slice.e] or slice.t
+        end
+        assert.are.near(st.combat + st.mainhand_speed, first.mainhand, 1e-6)
+        assert.are.near(st.combat + st.offhand_speed / 2, first.offhand, 1e-6)
+        assert.are.same({}, H.errors)
     end)
     it("the forecast horizon follows the forecast window, its loop guard scaled to it (core edit E9)", function()
         local src = assert(io.open("src/Hekili/Engine/Sim/State.lua")):read("*a")

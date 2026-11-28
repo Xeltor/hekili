@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### New
+- On-use trinkets are now recommended: the Weakness Analyzer, Talisman of Ephemeral Power, Mind Quickening Gem, Everlook Pathcarver, Eye of the Beast and Blackhand's Breadth show up through "Use Items" (and the priorities that name them) while you wear them, and using one holds your other trinket for its shared lockout.
+- Custom and imported priorities: a `pool_resource` entry with conditions (no "Pool for Next Entry") now holds the entries below it while its conditions are true, and shows them counting down to the time the conditions stop being true. Its Pooling Time is kept but has no effect. No built-in priority uses it.
+- A priority line that reads a window the priority does not declare, but another priority does (typically a copy of a built-in priority made before its windows moved into it), now gets a warning on the Warnings page naming the priority, list, line and window, and saying that window reads as closed, so the line may never fire or fire differently; copy the built-in priority again. It is shown once per session.
 
 - Protection shows Attack when autoattack is off on an eligible melee target, before spending opening Rage on routine buffs. It can start an outdoor pull or join an already engaged dungeon enemy.
 - Assassination, Combat, and Subtlety Rogues gain Icy Veins–based leveling priorities, short-pull finishers, weapon-aware builders, and cues for stealth openers, poisons, interrupts, and defensives.
@@ -10,6 +13,10 @@
 - Rogue racial cues cover learned damage boosts, observed control breaks and cleanses, Stoneform against physical pressure, and safe out-of-combat recovery. Tactical detection, movement and corpse-dependent abilities remain manual when their use cannot be established from the API.
 
 ### Changed
+- Warlock, Rogue and Druid (Feral, Guardian's cat lines) priorities: damage over time effects (Banes, Corruption, Immolate, Rupture, Rip, Rake) are no longer started on a target about to die, and the end-of-target finishers (Ferocious Bite, Eviscerate), Warlock's quick casts and the Warlock cooldowns line now look at your current target's time to die rather than the whole fight, so recommendations can differ from before, including in single-target fights.
+- Arms (wowsims.com) with Stance Dance on: the Battle Stance, then Overpower (or Rend) pairs are now strict sequences in the priority itself; while one runs, the display shows only its next step. With Stance Dance off (the default), in fights with two or more enemies, Rend is no longer suggested right after the return to Battle Stance during the execute phase; Execute shows instead.
+- Beast Mastery Turret (wowsims.com): the Summon Hawk, Summon Hawk, Arcane Shot loop is now a sequence in the priority itself instead of a rotation window inside the class pack. It starts only in combat, at its first Summon Hawk in every fight.
+- Retribution (wowsims.com): the opener at the pull (Judgement, then a seal, while moving to melee) is now a sequence in the priority itself, ended by the fight's first main-hand swing, instead of a rotation window inside the class pack.
 
 - Hekili waits for tracked debuff attempts to resolve before recommending the same effect on that enemy again. Attributed misses preserve earlier applications, and verified NPC immunities apply to later spawns.
 - Arms Warrior prioritizes Hamstring when a non-boss PvE humanoid enters Execute range and is close enough to slow.
@@ -21,6 +28,16 @@
 - Rogue stun suggestions use configurable spacing between your own attempts (30 seconds by default). Temporary stun immunity is retried after a bounded delay; this does not track other players' diminishing returns.
 
 ### Fixed
+- Guardian Druids with Primal Fury (Blood Frenzy) at 1 of 2 ranks: the 5 rage a critical hit only sometimes gives in Bear Form is no longer counted as half of it always coming; rage-gated recommendations wait for the rage you have.
+- Paladins with Sanctified Judgement at 1 or 2 ranks: Judgement's mana refund, a chance below the last rank, is no longer counted as if part of it always came; your mana is counted when the refund shows.
+- Combat Rogue: Blade Flurry is now recommended during the fight for every race, not only for Orcs.
+- Gnome Rogues: when Eureka is about to be used, the rotation after the energy pooling step now waits until you have 90 energy, as the wowsims rotation does. The lines above that step (defensives, Riposte, Garrote, Vanish, Preparation and the opening cooldowns) still show. There is no pooling while Eureka's toggle is off.
+- Shadow Brand Warlock: after the pre-pull Shadow Bolt is cast, Corruption is now recommended while the bolt is still flying, instead of Shadow Bolt again.
+- A potion, Healthstone or trinket whose cooldown the game hides from addons (or fails to report) is now timed from Hekili's own tracking of your uses, instead of being taken as the game gave it.
+- On-use trinkets from a shared trinket line are now suggested during the global cooldown, like other off-GCD lines, instead of trading places with another off-GCD cooldown (such as Combustion) for a moment.
+- The Desaturate option on the Multiple displays tab now shows its per-display Checked/Unchecked lines in its tooltip. The Targets tab's list of alternative pet abilities and the "priorities were updated/reverted" message now list their entries in a fixed order instead of a varying one.
+- Mana, focus and energy users: when you reach an ability's cost, its icon no longer wavers between ready and waiting for a moment as often.
+- Effects you put on your target that the Cooldown Manager tracks (such as Rip and Insect Swarm): when a miss right after your cast was taken as that cast missing, the effect could be treated as still on the target long after it fell off, so it was not recommended again on that target until you left combat. It is now recommended again once it falls off.
 
 - Warlock leveling priorities now check whether supporting spells are learned before reading their effects.
 - Protection uses the same target and engagement rules for Charge, Attack and damaging abilities. Dead, friendly or unreadable targets cannot fall through into its raid priorities.
@@ -40,6 +57,7 @@
 ### Known issues
 
 ### Upgrade notes
+- If you made your own copy of Beast Mastery Turret (wowsims.com) or Retribution (wowsims.com), your copy keeps its old lines that read `window.hha`, `window.move1` or `window.move2`. After this update it can still read a window it no longer declares, so Summon Hawk (Beast Mastery) or the opener (Retribution) may not show. Hekili warns about this on the Warnings page when it loads. Edits made in place on the built-in priority are replaced by the new built-in priority. To fix a copy, copy the new built-in priority again and redo your edits on it.
 
 ## v0.12.1
 

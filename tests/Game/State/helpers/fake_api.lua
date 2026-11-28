@@ -150,8 +150,9 @@ function M.new()
         petPower = 0, -- UnitPower("pet") of the pet's power type `petPowerType` while exists.pet (SECRET: a secret read)
         petPowerType = 0,
         itemCount = {}, -- [itemID] = C_Item.GetItemCount (default 0)
-        itemCooldown = {}, -- [itemID] = { start, duration }
         itemUsable = {}, -- [itemID] = true: C_Item.IsUsableItem answers true (default false)
+        itemCooldown = {}, -- [itemID] = { start, duration }: C_Item.GetItemCooldown (either may be SECRET; default 0,
+        -- 0); "raise": the read raises
         -- [index] = UnitStat's value (its first two returns; default 0); .armor UnitArmor's, .block GetShieldBlock's
         stats = {},
         powerMax = {}, -- [powerType] = max
@@ -864,9 +865,11 @@ function M.new()
             end
         end,
         GetItemCooldown = function(id)
-            local cd = ctl.itemCooldown[id]
-            if cd then
-                return cd[1], cd[2], 1
+            local c = ctl.itemCooldown[id]
+            if c == "raise" then
+                error("GetItemCooldown: a raising read")
+            elseif c then
+                return c[1], c[2], 1
             end
             return 0, 0, 1
         end,
@@ -886,6 +889,7 @@ function M.new()
             return ctl.enchants[slot] or NO_ENCHANTS
         end,
     }
+    api.C_Container = { GetItemCooldown = api.C_Item.GetItemCooldown } -- the same item cooldown answer
     api.C_LossOfControl = { GetActiveLossOfControlData = none, GetActiveLossOfControlDataCount = zero }
     api.C_PetBattles = { IsInBattle = no }
     api.C_PvP = { IsWarModeDesired = no }

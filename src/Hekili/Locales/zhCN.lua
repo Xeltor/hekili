@@ -643,7 +643,7 @@ L["Not Set"] = "未设置"
 L["Pool for Next Entry (%s)"] = "为下一条目攒资源（%s）"
 L["If checked, the addon will pool resources until the next entry has enough resources to use."] = "勾选后，插件会攒资源，直到下一条目有足够的资源可以使用。"
 L["Pooling Time"] = "攒资源时间"
-L["Specify the time, in seconds, as a number or as an expression that evaluates to a number.\nDefault is |cFFFFD1000.5|r.  An example expression would be |cFFFFD100energy.time_to_max|r."] = "指定时间（秒），可以是数字，也可以是计算结果为数字的表达式。\n默认为 |cFFFFD1000.5|r。表达式示例：|cFFFFD100energy.time_to_max|r。"
+-- L["Kept with the line and in exports, but it has no effect here: the entries below this one wait while its conditions are true, and are shown from the time they stop being true."] = ""
 L["Extra Pooling"] = "额外攒资源"
 L["Specify the amount of extra resources to pool in addition to what is needed for the next entry."] = "指定在下一条目所需资源之外，还要额外攒多少资源。"
 L["Conditions"] = "条件"
@@ -875,6 +875,7 @@ L["could not load %s (%s)"] = "无法加载 %s（%s）"
 L["could not read your class at load; /reload"] = "加载时无法读取你的职业；请 /reload"
 L["no Forever pack for %s; install %s"] = "没有适用于 %s 的 Forever 优先级包；请安装 %s"
 L["%s is for content API %s, this Hekili Forever for %s; update the older one"] = "%s 适用于内容 API %s，而此 Hekili Forever 适用于 %s；请更新较旧的一方"
+-- L["a content load check failed, so that content may be incomplete: %s"] = ""
 
 -- Hekili/UI/UI.lua
 L["Notifications"] = "通知"
@@ -1042,12 +1043,14 @@ L["The lane's time axis, the ruler and the focus zone."] = "轨道的时间轴�
 
 -- Hekili/Engine/Sim/Scripts.lua
 L["This priority compares %s with %d exact values; Hekili can watch %d. Those conditions use the nearest 1%% instead."] = "此优先级将%s与 %d 个精确数值作比较，而 Hekili 只能监视 %d 个。这些条件会改用最接近的 1%%。"
+-- L["Priority '%s' list '%s' line %d reads the window '%s', which this priority does not declare, so that window reads as closed and the line may never fire, or fire differently. If this is a copy of a built-in priority, copy it again."] = ""
 L["Priority %s, list %s, line %d reads your health without health.known first. While Hekili cannot read your health it counts as full, so this line can show when it should not: start its condition with health.known&."] = "优先级“%s”，列表“%s”第 %d 行读取了你的生命值，但没有先检查 health.known。Hekili 无法读取你的生命值时会将其视为满值，因此此行可能会在不该显示时显示：请在它的条件开头加上 health.known&。"
 
 -- Hekili/Engine/Sim/Core.lua
 L["|cFFFF0000WARNING|r: This version of Hekili Forever is for a newer WoW Forever client; you should reinstall for %s."] = "|cFFFF0000警告|r：此版本的 Hekili Forever 适用于更新的 WoW Forever 客户端；你应重新安装适用于 %s 的版本。"
 
 -- No longer used (the English changed or went away): reuse or delete
+L["Specify the time, in seconds, as a number or as an expression that evaluates to a number.\nDefault is |cFFFFD1000.5|r.  An example expression would be |cFFFFD100energy.time_to_max|r."] = "指定时间（秒），可以是数字，也可以是计算结果为数字的表达式。\n默认为 |cFFFFD1000.5|r。表达式示例：|cFFFFD100energy.time_to_max|r。"
 L[" and "] = " 和 "
 L["The %s priority was retired; a spec that used it now runs its default priority."] = "%s优先级已停用；使用它的专精现在将运行其默认优先级。"
 L["The %s priorities were retired; a spec that used one now runs its default priority."] = "%s优先级已停用；使用其中之一的专精现在将运行其默认优先级。"

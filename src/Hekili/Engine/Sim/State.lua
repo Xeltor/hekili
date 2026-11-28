@@ -108,6 +108,9 @@ state.gateSkip = false
 -- AOE only): it skips the "toggle shown separately" test; 0 otherwise. An off toggle still disables. IsDisabled neither
 -- reads nor writes its cache for a bypass.
 state.seqBypass = 0
+-- (L1960) true while Core walks the UseItems list from a `use_items,use_off_gcd=1` line: the items' own scripts carry
+-- no modifiers, so TimeToReady and the strict hold read the line's flag here
+state.itemsOffGCD = false
 -- (ruling 36) `ready()` inside an ability's sequence_ready: the start test's accessor during that call, false otherwise
 -- (a permanent key: setting an absent key, even to nil, grows the table in Lua 5.1)
 state.ready = false
@@ -626,6 +629,15 @@ local function setCooldown( action, duration )
     state.cooldown[ action ] = cd
 end
 state.setCooldown = setCooldown
+
+-- Hold `action` on cooldown for at least `duration` from now, never shortening a longer one: a shared cooldown
+-- category's window (an on-use trinket's lock on the others, Hekili_Shared Items.lua). The belief's `now` has the same
+-- verb (Game/State/Families/Now.lua).
+local function lockCooldown( action, duration )
+    local cd = state.cooldown[ action ]
+    if cd and cd.remains < duration then setCooldown( action, duration ) end
+end
+state.lockCooldown = lockCooldown
 
 
 local function spendCharges( action, charges )
@@ -7857,7 +7869,9 @@ function state:TimeToReady( action, pool )
     -- 2. The ability is flagged as an interrupt or defensive.
     local requires = ability.toggle
     local pre = 0 -- the GCD this ability waits on: the near-cost window opens at its end (L628)
-    if requires ~= "interrupts" and requires ~= "defensives" and not self.safebool( self.args.use_off_gcd ) then
+    -- shortcut: itemsOffGCD skips the GCD wait without reading the item's own gcd (every registered on-use item is gcd
+    -- "off"); read ability.gcd here once an on-GCD on-use item is registered (L1972)
+    if requires ~= "interrupts" and requires ~= "defensives" and not self.itemsOffGCD and not self.safebool( self.args.use_off_gcd ) then
         pre = self.cooldown.global_cooldown.remains
         wait = max( wait, pre )
     end

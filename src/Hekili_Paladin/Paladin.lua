@@ -309,6 +309,7 @@ spec:RegisterResource(Enum.PowerType.Mana, nil, nil, {
         end,
     },
     base = BASE_MANA,
+    rest = "max", -- mana rests full out of combat
 })
 
 -- Talents: { talent tree (1 Holy, 2 Protection, 3 Retribution: the dominant tree picks the spec), rank 1's spell, max
@@ -545,8 +546,9 @@ local PURIFYING_POWER_CD = { [0] = 0, 0.17, 0.33 }
 -- Any seal up: Judgement's requirement.
 -- Sanctified Judgement (1311074, Forever-only, 3 ranks: a 33/66/100% chance to return 20/40/60%): 60% of the seal's
 -- base cost x (2 - its cost multiplier) at 3/3 (tests/Forever/wowsims/paladin_retribution.log:439, Seal of Command
--- up: "Gained 161.280 mana from {SpellID: 1311074}" = 210 x 1.28 x 0.6); below 3/3 the belief and the forecast count
--- the mean (chance x refund), as the Rogue's Relentless Strikes.
+-- up: "Gained 161.280 mana from {SpellID: 1311074}" = 210 x 1.28 x 0.6), counted only at 3/3 (100%). Below it the
+-- refund is a random resource proc, never an expected gain (owner L1397, L1851): the reads find one that came, and the
+-- belief's `mayGain` keeps its regen pins from learning it as regen, as the Rogue's Relentless Strikes.
 -- The fourth field is the judgement debuff the seal puts on the target (none for Command and Righteousness: damage only).
 local SEAL_BASE = {
     { "seal_of_command", SEAL_OF_COMMAND_COST, SEAL_OF_COMMAND },
@@ -560,8 +562,9 @@ local SEAL_BASE = {
 local SJ_CHANCE = { 0.33, 0.66, 1 }
 local SJ_REFUND = { 0.2, 0.4, 0.6 }
 -- A Judgement's cast effect, Judgement's and Swift Judgement's (the `now` and the `handler`, two closures so each gets
--- its own environment): the seal's judgement debuff, and the refund.
-local function judgementCast()
+-- its own environment): the seal's judgement debuff, and the refund. `belief`: the `now`'s, the only one that may read
+-- the belief's `mayGain` (the sim's state has no such key, as Rogue.lua's relentless).
+local function judgementCast(belief)
     return function()
         for i = 1, #SEAL_BASE do
             local s = SEAL_BASE[i]
@@ -571,10 +574,14 @@ local function judgementCast()
                 end
                 local sj = talent.sanctified_judgement.rank
                 if sj > 0 then
-                    local mult = sealMult(talent)
                     local cost = byRank(s[2], s[3])
-                    -- the mean: chance 33/66/100% x refund 20/40/60% (the talent's two curves, wowsims's spell data)
-                    gain((cost < 1 and cost * BASE_MANA or cost) * (2 - mult) * SJ_CHANCE[sj] * SJ_REFUND[sj], "mana") -- Justice's is a fraction
+                    -- refund 20/40/60% (the talent's curve, wowsims's spell data); Justice's cost is a fraction
+                    local refund = (cost < 1 and cost * BASE_MANA or cost) * (2 - sealMult(talent)) * SJ_REFUND[sj]
+                    if SJ_CHANCE[sj] >= 1 then
+                        gain(refund, "mana")
+                    elseif belief then -- the sim's `handler` books nothing
+                        mayGain(refund, "mana")
+                    end
                 end
                 return
             end
@@ -1560,7 +1567,7 @@ spec:RegisterAbilities({
             return seal_up, "requires a seal"
         end,
 
-        now = judgementCast(),
+        now = judgementCast(true),
         handler = judgementCast(),
     },
 
@@ -1579,7 +1586,7 @@ spec:RegisterAbilities({
             return seal_up, "requires a seal"
         end,
 
-        now = judgementCast(),
+        now = judgementCast(true),
         handler = judgementCast(),
     },
 
@@ -2179,29 +2186,20 @@ spec:RegisterAbilities({
     retribution_aura = selfBuff("retribution_aura", RETRIBUTION_AURA),
 })
 
--- Retribution's opener (re-pin rulings R15/R16; wowsims's default.apl.json "Move to melee" group at e2842f0a78): the
--- sequences move1 (Judgement, then Seal of Command) and move2 (Judgement, then Seal of Righteousness), each run once a
--- fight, at the pull, as stepped windows over their casts (the pack's `# Window:` lines; move3 folds to never). Each
--- evaluator is its sequence's condition (the header's), in combat, before the fight's first main-hand swing: the
--- swing lands on arrival in melee, where wowsims's sequence completes, so the window closes there (`close_on_false`)
--- or at its last step. No aura shows this span. (Each evaluator runs in the belief's `now` context: written in each.)
-spec:RegisterWindow("move1", {
+-- Retribution's opener (re-pin rulings R15/R16; wowsims's "Move to melee" group): the sequences move1 (Judgement, then
+-- Seal of Command) and move2 (Judgement, then Seal of Righteousness), each run once a fight at the pull, are the pack's
+-- APL sequences (windows design v6 10.3, Phase 3; they were Lua windows here until L1374). The span they run in is this
+-- window (L898): in combat, before the fight's first main-hand swing, which lands on arrival in melee, where wowsims's
+-- sequence completes; the priority reads it as `window.before_first_swing.up` in each sequence's condition and in its
+-- close line. A Lua window, as Hunter weave and Rogue riposte (ruling 32: it follows an observed game event): the
+-- swing is PLAYER_SWING's (lastSwing, plain in combat), where the engine's own swing row (swings.mh_actual) waits for
+-- the landed wound's pairing, idle on live (target rows secret). No aura shows this span.
+spec:RegisterWindow("before_first_swing", {
     evaluator = function()
-        return talent.seal_of_command.enabled and combat > 0 and lastSwing(1) < combat
+        return combat > 0 and lastSwing(1) < combat
     end,
     duration = "combat",
     close_on_false = true,
-    steps = { "judgement", "seal_of_command" },
-})
-spec:RegisterWindow("move2", {
-    evaluator = function()
-        return (not talent.twist_of_light.enabled or not talent.seal_of_command.enabled)
-            and combat > 0
-            and lastSwing(1) < combat
-    end,
-    duration = "combat",
-    close_on_false = true,
-    steps = { "judgement", "seal_of_righteousness" },
 })
 
 -- Pack from the talents (Engine/Schema/Selectors.lua; after the Hekili classic branch's pack selectors), as wowsims's
@@ -2229,8 +2227,8 @@ spec:RegisterSetting("stoneform_health", 50, spec:HealthOption("stoneform"), "pr
 -- (tests/Forever/paladin_spec.lua checks they match).
 spec:RegisterPack(
     "Retribution (wowsims.com)",
-    20261126000,
-    [[Hekili:LRvBVTTnq4Fl5lE2BPYYoTzDbvfOdffldDbfZ9ZsMwI2IlsIgIuXXag(3(oQ3mLefTSDtIB7xAT5jE3Z9gfVhh7r2F1EIhIJTVBS54RhnA81MMM2t4RxITNSe5EpAb8Hiui8V)lMhtMLWj0OTt7VIUIrczgU0WbIhDDaf5ju3Sesa)2i7zk1mBj21EYx(WN)WhV9UBI3Ps7j(eppC2(WmxD27MTt5(4TtZxB4CAm(bC82PE45OKa(2PF4lFE7uy5TtRQLeYqbcydxIcqEKOHsiyiAzaByUkmGVyakpyWLGXIrrSaWz8GptfgNW2of55rJ(f4d3JxZm2o9Jio6gfGQ))C7xbL4Z5lz3mC4cc3pzMWpgw7rha6eWoAM5Ctt8RN7(2RmGqBmDojaI)ixbkzglJXWMNH4wUOGaNSLDcim(LIeLLyHhaW6GymYIiSNdkjgT9VBS)FZAOAn4Iy8D7()s8wGdXr8svy5rEGeHDy(eCG3LK5w(yua334(i6QOE5FzPl)DwmmNtIwWmQSfNShPuHascqRDaq4JI8yDtJY7ixH9GGf3bYToaGJxGJCxNkPx)lYSuvyKP9nxmlz(8AsswoqgDzQNXPr4ltyyh685olC9Sg1nOkTDfUUyf4XCwsfRCS6FNguyc155q6dyho1jehGXclvgM8PbRDyqRX94IGKcjKihOZybUsOQSCPPJ0perIe5lNyS4JS3zvUc0wI9ELPXOE1FO3BbRoOxFoDXIaSHa0c13R)ksKhDv6cJGe2gPVpwKa3OXD05nBUOMM7DrDvl7Wc3KWXHSMomNeIb4F(IDFui0OaG2zvmI7F5CQBclpzvyMQpIH4WblZnnYsnYKJpJZzs6i1xpTkZcixw6x0Z4sPbagKLeJrER1ShLBjhs9vi0doBxOOxzoyWzCaNbhjjQHG38ecrW0MduGWb4RGZJeIcil85g4i0SaSxVCP12xP4SZSRlfqrP7uilwOwmnHfHzSkN4R(jaGdkjvgeU6Ron1R9007HeHopxQftFeOF)2CYn9BZ7vUEZs68vefmxOfeBAfdzMc76tBgczC4MJV3A0GFERZReqoOCU(c)nA3ViERT0UwLtDX90i9uQI2NtThuxTwRyZPvzwx9tyrwl3AheIDZCG0xQ99f8XpsJDjSWZAOR(W8XcmRVfO1xy11dpYSrT3TvOMS3j1HMx4MPgHOh)1X7ghu8)nhx0sAW40fsnFQfQlr2jmAz0rRcybZT74gNWqE44DQuL0kQvKmkNuXsZigvYMr4h576UB2pxVOQXPinhWPks0)69MyP2d3tBjt72SB()4dX)hFQ(FRVWRjIuULUglkoMO65fnUz(iJ3axxpcjgu2jGcxgX80UNUIjIl3LSSS9jfWKpwU6z0sn2NJoG9KhWXmyR1OWtCKntW0xLsbyH7sPtmpJz)N2tKQofcZzWYEsjiTN4gdJohtq2toPoxnLU2Ca)1aMoREq9O78PABZEsA2v42G9V6BuG5WBP3tG51DjWC8TTndpv2CLGe4ZfT0QQLkuu5ZiH1tS75iBF03)K5r5SjRZHQW7OSxTFA)uXPQQY9ctjZy6HzPVzCT2gzRhsxIeBQhMx0Kgwv9a6m7oswpCl3GGwHXFtRnGAR8uiAxFDjIRFr7SZUDY(5CQE6naLR7yCq5HuNgbA796(nVVVUl8R)g)D4k)IWXV3XWrj9VYHJUt87lGN922R5kuVAoF)wr67ZTpVRfUQFv9L0)rlNAkz3kXQtRK)KEzuJn9ut0XZDgdshJmBjF04MwsTDVCukFaCkFKKkNguQFlIU67Ait(zKn5No6K)HRdOBdwmQ9jB2B9WE4K9uzA(fIQ59Y18tgzZ)4xc2(WB3nQ(L3LEr55RJP9cYYC1K6ITpS83RUy5W0c3R9rrosQT3)zyJtnC9bpKmCTx8E88D31I5XzZTx(3iLUj31gAfR3KwDDtNRVyunV6zOTnHAWUkg3Re51XlFUvL7puyQZC(z2f3L9JA1bTKf1eyR)RJ0mOQ43pXoprIs4(uip8x47jbKTt7)P8)YatfB))]]
+    20261128000,
+    [[Hekili:TVvApUTnt4Fl7xCLB3iFKJMUikaPi4fnfPlcQZNLmTeTf7kj6ksTBmGH)T)ouxMIIIYh7MJU7xA9YrCoE4md5mtR7e3p7olaXXUxpD80xnzY0xpE8y3z8nRXUZwJ8VbTc(rckg(N)nMNswKXj0KDZTUJEhJeZS9PXdfF6MikkqWUfzKi(hsCxOLZS1yF3zF6DF8DV)dxFv6Ew6olKeeGl2hM5BsExTBopeVBE5AJwstX3It3npaVeLfX3n)DF6J7MdlVBEtUKrgj0a2O1OiuajzKKgmcToInQKf2WFydmpA4LGWsrjSiWycGFtfcNW2nhfeqt(j4h3G3WS3n)9io6knkL1F9HpdmjKZxZUA0OveEy2cHDms5thc8e0D0IXlhpg)IL(V(52a0MsxsIa8h5l0sM96umS5fiUJpkkYRyzVicJFP4GYrSWTGY6HymYQeCGhklfT7pBT)FXzKEo4Jy897(FYcwHJXj8Aw4eqULKG9yHeCuWLKLoHyuep0(Me6Djdk)J1(834WWCojzfZUXw8k(KAgcAseAJhOeHOKa2HXr5DuYWbayX9GZwpqHtxHt83KtzG1ffsQPAuW9TxSiB5sfkzRhkRDfSNXPj4lZyyp6YLER8dCMCyQQ021y6IvGpZBnvSYPY)9CqJi8JOaxVJKeqVR4moMEloN7flAN)3Gzp4IglaU44bxyvU2cSWv1BjjfCqyWIRubk9cAQIGMQkOPhVG065k4LhN6fJJWyHqRp4dPrB8yqW(n4QJDnuijEqS(kCdrvha0(OXkgrseEGEPyXpzVXPEfirdo4zJTNmq9JERdS6WbwC6Qvr4CaqW(bww9FymCRv)a5q4R62Wnz3W(u0HTTvHbwxOOdB1OcYqOa4iCCmRneYjXyaqEmHgHOyi9eadE3LI4HxUK6NXkDOQuNMFITiLSZ4TT8KA5Tn9rLFLKSYrVZlESY0Qd4RYu4tPrGAitjfJc2yypA3sPkzPHyaChTGrpB8WHpQoczWLvc)C4njXWzsEkbuKas43b51fKIiRc524e0IiCWGsQk7RMCXT5QubSO2SROLkylMMXsWmwJ3cO)lGBGaMKtdmll9h8d6(G)TJnB5sPbmJawwDzKBT6Y61UE7GKYveUGxyuj22PouikSFiTneY4qnfV1zYWNICU)ICAaXhLxK5qPTg3VqHngSO4lQsEGbQNJFzFgvpADtV3QnN73688NCBVhCB7OMtGi2VasYVk)XoGG)cn1NWIFKbg6VumVasZb(DEX)HMYSqgkVrOInf3TFaPSG6ASJrF5NNUVHlI)D7gY4i16P8fYfFUeuPiBe2D0CgNk1IhI98tZyOaC6EwQJAd2kopQRCgy2)MHt8XY9kiMgKhMYjjzfV2UVxIPXFOCjT13FLPcTvIa22klCTJ5vN67Q6amYDBuHJPAGJZ8MPH6cp)QcyN2dj2dBvPSAM7Qv1wtSFjucwcs0elVik8CWXNxTxA6Tt9UKPvSVHsXssx608giPucFpAaUZUfNYGTQ0EDX1hmrx4B4bdlCDER(lpXC)D3zf(vEfT2ppc1DMFkHJtji3z33H2UZyC8AwTIi5UkwPHKv8Bn44w1tC3z1eD5aIiKqffflqwug9QDNL7ci0obtNjc3HnxgVlZ)Iud1c2egpTHL2x(I7)egF7pgAKI5H8Wa(QQSq6C)R2r93iB7Nxa)jgXBoKVWIkhoLjdQXymKTQ(NIGUr0OZTUsuYdG54K092OB6A2nc1(5kQTQZELzinCMJZkApvhHyFXri29ZS54LCR59ie(l7ldKKcipQgzX3FLf9nNgHM8Q(0KPhLMCItmsOj)QIMifOBkAudjnz8uRDR4kyjZC)LWGQ86d03yFEutPLoQEBFAvqEGLqAQgsZfrQPkYdRmsD1rkG4F7aH46js14sOZBwu)4Hwtg3DWrLMOFsupOJI6hmGCFo9MyvJNTC9KUUYwsfB((WZkG)SEEsRn9nP7M)G5gioJ76TsNAzipSt76ig31joVRCqr9LyhQTByoxFfh01d3KUEkQ6aIQ6oeQrYv1NDFe(y9mWOZDmyFJMdwFDpOLF992KWEYT(uCRv6msdNB1Y66Upn)hhSmwULCdCZHn1AqFc20bB1TatazDxS8jo9T(ZFpnxWQLgljyLhYC6JK7qd6Mw0TT6)dL2u)2mcTI1Bp5pt9uZSdU(r)vOTDr0GURBOGnqEtJoSuQYXCAe135DvDpUlBhk(bDCkAayvhGBBqvZiEDlpirz8qkCo8h4BirKDZT(FL)Vhqoz3)p]]
 )
 spec:RegisterPack(
     "Protection (wowsims.com)",

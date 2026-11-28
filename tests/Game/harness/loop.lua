@@ -17,8 +17,35 @@ local rng = require("Game.harness.rng")
 local edgestats = require("Game.harness.edgestats")
 local fake_lhv = require("Game.harness.fake_lhv")
 local ttd_rig = require("Game.harness.ttd_rig")
+local world = require("Game.harness.world")
 
 local M = {}
+
+-- [class data] = its item categories (world.itemCategories), built once per class table
+local itemGroups = setmetatable({}, { __mode = "k" })
+
+--- The press of `key` of class data `class` when it is an item in a category (an on-use trinket: lane gear-1b), else
+--- nil (the content resolves it): its use spell's cast (its first `copy`; no spell cooldown, the item's is answered
+--- through C_Item), off the GCD, free, the item's cooldown and its category's hold (W.itemUse) in its effect.
+function M.itemPress(class, key)
+    local groups = itemGroups[class] or world.itemCategories(class)
+    itemGroups[class] = groups
+    local group = groups[key]
+    if not group then
+        return nil
+    end
+    local a = class.abilities[key]
+    local copy, cd = a.copy, tonumber(a.cooldown) or 0
+    return {
+        spell = type(copy) == "table" and copy[1] or copy,
+        cost = 0,
+        offGcd = true,
+        effect = function(W, e)
+            e.cdUntil[key] = W.t + cd
+            W.itemUse(e, key, group, cd)
+        end,
+    }
+end
 
 -- (ttd arms, lane B8) A fight's time-to-die row: of the in-combat polls, how many answered (not 3600: the library
 -- live), and against the kill's time (killAt, the world's clock; nil: no kill, no error) the absolute error of each
@@ -57,6 +84,63 @@ function M.ttdRow(r, killAt, seed, pack)
         pct(rel, 0.5),
         pct(rel, 0.9),
         #err > 0 and short / #err or 0
+    )
+end
+
+-- (mobHealths worlds, lane h-hw) The multi-life row: the core's fight_remains and the target's time_to_die at each
+-- in-combat poll (r[k] = { fr, tt, tc, guid }), each against its truth: fight_remains against the last death
+-- (W.killAt), the target's against that mob's own death (its diedAt). Per figure: polls answered (under UNKNOWN), those
+-- scored (a truth ahead), the absolute error's median and p90 in seconds and the share short of the truth. Record-only;
+-- `deaths` lists each life's end from the pull, `ens` the most enemies the core counted.
+local function figure(label, got, truths, tcs)
+    local err, live, short = {}, 0, 0
+    for k = 1, #got do
+        local est, truth = got[k], truths[k]
+        if est < UNKNOWN then
+            live = live + 1
+            if truth and truth > tcs[k] then
+                local left = truth - tcs[k]
+                err[#err + 1] = math.abs(est - left)
+                short = short + (est < left and 1 or 0)
+            end
+        end
+    end
+    return ("%s live %d scored %d err med %.2f p90 %.2f short %.2f"):format(
+        label,
+        live,
+        #err,
+        pct(err, 0.5),
+        pct(err, 0.9),
+        #err > 0 and short / #err or 0
+    )
+end
+function M.ttdmRow(r, W, seed, pack, arm)
+    local died = {}
+    for _, e in ipairs(W.ents) do
+        if e.kind == "mob" then
+            died[e.guid] = e.diedAt
+        end
+    end
+    local fr, tt, tcs, ft, ftt = {}, {}, {}, {}, {}
+    for k = 1, #r do
+        local p = r[k]
+        fr[k], tt[k], tcs[k], ft[k], ftt[k] = p[1], p[2], p[3], W.killAt, died[p[4]]
+    end
+    local deaths = {}
+    for _, e in ipairs(W.ents) do
+        if e.kind == "mob" then
+            deaths[#deaths + 1] = e.diedAt and ("%.1f"):format(e.diedAt - M.PULL) or "-"
+        end
+    end
+    return ("%s arm %s seed %d polls %d ens %d deaths %s %s | %s"):format(
+        tostring(pack),
+        arm,
+        seed,
+        #r,
+        r.ens or 0,
+        table.concat(deaths, "/"),
+        figure("fight_remains", fr, ft, tcs),
+        figure("target.ttd", tt, ftt, tcs)
     )
 end
 
@@ -368,6 +452,12 @@ function M.calibrate()
     end
     return (os.clock() - c0) * 1000, sum
 end
+-- LuaJIT compiles this tight loop to ~1 ms (6.8 ms on PUC) while the engine's code gains far less, which would inflate the
+-- ratio about 3x: keep the calibration interpreted, the yardstick for "engine cost per interpreted read".
+local luajit = rawget(_G, "jit")
+if luajit then
+    luajit.off(M.calibrate, true)
+end
 
 --- Each tick's ms (`cpu`) over its window's calibration: tick i's window is ceil(i / `every`), `cals[w]` timed just
 --- before that window's first tick. Appended to `out` (a new list if nil), which is returned.
@@ -492,7 +582,7 @@ local function feed(H, obs, t, base, sink, sub, open)
             local a1, a2, a3, a4 = s.a1[i], s.a2[i], s.a3[i], s.a4[i]
             if (ev == "@casting" or ev == "@channel") and a1 then -- gap BD: the bar was on the world's clock
                 a1, a2 = a1 + base * 1000, a2 + base * 1000
-            elseif ev == "@cooldown" and type(a2) == "number" and a2 > 0 then
+            elseif (ev == "@cooldown" or ev == "@itemCooldown") and type(a2) == "number" and a2 > 0 then
                 a2 = base + a2
             elseif ev == "@aura" and a4 > 0 then
                 a4 = base + a4
@@ -702,6 +792,10 @@ function M.run(L, seed, o, drivers)
     local arm = ab.ARMS[armName] -- o.arm: a spec's own arm (its shapes; the floors stay the env's)
     local aw = arm.world or {} -- a verdict arm's world knobs that shape the world's build (ab.lua; not a replay's)
     wo.mobAvoid, wo.swapEvery, wo.extraMobs = aw.mobAvoid, aw.swapEvery, aw.extraMobs
+    if o.mobHealths then -- (lane h-hw) several lives: o.mobHealths, o.drains, o.switchTo, scenarios.world's
+        wo.mobHealths, wo.drains, wo.switchTo = o.mobHealths, o.drains, o.switchTo
+        wo.extraMobs, wo.swapEvery = #o.mobHealths - 1, o.swapEvery
+    end
     -- the instance whose state is the run's truth, a press resolving from it: the oracle when it is driven, else the
     -- driver (a run of ours alone, ws.live, never steps the oracle, whose state then stays at its boot); a
     -- replay's computed cooldowns are its answers at each cast
@@ -728,6 +822,7 @@ function M.run(L, seed, o, drivers)
         bands = M.newBands(), -- a bands arm's M.bandCheck
         power = M.newPower(), -- every arm's "power" row (M.powerPoll)
         ttd = { polls = 0, live = 0, err = {}, rel = {} }, -- a ttd arm's fight_remains against the kill (M.ttdRow)
+        ttdm = {}, -- a mobHealths world's fight_remains and target time to die per poll (M.ttdmRow)
     }
     -- the metrics' per-tick record (§5.1): in-combat ticks only, both queues' first icons, the truth
     run.combat, run.full, run.idle, run.attempts, run.episodes, run.up = 0, 0, 0, 0, 0, {}
@@ -843,6 +938,12 @@ function M.run(L, seed, o, drivers)
             ctl.cvars.nameplateShowAll = aw.plates and "1" or nil
             for i = 1, 1 + (aw.extraMobs or 0) do
                 ctl.exists["nameplate" .. i] = aw.plates or nil
+            end
+        end
+        if o.mobHealths then -- (lane h-hw) every mob's plate shown and counted, the client's enemy plates on
+            ctl.cvars.nameplateShowEnemies, ctl.cvars.nameplateShowAll = "1", "1"
+            for i = 1, #o.mobHealths do
+                ctl.exists["nameplate" .. i] = true
             end
         end
         local fresh = {
@@ -989,13 +1090,21 @@ function M.run(L, seed, o, drivers)
     end
     -- R42, a replay-world assumption: wowsims knows its fight's length, so a replay answers `fight_remains` (the
     -- engine's GetGreatestTTD) as the time to the log's end on each instance's clock; loops outside a ttd arm keep
-    -- the unknown (3600 s, gap AN). Restored with the trace hooks at the run's end.
-    local ttd = {}
+    -- the unknown (3600 s, gap AN). Restored with the trace hooks at the run's end. Its one target dies at that end, so
+    -- the target's time to die (GetTTD, target.time_to_die: L1902's target-bound lines) answers the same.
+    local ttd, ttdTarget = {}, {}
     for i, st in ipairs(R and steps or {}) do
         local hk, ctl, endAt = st.H.Hekili, st.H.ctl, st.base + R.pull + R.duration
-        ttd[i] = hk.GetGreatestTTD
+        local own = hk.GetTTD
+        ttd[i], ttdTarget[i] = hk.GetGreatestTTD, own
         hk.GetGreatestTTD = function()
             return endAt - ctl.now
+        end
+        hk.GetTTD = function(self, unit, isGUID)
+            if unit == "target" and not isGUID then
+                return endAt - ctl.now
+            end
+            return own(self, unit, isGUID)
         end
     end
     -- (L1814) a ttd arm's plain instances answer the true time left (fix1_helper's truth override), so the arm measures
@@ -1010,8 +1119,16 @@ function M.run(L, seed, o, drivers)
             return math.max(0, math.min(mob.health / perS, W.stopAt - math.max(W.t, M.PULL)))
         end
         for i, st in ipairs(steps) do
-            if st.plain then
+            if st.plain then -- the mob is the target: its own time to die (L1902's target-bound lines) the same truth
+                local own = st.H.Hekili.GetTTD
                 ttd[i], st.H.Hekili.GetGreatestTTD = st.H.Hekili.GetGreatestTTD, left
+                ttdTarget[i], st.H.Hekili.GetTTD =
+                    own, function(self, unit, isGUID)
+                        if unit == "target" and not isGUID then
+                            return left()
+                        end
+                        return own(self, unit, isGUID)
+                    end
             end
         end
     end
@@ -1110,6 +1227,11 @@ function M.run(L, seed, o, drivers)
                 r[r.polls] = st.H.Hekili:GetGreatestTTD()
                 r[-r.polls] = tc
             end
+            if wo.mobHealths and st.H == drivers[1].H and tc >= wo.pull then -- the multi-life record (M.ttdmRow)
+                local r, hk = run.ttdm, st.H.Hekili
+                r[#r + 1] = { hk:GetGreatestTTD(), hk:GetTTD("target"), tc, st.H.ctl.guid.target }
+                r.ens = math.max(r.ens or 0, hk.State.active_enemies or 0)
+            end
             queue(st.H, st.q, 3, res)
             if st.edge then
                 edgestats.tick(st.H, st.H.ns.VirtualStateInternal, st.base + tc, tick, tc >= wo.pull)
@@ -1124,7 +1246,7 @@ function M.run(L, seed, o, drivers)
     end
     local di = 1
     local lastGcd, tickPolled = nil, false -- the replay's first on-GCD icon at the last poll, and that poll a tick's
-    while t < stopAt and not W.killAt do
+    while t < stopAt and not (W.killAt or W.wipeAt) do
         -- wowsims's decisions before this tick (replay): a cycle just before each cast; the on-GCD ones scored
         -- against our first on-GCD icon (an off-GCD cast would agree with whatever shows during a GCD)
         while R and R.decisions[di] and R.decisions[di].t < (polls + 1) * tick do
@@ -1255,7 +1377,8 @@ function M.run(L, seed, o, drivers)
         end
         if press then
             truth.Hekili.State.reset("Primary", true) -- Update leaves its last prediction (a predicted buff, query_time ahead of now)
-            local p = content.resolve(key, truth, us) -- the world's us: its auras price the press (L1233)
+            -- the world's us: its auras price the press (L1233); an on-use trinket is the harness's own (M.itemPress)
+            local p = M.itemPress(truth.Hekili.Class, key) or content.resolve(key, truth, us)
             -- the driver's shown press of another spell during our channel cuts it, as a player's press does in game
             -- (the engine moved off the channel: a pack's interrupt_if, CheckChannel); W.press keeps the GCD and the
             -- queue's reach. A verdict arm's forced recast is not the engine's pick: refused "casting", as before.
@@ -1369,8 +1492,8 @@ function M.run(L, seed, o, drivers)
     W.endCasts(us)
     -- a kill's combat end comes 1 s on (observer.COMBAT_END): fed up to it, on the tick grid (a clock off the grid
     -- reorders the next fights' float sums: Feral's flicker 2.12 -> 2.34 with the gap ending at the kill + 1 s)
-    local tEnd = t
-    while W.killAt and tEnd < W.killAt + observer.COMBAT_END do
+    local tEnd, endedAt = t, W.killAt or W.wipeAt
+    while endedAt and tEnd < endedAt + observer.COMBAT_END do
         polls = polls + 1
         tEnd = polls * tick
     end
@@ -1422,6 +1545,9 @@ function M.run(L, seed, o, drivers)
                 )
             )
         end
+        if wo.mobHealths and i == 1 then
+            ab.record("ttdm", M.ttdmRow(run.ttdm, W, seed, content.PACK, armName))
+        end
         if st.ttd then
             ab.check(true, "ttd", M.ttdRow(run.ttd, W.killAt, seed, content.PACK))
         end
@@ -1439,6 +1565,9 @@ function M.run(L, seed, o, drivers)
         end
         if ttd[i] then
             st.H.Hekili.GetGreatestTTD = ttd[i]
+        end
+        if ttdTarget[i] then
+            st.H.Hekili.GetTTD = ttdTarget[i]
         end
         for name, n in pairs(st.H.ns.Facade.secrets) do
             run.secrets[name] = (run.secrets[name] or 0) + n
@@ -1995,7 +2124,9 @@ function M.line(m)
         "fights=%d agreement %.3f (%d ticks); react median %d p90 %d never %.3f; ready while short %d; held while ready %d; refused per 100 [%s], episodes %.2f/min; "
         .. "dps A/B %.3f; full %.3f/%.3f idle %.3f/%.3f; uptime [%s]; flicker %.2f/min (oracle %.2f); "
         .. "errors %d raises %d self-check %d; cpu mean %.2f p99 %.2f ms ratio %.3f (calibration %.2f ms) "
-        .. "bytes %.0f per Update; top [%s]; power est-truth at disagreements %.1f"
+        .. "bytes("
+        .. (luajit and "lj" or "puc")
+        .. ") %.0f per Update; top [%s]; power est-truth at disagreements %.1f" -- per VM: a LuaJIT count is not a PUC one
     ):format(
         m.fights,
         r.agreement,

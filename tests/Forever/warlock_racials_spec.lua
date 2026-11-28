@@ -85,6 +85,15 @@ describe("Warlock racial actives", function()
         end)
     end
 
+    it("offers the field's Blood Fury during a running global cooldown", function()
+        local H = burst("Affliction", OFFENSIVE[3])
+        local now = H.ctl.now
+        H.ctl.cooldown[H.ns.GCD_SPELL] = { isActive = true, isOnGCD = false, startTime = now, duration = 1.5 }
+        assert.are.equal("blood_fury", pick(H))
+        local rec = H.Hekili.Engine.Output.Primary.recs[1]
+        assert.is_true(rec.time < 0.05, "the GCD must not delay Blood Fury")
+    end)
+
     it("holds damage cooldowns when the field target or the caster cannot use the window", function()
         for label, options in pairs({
             wrongRace = { race = "Human" },

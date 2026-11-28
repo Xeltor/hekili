@@ -1,7 +1,8 @@
 -- tests/Forever/forms_spec.lua
 -- Every kit declares a form or stance requirement with the engine's `form` field (Engine/Sim/State.lua's IsUsable:
--- "required form (...) not active"), never through `buff` or inside a `usable` body; `nobuff` stays upstream's "not
--- in this form". A form is a content aura key ending `_form` or `_stance` (boundary_lib's nameWords rule), or a
+-- "required form (...) not active"), never through `buff` or inside a `usable` body. Use `noform` for a forbidden
+-- form, or `nobuff` when a recommendation can wait for the form aura to end. A form is a content aura key ending
+-- `_form` or `_stance` (boundary_lib's nameWords rule), or a
 -- one-word `...form` key whose shift ability names itself as its `nobuff`, so the check is generic over every kit, the
 -- shared content and the races.
 local B = require("boundary_lib")
@@ -60,8 +61,13 @@ describe("form and stance requirements", function()
                 if type(d.usable) == "function" and #formsIn(d.usable, forms) > 0 then
                     bad[#bad + 1] = name .. ": usable names " .. table.concat(formsIn(d.usable, forms), ", ")
                 end
-                if type(d.form) == "string" then
-                    assert.is_true(forms[d.form] ~= nil, name .. ": form = " .. d.form .. " is no form aura")
+                for _, field in ipairs({ "form", "noform" }) do
+                    if type(d[field]) == "string" then
+                        assert.is_true(
+                            forms[d[field]] ~= nil,
+                            name .. ": " .. field .. " = " .. d[field] .. " is no form aura"
+                        )
+                    end
                 end
             end
         end

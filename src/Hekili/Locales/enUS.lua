@@ -634,7 +634,7 @@ L["Not Set"] = true
 L["Pool for Next Entry (%s)"] = true
 L["If checked, the addon will pool resources until the next entry has enough resources to use."] = true
 L["Pooling Time"] = true
-L["Specify the time, in seconds, as a number or as an expression that evaluates to a number.\nDefault is |cFFFFD1000.5|r.  An example expression would be |cFFFFD100energy.time_to_max|r."] = true
+L["Kept with the line and in exports, but it has no effect here: the entries below this one wait while its conditions are true, and are shown from the time they stop being true."] = true
 L["Extra Pooling"] = true
 L["Specify the amount of extra resources to pool in addition to what is needed for the next entry."] = true
 L["Conditions"] = true
@@ -866,6 +866,7 @@ L["could not load %s (%s)"] = true
 L["could not read your class at load; /reload"] = true
 L["no Forever pack for %s; install %s"] = true
 L["%s is for content API %s, this Hekili Forever for %s; update the older one"] = true
+L["a content load check failed, so that content may be incomplete: %s"] = true
 
 -- Hekili/UI/UI.lua
 L["Notifications"] = true
@@ -1033,6 +1034,7 @@ L["The lane's time axis, the ruler and the focus zone."] = true
 
 -- Hekili/Engine/Sim/Scripts.lua
 L["This priority compares %s with %d exact values; Hekili can watch %d. Those conditions use the nearest 1%% instead."] = true
+L["Priority '%s' list '%s' line %d reads the window '%s', which this priority does not declare, so that window reads as closed and the line may never fire, or fire differently. If this is a copy of a built-in priority, copy it again."] = true
 L["Priority %s, list %s, line %d reads your health without health.known first. While Hekili cannot read your health it counts as full, so this line can show when it should not: start its condition with health.known&."] = true
 
 -- Hekili/Engine/Sim/Core.lua

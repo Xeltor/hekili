@@ -1419,6 +1419,12 @@ end
 
 
 
+-- The next cycle reads the new stealth state before choosing an opener.
+RegisterEvent( "UPDATE_STEALTH", function( event )
+    Hekili:ForceUpdate( event )
+end )
+
+
 do
     local MOVEMENT_ICD = 0.5
 

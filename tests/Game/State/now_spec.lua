@@ -1,10 +1,12 @@
 -- tests/Game/State/now_spec.lua (event-facade spec §12a): a cast's effects on the belief. The automatic ones from the
 -- ability's declared fields (cost, cooldown, GCD) and the class file's `now` function, run in VirtualState's context
 -- with Hekili's verb names, as `modelled` samples at the cast's time; never Hekili's `state`.
+local rt = require("Game.State.helpers.rule_trace") -- lane 9: the deciding rules
 local load = require("Game.State.helpers.load")
 local fake = require("Game.State.helpers.fake_api")
 local fs = require("Game.State.helpers.fake_spec")
 local alloc = require("Game.State.helpers.alloc")
+local scenario = require("Game.harness.scenario")
 
 -- A `now` that spends the rest of the pool (after an optional target debuff), out of reach of the spec's local `rage`.
 local function spendRest(debuff)
@@ -72,6 +74,11 @@ describe("now handlers", function()
         end
         fs.clock = nil
     end)
+
+    -- the scenario builder on this spec's client: plain amounts, no frame loop (only the ticks and drains given)
+    local function sc()
+        return scenario.new({ ctl = ctl, ns = ns }, { plain = true, dt = false })
+    end
 
     local function start()
         VS.Start(api)
@@ -609,6 +616,7 @@ describe("now handlers", function()
                 summonTotem("totem_test", "no_such_element", 5) -- an unknown element writes nothing
             end,
         })
+        h.Class.totemSlots = { fire = 1, earth = 2, water = 3, air = 4 } -- the pack's declaration (L1827 row 5)
         start()
         ctl.Fire("PLAYER_REGEN_DISABLED")
         cast(6262, 20)
@@ -797,6 +805,7 @@ describe("now handlers", function()
                 seen[5], seen[6] = totem.air.expires, totem.air.active
             end,
         })
+        h.Class.totemSlots = { fire = 1, earth = 2, water = 3, air = 4 }
         start()
         ctl.Fire("PLAYER_REGEN_DISABLED") -- out of combat poll 7 would read the fake client's empty slots
         cast(6262, 20)
@@ -804,6 +813,37 @@ describe("now handlers", function()
         assert.are.same({ true, 115, false, false, 140, true }, seen)
         cast(6263, 141) -- past the modelled expiry
         assert.are.same({ false, 0, false, false, 0, false }, seen)
+        assert.are.equal(0, I.nowErrors)
+    end)
+
+    -- lane 6 (L1827 row 5): the element names are the pack's (def.totemSlots), none the core's; a rebuild drops the last
+    it("takes totem.<element> and summonTotem's element names from the declared slots alone", function()
+        local seen = {}
+        register("totem_spirit", {
+            id = 6262,
+            now = function()
+                summonTotem("totem_spirit", "spirit", 120)
+                summonTotem("totem_spirit", "fire", 60) -- declared by no pack here: writes nothing
+            end,
+        })
+        register("totem_read", {
+            id = 6263,
+            now = function()
+                seen[1], seen[2], seen[3] = totem.spirit.up, totem.spirit.remains, totem.fire.up
+            end,
+        })
+        h.Class.totemSlots = { spirit = 2 }
+        start()
+        ctl.Fire("PLAYER_REGEN_DISABLED")
+        cast(6262, 20)
+        cast(6263, 25)
+        assert.are.same({ true, 115, false }, seen)
+        assert.are.equal(140, VS.Totem(2, 21).est)
+        assert.is_nil(VS.Totem(1, 21))
+        h.Class.totemSlots = {}
+        ns.BuildTracked()
+        cast(6263, 26)
+        assert.are.same({ false, 0, false }, seen)
         assert.are.equal(0, I.nowErrors)
     end)
 
@@ -1021,7 +1061,7 @@ describe("now handlers", function()
             costMods = {},
             gcdMods = { { aura = "grace_test", pct = -0.1, spells = { fs.SPENDER_C } } },
         }
-        ns.ResourceIsPoints = function() -- Tracked.lua's race path (Engine/Sim/Constants.lua's)
+        ns.ResourceIsPoints = function() -- unread since lane 6 (the build reads meta `points`); kept, no old-code cleanup
             return false
         end
         start()
@@ -1304,6 +1344,7 @@ describe("now handlers", function()
         })
         register("charge_test", { id = 3131, charges = 2, recharge = 10 }) -- the charge step too
         h.Class.pets.guardian_a = { token = "guardian_a", cap = 2, duration = 18 }
+        h.Class.totemSlots = { fire = 1 }
         start()
         function h:ForceUpdate() end -- the fake records each call; Hekili's own only sets fields
         cleu:UnregisterEvent("COMBAT_LOG_EVENT_UNFILTERED") -- the capturing subscriber allocates by design
@@ -1424,7 +1465,47 @@ describe("now handlers", function()
             assert.are.equal(0, I.nowErrors)
         end)
 
+        -- (L1917, fable-tr1-decision.md D2) an avoid two of our casts could own in their own frames, one the latest
+        -- success: the latest's, as a full resist (target undo only): its debuff down, no refund, no onAvoid, its
+        -- SPELL_MISSED; the payment is final at once (pass 1: never held, so no later stage can refund either)
+        it("a same-frame avoid goes to the latest success as a target undo only: no refund, no onAvoid", function()
+            rt.on(I)
+            local avoids = 0
+            register("frame_test", { id = 2690, startsCombat = true }) -- a default FRAME ticket, any school
+            h.Class.abilities.spender_c.funcs.onAvoid = function()
+                avoids = avoids + 1
+            end
+            begin()
+            h.Class.abilities.spender_c.funcs.onAvoid = nil
+            local T = I.Tickets
+            ctl.now = 5
+            ctl.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-1", 2690)
+            ctl.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-2", fs.SPENDER_C) -- 10 paid: 0
+            local n = #rows
+            ctl.Fire("UNIT_COMBAT", "target", "DODGE", "", 0, 1)
+            for i = 1, T.CAP do
+                assert.are_not.equal(T.TENT, T.state[i])
+                assert.are.equal(0, T.held[i])
+            end
+            ctl.Tick(5.01)
+            VS.Drain(5.02)
+            ctl.Tick(5.03)
+            VS.Drain(5.5)
+            assert.is_nil(VS.Aura("target", fs.SPENDER_C, 5.5))
+            assert.are.same({ 0, 0, 1 }, { VS.Power(fs.RAGE, 5.5).est, avoids, I.avoidsRun })
+            assert.are.same({ 1, 0 }, { T.ties, T.divergent })
+            local missed = {}
+            for k = n + 1, #rows do
+                if rows[k][1] == "SPELL_MISSED" then
+                    missed[#missed + 1] = rows[k][3]
+                end
+            end
+            assert.are.same({ fs.SPENDER_C }, missed)
+            assert.are.equal("cast_narrow>pay_cast>latest_success_tie>=cast", rt.chain("latest_success_tie"))
+        end)
+
         it("a crit a pending swing explains runs no onCrit; one in the newer cast's frame is its (GAP T)", function()
+            rt.on(I)
             local crits = 0
             h.Class.abilities.spender_c.funcs.onCrit = function()
                 crits = crits + 1
@@ -1455,6 +1536,10 @@ describe("now handlers", function()
             ctl.Tick(30.01)
             VS.Drain(30.02)
             assert.are.equal(2, crits)
+            assert.are.equal(
+                "cast_narrow>tie_crit_not_cast>pay_cast>=cast>cast_narrow>pay_cast>=cast>cast_narrow>pay_cast>=cast",
+                rt.chain("tie_crit_not_cast")
+            )
         end)
 
         it("keeps an onCrit's target writes out of the cast's undo: an avoid after it leaves them (GAP T)", function()
@@ -1560,8 +1645,9 @@ describe("now handlers", function()
         -- and with no plain read past the window: the row's verdict stands.
         describe("the point fact (a `now` gain of a slot read plain in combat)", function()
             local POINTS = 4
+            local TARGET_POINTS = { onTarget = true, points = true } -- the packs' combo points (L1827 rows 1, 3)
             local function beginPoints(before)
-                h.Class.resources.combo_points = { type = POINTS }
+                h.Class.resources.combo_points = { type = POINTS, state = { meta = TARGET_POINTS } }
                 h.Class.abilities.spender_c.funcs.now = function()
                     applyDebuff("target", "spender_c", 15) -- luacheck: ignore 113 (the `now` context's verb)
                     gain(1, "combo_points") -- luacheck: ignore 113 (the `now` context's verb)
@@ -1816,7 +1902,8 @@ describe("now handlers", function()
                 probe.spendType, probe.spend = "energy", 40 -- the probe: its flips at 40 pin the pool
                 c.spendType, c.spend, c.refundOnAvoid = "energy", cost or 30, true
                 if points then
-                    h.Class.resources.combo_points = { type = POINTS }
+                    h.Class.resources.combo_points =
+                        { type = POINTS, state = { meta = { onTarget = true, points = true } } }
                     c.funcs.now = function()
                         gain(1, "combo_points") -- luacheck: ignore 113 (the `now` context's verb)
                     end
@@ -1922,12 +2009,14 @@ describe("now handlers", function()
                 ctl.Fire("UNIT_COMBAT", "target", "DODGE", "", 0, 1)
                 ctl.Tick(5.02)
                 VS.Drain(5.03)
+                -- (L1917) both in their own frames: the latest's (spender_b, a target undo of nothing); spender_c's stays
                 assert.are.equal(20, VS.Aura("target", fs.SPENDER_C, 5.1).est)
+                assert.are.same({ 1, 1 }, { I.Tickets.ties, I.avoidsRun })
                 castOutcome(fs.SPENDER_C, 30, "MISS", 0.7) -- past the landing window (0.474 + 3 x 0.06)
                 assert.are.equal(45, VS.Aura("target", fs.SPENDER_C, 30.8).est)
                 castOutcome(fs.SPENDER_C, 50, fake.SECRET)
                 assert.are.equal(65, VS.Aura("target", fs.SPENDER_C, 50.1).est)
-                assert.are.equal(0, I.avoidsRun)
+                assert.are.equal(1, I.avoidsRun) -- the tie's only
             end
         )
 
@@ -1993,16 +2082,14 @@ describe("now handlers", function()
 
         -- Fix A (L1763): live, 28 of 287 cat instants logged their target row 1-20 ms before their success, while the
         -- ticket was still COMMITTED (opened at SENT): the row is held on that ticket and paid when the success arms it.
-        local function sentEarly(t, act, lead)
-            ctl.now = t - 0.1
-            ctl.Fire("UNIT_SPELLCAST_SENT", "player", "Mob", "Cast-1", fs.SPENDER_C)
-            ctl.now = t - lead
-            ctl.Fire("UNIT_COMBAT", "target", act, "", 0, 1)
-            ctl.now = t
-            ctl.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-1", fs.SPENDER_C)
-            ctl.Tick(t + 0.01)
-            VS.Drain(t + 0.02)
-            ctl.Tick(t + 0.03)
+        local function sentEarly(t, act, lead) -- the row first: at lead 0 it still comes before the success
+            sc()
+                :row(t - lead, act)
+                :cast(t, fs.SPENDER_C, { sent = 0.1, guid = "Cast-1" })
+                :tick(t + 0.01)
+                :drain(t + 0.02)
+                :tick(t + 0.03)
+                :run()
         end
 
         it("fix A: a dodge logged 15 ms before its success, the cast committed: no debuff, 80% back", function()
@@ -2071,22 +2158,19 @@ describe("now handlers", function()
         -- fix round 1 I1: a held row is scored against our swings at its own time; only the cast's own-frame band
         -- reads the success's. A white avoid inside the swing's core band (main 0.474 +/- 0.12 s, off 0.703 +/- 0.04 s)
         -- at its own time is the swing's, whatever instant succeeds just after it.
-        local function swingThenEarly(hand, swingT, act, rowT, lead)
-            ctl.now = 1.0
-            ctl.Fire("PLAYER_SWING", 3.6, hand)
-            ctl.Tick(2.0)
-            ctl.now = swingT
-            ctl.Fire("PLAYER_SWING", 3.6, hand)
-            ctl.now = 4.9
-            ctl.Fire("UNIT_SPELLCAST_SENT", "player", "Mob", "Cast-1", fs.SPENDER_C)
-            ctl.now = rowT
-            ctl.Fire("UNIT_COMBAT", "target", act, "", 0, 1)
-            ctl.now = rowT + lead
-            ctl.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-1", fs.SPENDER_C)
-            ctl.Tick(rowT + 0.1)
-            VS.Drain(rowT + 0.1)
-            ctl.Tick(7.5)
-            VS.Drain(7.5)
+        local function swingThenEarly(hand, swingT, act, rowT, lead) -- SENT at 4.9, the success `lead` after the row
+            local swing = { speed = 3.6, hand = hand, act = false }
+            sc()
+                :swing(1.0, swing)
+                :tick(2.0)
+                :swing(swingT, swing)
+                :row(rowT, act)
+                :cast(rowT + lead, fs.SPENDER_C, { sent = rowT + lead - 4.9, guid = "Cast-1" })
+                :tick(rowT + 0.1)
+                :drain(rowT + 0.1)
+                :tick(7.5)
+                :drain(7.5)
+                :run()
         end
         for _, c in ipairs({
             { "main-hand DODGE at lag 0.59, 15 ms before the success", 0, 4.41, "DODGE", 0.015 },
@@ -2702,6 +2786,32 @@ describe("now handlers", function()
             end
             assert.are.equal(0, I.auraVerdict.strikes[k])
             assert.are.equal(28, rage(7.5).est)
+        end)
+
+        -- L2005 fix round 1 (review finding 1): the recast's own-frame avoid undoes its write (lit since the cast, F4b:
+        -- no refund) and its light's open folds after it in the same drain; still our recast: the refund stands
+        it("our recast undone in its frame, its light folded after the undo: no strike, the refund stands", function()
+            begin(40)
+            cast(fs.SPENDER_C, 5)
+            for t = 5.3, 6.3, 0.2 do
+                drain(t)
+            end
+            assert.are.equal(38, rage(6.3).est)
+            ctl.now = 6.5
+            ctl.Fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-1", fs.SPENDER_C) -- pressed again: 10 more
+            ctl.now = 6.525
+            ctl.Fire("UNIT_COMBAT", "target", "DODGE", "", 0, 1) -- in the recast's frame: credited to it
+            ctl.ViewerAura(ti, "target") -- it landed and lights before the drain
+            for t = 6.7, 7.5, 0.2 do
+                drain(t)
+            end
+            assert.are.equal(1, I.avoidsRun)
+            assert.are.same({ 0, 0, 1, 28 }, {
+                I.auraVerdict.strikes[k],
+                I.auraVerdict.back[k],
+                I.auraVerdict.refunds[k],
+                rage(7.5).est,
+            })
         end)
 
         -- aura families (L727) and other player auras: the refund is for our missed cast's target aura only

@@ -138,16 +138,22 @@ local function bitop(a, b, f)
     end
     return r
 end
+local okClear, tableClear = pcall(require, "table.clear") -- LuaJIT only (PUC: the pairs loop)
+tableClear = okClear and tableClear or nil
+
+-- the bit predicates made once (lj-speed P3: a closure per call is NYI FNEW for LuaJIT)
+local function bothSet(x, y)
+    return x == 1 and y == 1
+end
+local function eitherSet(x, y)
+    return x == 1 or y == 1
+end
 local BIT = {
     band = function(a, b)
-        return bitop(a, b, function(x, y)
-            return x == 1 and y == 1
-        end)
+        return bitop(a, b, bothSet)
     end,
     bor = function(a, b)
-        return bitop(a, b, function(x, y)
-            return x == 1 or y == 1
-        end)
+        return bitop(a, b, eitherSet)
     end,
     lshift = function(a, n)
         return a * 2 ^ n
@@ -326,6 +332,12 @@ function M.new(o)
         end
         return t
     end
+    if tableClear then -- lj-speed P3: LuaJIT's table.clear, compiled (the pairs loop above blacklists its traces)
+        function env.wipe(t)
+            tableClear(t)
+            return t
+        end
+    end
     env.table.wipe = env.wipe
     env.strtrim, env.strsplit = string.trim, strsplit
     function env.strjoin(sep, ...)
@@ -413,7 +425,8 @@ function M.new(o)
     H.stub, H.CreateFrame = stub, frame
     -- keys found not to be methods (a frame's own unset fields): a repeat lookup returns nil without isVerb's substrings
     local plain = {}
-    stubMT.__index = function(_, k)
+    local newMethod
+    stubMT.__index = function(_, k) -- the hot path; the closures live in newMethod (lj-speed P3: NYI UCLO here)
         if type(k) ~= "string" or plain[k] then
             return nil
         end
@@ -421,6 +434,10 @@ function M.new(o)
         if m then
             return m
         end
+        return newMethod(k)
+    end
+    newMethod = function(k)
+        local m
         if NUM[k] ~= nil then
             local v = NUM[k]
             m = function()
@@ -952,6 +969,9 @@ function M.new(o)
         end
         for slot, item in pairs(c.items or {}) do -- { [slot] = { itemID, name, equipLoc, classID?, subClassID? } }
             ctl.inventory[slot], ctl.items[item[1]] = item[1], { item[2], item[3], item[4], item[5] }
+            if slot == 13 or slot == 14 then -- a worn trinket: IsUsableItem (its cooldown is the drive's @itemCooldown)
+                ctl.itemUsable[item[1]] = true
+            end
         end
         for i, id in ipairs(c.forms or {}) do
             ctl.forms[i] = id

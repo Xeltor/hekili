@@ -42,6 +42,7 @@ local def = {
     reactions = {}, -- RegisterReaction's records { key, who, outcome, hand, now }: Families/Now.lua (no ability index)
     gear = {}, -- the declared gear (spec:RegisterGear's sets and items, spec:RegisterSetBonus's bonuses): Families/Gear.lua
     gcdMods = {}, -- the GCD modifiers { aura, pct, spells } (Engine/Schema/Races.lua; aura audit C12): Families/Casts.lua
+    totemSlots = {}, -- RegisterTotemSlots' client slot by element name (Families/Now.lua's totem.<element>, summonTotem)
 }
 local LISTS = {
     "abilities",
@@ -57,12 +58,10 @@ local LISTS = {
     "reactions",
     "gear",
     "gcdMods",
+    "totemSlots",
 }
 
 local HANDS = { mainhand = 1, offhand = 2 }
--- L90: a resource the game binds to one target: only the count on the current target is usable
--- (GetComboPoints("player", "target")); the pool UnitPower answers survives a swap (Game/State/Sources/Power.lua).
-local ON_TARGET = { combo_points = true }
 -- a test's stand-in class may have no `pets`, `windows`, `reactions`, `gear` or `setBonuses`
 local NO_PETS, NO_WINDOWS, NO_GEAR = {}, {}, {}
 -- The sim's own generated entries (Spec/Regen.lua RegisterResource: the stepped decay and the hits taken), reserved names
@@ -76,13 +75,20 @@ function ns.TrackPassive(id)
     insert(passives, id)
 end
 
--- The spell IDs of a registration: its `id`, then its `copy` IDs (rank order), positive numbers only.
-local function idsOf(obj)
+local function index(t, k)
+    return t[k]
+end
+
+-- The spell IDs of a registration: its `id`, then its `copy` IDs (rank order), positive numbers only. `get` reads a
+-- field (default: an index, as the build does; Fields.lua passes rawget, which runs no aura's onLoad).
+local function idsOf(obj, get)
+    get = get or index
     local ids = {}
-    if type(obj.id) == "number" and obj.id > 0 then
-        ids[1] = obj.id
+    local id = get(obj, "id")
+    if type(id) == "number" and id > 0 then
+        ids[1] = id
     end
-    local copy = obj.copy
+    local copy = get(obj, "copy")
     if type(copy) == "number" and copy > 0 then
         ids[#ids + 1] = copy
     elseif type(copy) == "table" then
@@ -93,6 +99,25 @@ local function idsOf(obj)
         end
     end
     return ids
+end
+
+--- The spell IDs the build tracks aura `a` by when it is registered under key `k`, or nil when the build hands the
+--- belief no record of it: a primary key (not a copy key), a positive spell ID (its id or a copy), or the id-less
+--- weapon-enchant exception (C4: RegisterAura's negative pseudo-ID). The field registry's V4 (Fields.lua) finds its
+--- aura by the same rule, with `get` = rawget at load.
+function ns.TrackedAuraIds(a, k, get)
+    get = get or index
+    if get(a, "key") ~= k then
+        return
+    end
+    local ids = idsOf(a, get)
+    local enchant = rawget(a, "weaponEnchant") ~= nil or type(rawget(a, "enchants")) == "table"
+    if #ids == 0 and enchant and type(get(a, "id")) == "number" then
+        ids[1] = get(a, "id") -- an id-less weapon-enchant aura (C4): RegisterAura's negative pseudo-ID
+    end
+    if #ids > 0 then
+        return ids
+    end
 end
 
 -- A plain copy of `v`: a table's raw fields by value, its sub-tables copied the same way (a `copy` list, `consumedBy`,
@@ -295,9 +320,12 @@ local function buildDef()
             key = k,
             type = r.type,
             token = k:upper(),
-            onTarget = ON_TARGET[k] == true, -- usable only on the current target (Sources/Power.lua, L90)
+            -- the pack's declarations (lane 6, L1827 rows 1-2; Engine/Schema/Fields.lua): L90, the game binds the count
+            -- to one target, so only the current target's is usable (GetComboPoints("player", "target"); the pool
+            -- UnitPower answers survives a swap: Sources/Power.lua); a regenerating pool rests at its maximum
+            onTarget = meta.onTarget == true,
             max = meta.max or 100, -- a number, or a function the belief runs in its context
-            rest = ns.ResourceRegenerates(k) == true, -- a regenerating resource rests at its maximum (Resources.lua)
+            rest = meta.rest == "max", -- a flag (Resources.lua)
             swing = swing,
             swingValue = value,
             swingOff = offValue,
@@ -323,10 +351,10 @@ local function buildDef()
         insert(def.resources, d)
         slotByKey[k] = #def.resources
         -- the race pack's resource and cost modifiers (Engine/Schema/Races.lua, event-facade spec §12b): every resource of the class,
-        -- but a maximum modifier never scales a point resource (ns.ResourceIsPoints, Constants.lua)
+        -- but a maximum modifier never scales a point resource (the meta's `points`, lane 6, L1827 row 3)
         local race = ns.raceMods
         if race then
-            d.maxMods = not ns.ResourceIsPoints(k) and plain(race.maxMods, {}) or nil
+            d.maxMods = meta.points ~= true and plain(race.maxMods, {}) or nil
             d.costMods = plain(race.costMods, {})
             -- the race's regen entries on this resource (Races.lua RegisterRegenMod), after the class's (`mult` is a copy:
             -- a rebuild never appends to the class's own `regenMult`)
@@ -366,18 +394,12 @@ local function buildDef()
     end
     for _, k in ipairs(sortedKeys(class.auras)) do
         local a = class.auras[k]
-        if a.key == k then
-            local ids = idsOf(a)
-            local enchant = rawget(a, "weaponEnchant") ~= nil or type(rawget(a, "enchants")) == "table"
-            if #ids == 0 and enchant and type(a.id) == "number" then
-                ids[1] = a.id -- an id-less weapon-enchant aura (C4): RegisterAura's negative pseudo-ID
-            end
-            if #ids > 0 then
-                local rec = recordOf(a)
-                rec.cdm = cdmOf(rec)
-                insert(def.auras, rec)
-                def.auraIds[#def.auras] = ids
-            end
+        local ids = ns.TrackedAuraIds(a, k)
+        if ids then
+            local rec = recordOf(a)
+            rec.cdm = cdmOf(rec)
+            insert(def.auras, rec)
+            def.auraIds[#def.auras] = ids
         end
     end
     local seen = {}
@@ -404,6 +426,9 @@ local function buildDef()
         if type(spell) == "number" then
             insert(def.gear, { key = k, aura = spell })
         end
+    end
+    for elem, slot in pairs(class.totemSlots or NO_PETS) do -- a plain copy (lane 6, L1827 row 5)
+        def.totemSlots[elem] = slot
     end
     for _, k in ipairs(sortedKeys(class.pets or NO_PETS)) do
         local p = class.pets[k]

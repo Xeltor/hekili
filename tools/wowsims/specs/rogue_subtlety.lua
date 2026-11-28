@@ -59,4 +59,7 @@ return require("tools.wowsims.rogue_pve")({
     -- by role (docs/dev/wowsims-packs.md): Garrote a stealth-window cast; Slice and Dice and Rupture both at 1, so they
     -- sort by soonest; Venom none (the user, 2026-10-21)
     focus = { garrote = 1, slice_and_dice = 1, rupture = 1 },
+    -- L1902 (Fable ruling 1b): the 3-point "Fight About to End" Eviscerate dumps points bound to this target, so it reads
+    -- the target's death; Slice and Dice's read of the same variable (a buff of ours) stays the fight's
+    targetBound = { eviscerate = "Fight About to End" },
 })

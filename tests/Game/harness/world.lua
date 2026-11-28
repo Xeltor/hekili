@@ -23,6 +23,29 @@ function M.refundOf(class, key)
     return type(f) == "number" and f or nil
 end
 
+--- The item categories of class data `class` (the on-use trinkets: an ability with an `item` and a `category`):
+--- { [key] = { item, window (its `categoryCooldown`), members = { { key, item }, ... } (the category's, key order) } }.
+function M.itemCategories(class)
+    local keys, out, byCategory = {}, {}, {}
+    for key, a in pairs(class.abilities) do
+        if type(key) == "string" and type(a) == "table" and a.key == key then
+            keys[#keys + 1] = key
+        end
+    end
+    table.sort(keys)
+    for _, key in ipairs(keys) do
+        local a = class.abilities[key]
+        local item = rawget(a, "item")
+        if type(item) == "number" and a.category then
+            local members = byCategory[a.category] or {}
+            byCategory[a.category] = members
+            members[#members + 1] = { key = key, item = item }
+            out[key] = { item = item, window = tonumber(a.categoryCooldown) or 0, members = members }
+        end
+    end
+    return out
+end
+
 -- The outcomes an ability of ours can roll on the target (a press's `outcomes`; wowsims/forever core/spell_outcome.go):
 -- "melee" the special melee tables (OutcomeMeleeSpecialHit*, OutcomeMeleeWeaponSpecial*: miss, dodge, parry), "miss"
 -- the ones with a miss roll only (OutcomeMeleeSpecialNoBlockDodgeParry*: from behind, Overpower; OutcomeRangedHit*),
@@ -89,6 +112,20 @@ function M.new(seed)
         table.insert(q, lo, item)
     end
 
+    -- a pack's next live mob, half a second after a kill; its own function (lj-speed P3): a closure made inside W.emit
+    -- aborts every LuaJIT trace through it (NYI UCLO)
+    local function retarget(me)
+        return function()
+            for _, e in ipairs(W.ents) do
+                if e.kind == "mob" and not e.dead then
+                    me.target = e
+                    W.emit({ kind = "target" })
+                    return
+                end
+            end
+        end
+    end
+
     --- Records a truth event at the clock (or at `ev.t`) and applies its effects: a wound takes health, our landed
     --- wound pays our rage (`ev.rage`), a cast spends it (`ev.cost`); a pull or stop keeps our weapon damage then.
     function W.emit(ev)
@@ -140,12 +177,28 @@ function M.new(seed)
             ev.health = v.health -- after the wound (a secret-free client's UnitHealth)
             if v.health <= 0 and not v.dead then -- a kill (headless loop design §2.1.5): the fight's end
                 ev.killing = true -- the observer shapes this outcome by kind (unit-registry spec §6.1 row 7)
-                v.dead, W.killAt = true, W.t
+                v.dead = true
+                v.diedAt = W.t -- (mobHealths worlds) each life's end; the fight's truth is the last
+                if W.livesLeft then -- multi-enemy worlds count enemy deaths and track the player's death separately
+                    if v.kind == "mob" then
+                        W.livesLeft = W.livesLeft - 1
+                        if W.livesLeft == 0 and not W.wipeAt then
+                            W.killAt = W.t
+                        end
+                    elseif v == me and not W.killAt then
+                        W.wipeAt = W.t
+                    end
+                else
+                    W.killAt = W.t
+                end
                 W.emit({ kind = "kill", dst = v, src = ev.src, cause = ev })
                 for _, e in ipairs(W.ents) do -- a cast at the dead stops (the client's INTERRUPTED and STOP)
                     if e.target == v then
                         W.endCasts(e)
                     end
+                end
+                if W.livesLeft and W.livesLeft > 0 and me and me.target == v then -- a pack: on to the next live mob
+                    W.at(W.t + 0.5, retarget(me))
                 end
             end
         elseif ev.act == "HEAL" and ev.dst then
@@ -403,6 +456,21 @@ function M.new(seed)
             e.hardSpell, e.castUntil = nil, W.t
         end
         W.stopChannel(e)
+    end
+
+    --- `e` used the item of category entry `group` (M.itemCategories) of ability `key`, its cooldown `cd` s from now and
+    --- its category's hold `lag` s already run (a replay's log line placed after its time): the client answers the
+    --- item's cooldown (observer "itemCooldown") and holds each other member for the category's cooldown, a longer
+    --- running one never shortened, in the truth (cdUntil) and the client alike.
+    function W.itemUse(e, key, group, cd, lag)
+        W.emit({ kind = "itemCooldown", src = e, item = group.item, cd = cd })
+        local hold = group.window - (lag or 0)
+        for _, m in ipairs(group.members) do
+            if m.key ~= key and hold > 0 and W.t + hold > (e.cdUntil[m.key] or 0) + 1e-9 then
+                e.cdUntil[m.key] = W.t + hold
+                W.emit({ kind = "itemCooldown", src = e, item = m.item, cd = hold })
+            end
+        end
     end
 
     --- `e`'s cooldown of `key` (its ranks' spell IDs `ids`) finishes now: the world's and the client's answers.

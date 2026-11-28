@@ -16,12 +16,15 @@ local abs, floor = math.abs, math.floor
 local Stats = I.Stats
 
 --- A flip pin measures regen only when the last short report was at most this long before it (TDF Belief.PIN_EXACT).
-I.PIN_EXACT = 0.15
+I.PIN_EXACT = I.Lat.lag("usable.flip")
+--- How late a band crossing's stamp can be (a regen step, L1794): a regen pair's floor side reads with it (crossing).
+I.BAND_STAMP = I.Lat.lag("band.stamp")
 --- Seconds a cast's declared gain (its `now`'s `gain`) takes to reach the client's usability answers (the harness's
 --- usableDelay, UNMEASURED until G7): a short answer read sooner that the gain lifts past the cost predates it (a
 --- same-frame press after Bloodrage), so it is no rung. A refund and a hit's `taken` rage are estimates the answer may
 --- correct, so they do not count (both raised the loops' flicker: Guardian 3.35 -> 3.52, Fury 1.77 -> 1.96).
-I.GAIN_SHOWS = 0.1
+--- One row with the core's def.oracleMin (Latency.lua's usable.shows, re-read at the build).
+I.GAIN_SHOWS = I.Lat.lag("usable.shows")
 --- A swing-paid slot's scale is measured over at least this many model steps of its paying hand (GAP AC).
 I.SWING_STEPS = 5
 
@@ -35,7 +38,7 @@ local UNKNOWN, NOT, YES, SHORT = -1, 0, 1, 2
 -- belief cannot see (a proc's expected gain; 0: none). Continuous regen is per second (regE/regL/regH); a swing-paid
 -- resource's step is the spec's model value of that hand x scale (spread around it), its floor step (value - width) x
 -- (scale - spread) and its top step (value + width) x (scale + spread). `restMax[r]`: a regenerating
--- resource rests at its maximum (energy, mana), the others at 0 (rage).
+-- resource rests at its maximum (its pack's meta `rest = "max"`: energy, mana), the others at 0 (rage).
 -- The five-second rule (C3): a slot with an `fsr` meta splits its continuous regen in two parts, each with its own
 -- calibrated state: the `mp5` part (regE/regL/regH, decl, dev) always, the `spirit` part (spE/spL/spH, spDecl, spDev;
 -- 0 for every other slot) only outside the window our own spend opens (`fsrUntil[r]`: its end, I.FSR after the
@@ -104,6 +107,7 @@ local R = {
     regE = {},
     regL = {},
     regH = {},
+    regQ = {}, -- a part's stamp share: the EMA of its samples' read-high by I.BAND_STAMP (ema); spQ the spirit part's
     decl = {},
     dev = {},
     fsr = {},
@@ -115,6 +119,7 @@ local R = {
     spE = {},
     spL = {},
     spH = {},
+    spQ = {},
     spDecl = {},
     spDev = {},
     shaped = {},
@@ -356,6 +361,181 @@ local function clamp(v, max)
     return v
 end
 
+-- The bounded writer (refactor plan Pr-8, lane 11, L1827): every write of slot r's est0, lo0 and hi0 is apply's, named
+-- by its kind. The kind's op says what its three numbers are (nil: that side stays):
+--   add   a change: each side x + d, clamped to [0, max] (D-R2's add-and-clamp writers)
+--   put   values, clamped to [0, max] (a measurement; a sum its site keeps in its own order: a delta rounds otherwise)
+--   set   values as given (a ruling's result its caller bounds: a rung, a band, a restore)
+--   fall  toward rest: a side above rest loses d, never below rest (the out-of-combat decay)
+-- and its order, where the site keeps lo <= est <= hi today (D-R3; elsewhere VS.Power's read keeps it): "floor" est up
+-- to lo, "top" hi up to est, "down" lo down to est and then hi up to est. The bookkeeping (pinDelta, moved, norm, the
+-- sample) stays at each site: it differs at every one today (D-R2); Pr-9 step 2 adds the time and the change ring.
+local OP = {
+    max = "add", -- setMax: a rise to est and hi
+    cap = "put", -- setMax: a fall re-clamps every side
+    ["cap.cast"] = "set", -- I.ResourceCap: a cast's own ceiling, below the pool's maximum
+    build = "set",
+    decay = "fall",
+    ["decay.top"] = "set", -- topBeat: the top's quantum, at rest at least
+    regen = "put", -- the fold's continuous regen, summed in the fold's order
+    tick = "add", -- a periodic regen entry's tick
+    pin = "put",
+    rung = "set", -- the cost ladder (bound's USABLE)
+    swing = "add", -- a landed swing's step (swingStep)
+    verdict = "put", -- the oracle's retraction (back)
+    retract = "put",
+    debt = "set",
+    lift = "set", -- a yes that showed a pending swing (liftTo)
+    band = "set", -- a live band (bound's BAND)
+    assumed = "add", -- Obs.Swing c = 5
+    confirmed = "add", -- Obs.Swing c = 7
+    taken = "put", -- a hit on the player, summed in its own order
+    rest = "set", -- combat end: lo at rest at most
+    window = "add", -- the five-second rule's window moved
+    shift = "add", -- our own cast's change (I.ResourceShift)
+    ["refund.give"] = "put", -- a `now`'s give-back, from before the refund
+    -- the refund's nine named steps (I.Refund), one kind each
+    ["refund.keep_lo"] = "set",
+    ["refund.keep_est"] = "set",
+    ["refund.floor_lo"] = "put",
+    ["refund.floor_est"] = "put",
+    ["refund.top_hi"] = "set",
+    ["refund.top_est"] = "set",
+    ["refund.top_lo"] = "set",
+    ["refund.est_over_lo"] = "set",
+    ["refund.hi_over_est"] = "set",
+    unrefund = "add",
+    set = "put", -- I.ResourceSet
+    spread = "put", -- I.ResourceGainSpread
+    ["spread.keep"] = "set",
+}
+local ORDER = {
+    retract = "top",
+    debt = "floor",
+    ["refund.est_over_lo"] = "floor",
+    ["refund.hi_over_est"] = "top",
+    unrefund = "down",
+}
+
+local function apply(r, kind, e, l, h)
+    local op, max = OP[kind], R.max[r]
+    if op == "add" then
+        if e then
+            R.est0[r] = clamp(R.est0[r] + e, max)
+        end
+        if l then
+            R.lo0[r] = clamp(R.lo0[r] + l, max)
+        end
+        if h then
+            R.hi0[r] = clamp(R.hi0[r] + h, max)
+        end
+    elseif op == "put" then
+        if e then
+            R.est0[r] = clamp(e, max)
+        end
+        if l then
+            R.lo0[r] = clamp(l, max)
+        end
+        if h then
+            R.hi0[r] = clamp(h, max)
+        end
+    elseif op == "set" then
+        if e then
+            R.est0[r] = e
+        end
+        if l then
+            R.lo0[r] = l
+        end
+        if h then
+            R.hi0[r] = h
+        end
+    elseif op == "fall" then
+        local rest = R.rest[r]
+        if e and R.est0[r] > rest then
+            local v = R.est0[r] - e
+            R.est0[r] = v > rest and v or rest
+        end
+        if l and R.lo0[r] > rest then
+            local v = R.lo0[r] - l
+            R.lo0[r] = v > rest and v or rest
+        end
+        if h and R.hi0[r] > rest then
+            local v = R.hi0[r] - h
+            R.hi0[r] = v > rest and v or rest
+        end
+    else
+        error("apply: unknown kind " .. tostring(kind))
+    end
+    local o = ORDER[kind]
+    if o == "floor" then
+        if R.est0[r] < R.lo0[r] then
+            R.est0[r] = R.lo0[r]
+        end
+    elseif o then
+        if o == "down" and R.lo0[r] > R.est0[r] then
+            R.lo0[r] = R.est0[r]
+        end
+        if R.hi0[r] < R.est0[r] then
+            R.hi0[r] = R.est0[r]
+        end
+    end
+end
+I.ResourceApply = apply
+
+--- The bound helper (Pr-8): the three band rulings, stated once (owner L1672, L1675; lhv-live-band-is-fact). From the
+--- range (e, l, h) it returns the new e, l, h. Allocates nothing.
+--- `ruling` names which: "band", "yes" or "short"; any other value raises (a nil never means "band").
+---  BAND ("band"): a live band [bLo, bTop] sets the floor and the ceiling: where the range meets it, the band's ends
+---    clamped into the range (what the range already holds narrows it), else the band's ends (it wins both); est inside.
+---  USABLE ("yes" at c, or "short" at c): a one-sided bound about now that wins over the band. A yes takes
+---    lo and est up to c, and a top under c opens to the band's top (c past it: c), or with no band to `max`; a short
+---    one takes hi and est under c, and a floor past it to the bound (0 at least) or, with a band, to the band's low end
+---    under that: only the side it contradicts yields (L1675), unless `edge`: the floor's own regen explains the answer (L1946).
+---  REFINE: an exact read, a death or our own spend refines it, at its caller: a band at most a point wide is a pin
+---    (applyBand), a plain read in the band's drain drops the band (Obs.Band: unband), our own change holds a band stamped
+---    before it (holdsBack), and a death ends the target's (Families/TargetHealth.lua, TargetGone).
+local function bound(e, l, h, ruling, c, band, bLo, bTop, edge, max)
+    if ruling == "band" then
+        local f, g = bLo, bTop
+        if l <= bTop and h >= bLo then
+            f, g = l > bLo and l or bLo, h < bTop and h or bTop
+        end
+        return e < f and f or (e > g and g or e), f, g
+    elseif ruling == "yes" then
+        if l < c then
+            l = c
+        end
+        if e < c then
+            e = c
+        end
+        if h < c then
+            h = max
+            if band then
+                h = bTop > c and bTop or c
+            end
+        end
+        return e, l, h
+    elseif ruling ~= "short" then
+        error("bound: unknown ruling " .. tostring(ruling))
+    end
+    local top = c - I.EPS
+    if h > top then
+        h = top
+    end
+    if e > top then
+        e = top
+    end
+    if l > top then
+        local v = top < 0 and 0 or top -- the newest bound wins
+        if band and bLo < v and not edge then
+            v = bLo
+        end
+        l = v
+    end
+    return e, l, h
+end
+I.Bound = bound
+
 -- A change of slot r we know of at t (none of it continuous regen): no crossing pair spans it. Allocates nothing.
 local function moved(r, t)
     R.markT[r] = -1
@@ -375,12 +555,32 @@ end
 local OTHER = 0
 -- A melee wound row on us trails its rage by up to this (389-565 ms measured, docs/research/2026-10-23-damagemeter-api.md):
 -- a swing's sample waits it out, and a wound row up to then unteaches it (the rage may be that hit's).
-I.TAKEN_ROW_LAG = 0.6
+I.TAKEN_ROW_LAG = I.Lat.lag("wound.taken")
 -- Per hand, the swing a band change covered alone (shortcut: one a hand, so a swing settling after that hand's next
 -- covered one teaches nothing; widen if a trace shows off-hand samples lost): its slot (0: none), its window, the
 -- swing's time, the rise, whether it crit and whether it settled landed (taught at a fold's end past the row's lag).
 local smpR, smpFrom, smpTo, smpAt, smpV = { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }
 local smpCrit, smpLand = { false, false }, { false, false }
+
+-- "A known change at t near the band stamp `stamp`" (refactor plan Pr-9 step 1, lane 5, L1827): within the band's
+-- margin (the band.margin row, I.BAND_MARGIN) plus 1e-6 slack, or none when `exact`. Each caller names today's side, so
+-- no row moves; making the sides agree is a later, behaviour-changing step. "until": t at most m after the stamp;
+-- "after": t in [stamp, stamp + m]; "since": t later than stamp - m. Each side keeps its site's arithmetic (t - stamp,
+-- or stamp - m), so its boolean is the old line's in doubles. Allocates nothing.
+local function nearStamp(t, stamp, side, exact)
+    local m = exact and I.BAND_MARGIN or I.BAND_MARGIN + 1e-6
+    if side == "since" then
+        return t > stamp - m
+    end
+    local d = t - stamp
+    if side == "until" then
+        return d <= m
+    elseif side == "after" then
+        return d >= 0 and d <= m
+    end
+    error("NearStamp: unknown side " .. tostring(side))
+end
+I.NearStamp = nearStamp
 
 -- An event of slot r at t that gives (or may give) it something besides continuous regen: the open window counts it; one
 -- dated back into a closed window unteaches that window's sample, and one within I.BAND_MARGIN after the last stamp may
@@ -390,7 +590,7 @@ local function seen(r, t, what)
         return
     end
     local margin = I.BAND_MARGIN + 1e-6
-    local near = t - R.bandAt[r] <= margin
+    local near = nearStamp(t, R.bandAt[r], "until")
     if near then
         for h = 1, 2 do
             if smpR[h] == r and t > smpFrom[h] and t <= smpTo[h] + margin then
@@ -423,6 +623,7 @@ local function ownGain(r, delta, t)
 end
 
 local keepFloor = false -- the Usable apply's: this short answer leaves the modelled floor (I.GAIN_SHOWS)
+local edgeFloor = false -- the Usable apply's: the floor was at or under the answer's top I.GAIN_SHOWS ago (L1946)
 -- After a measurement moved lo0, slot r's modelled floor (`was`, lo0 + over before it), if any, stays where it was
 -- unless the measurement's top `top` falls under it (then it is lo0). Allocates nothing.
 local function remeasure(r, was, top)
@@ -449,7 +650,7 @@ local function setMax(r, m)
     end
     if up < 0 then
         local before = R.est0[r]
-        R.est0[r], R.lo0[r], R.hi0[r] = clamp(before, m), clamp(R.lo0[r], m), clamp(R.hi0[r], m)
+        apply(r, "cap", before, R.lo0[r], R.hi0[r])
         -- the capped-away amount stays out of the regen measurement
         R.pinDelta[r], R.pinOwn[r] = R.pinDelta[r] + R.est0[r] - before, true
         norm(r)
@@ -461,8 +662,7 @@ local function setMax(r, m)
                 R.over[r] = m - R.lo0[r] -- the modelled floor was at rest: it rests at the new maximum
                 norm(r)
             end
-            R.est0[r] = clamp(R.est0[r] + up, m)
-            R.hi0[r] = clamp(R.hi0[r] + up, m)
+            apply(r, "max", up, nil, up)
             R.pinDelta[r], R.pinOwn[r] = R.pinDelta[r] + up, true
         end
     end
@@ -490,6 +690,7 @@ end
 
 I.OnBuild(function(def, now)
     I.FSR = def.fsr
+    I.GAIN_SHOWS = I.Lat.lag("usable.shows") -- the core's def.oracleMin (Latency.lua)
     for k in pairs(R.slotOf) do
         R.slotOf[k] = nil
     end
@@ -515,7 +716,7 @@ I.OnBuild(function(def, now)
         R.swingOff[r] = d.swingOff or 0
         R.swingCrit[r], R.swingOffCrit[r] = d.swingCrit or 0, d.swingOffCrit or 0
         R.swingWidth[r], R.swingOffWidth[r] = d.swingWidth or 0, d.swingOffWidth or 0
-        R.est0[r], R.lo0[r], R.hi0[r] = R.rest[r], 0, R.max[r]
+        apply(r, "build", R.rest[r], 0, R.max[r])
         estDebt[r] = 0
         R.assume[r] = R.restMax[r] and R.swing[r] == 0
         R.over[r] = R.assume[r] and R.rest[r] or 0 -- the floor at rest too (over)
@@ -531,7 +732,7 @@ I.OnBuild(function(def, now)
         R.regE[r], R.regL[r], R.regH[r] = rate, rate * (1 - I.REGEN_SPREAD), rate * (1 + I.REGEN_SPREAD)
         R.spDecl[r], R.spDev[r] = spirit, 0
         R.spE[r], R.spL[r], R.spH[r] = spirit, spirit * (1 - I.REGEN_SPREAD), spirit * (1 + I.REGEN_SPREAD)
-        R.dev[r], R.scale[r], R.spread[r] = 0, 1, I.REGEN_SPREAD
+        R.dev[r], R.scale[r], R.spread[r], R.regQ[r], R.spQ[r] = 0, 1, I.REGEN_SPREAD, 0, 0
         R.pinT[r], R.pinV[r], R.pinDelta[r], R.pinValid[r], R.gain[r], R.spends[r] = 0, 0, 0, false, 0, 0
         R.pinOwn[r], R.pinSkip[r], R.swFrom[r], R.skipFrom[r], R.skipTo[r] = false, false, 0, 0, 0
         R.mayT[r] = -1e9
@@ -851,15 +1052,7 @@ end
 -- above it then keeps the grid: topBeat).
 local function beat(r, t)
     local rest, step, before = R.rest[r], R.decay[r] * R.decayIv[r], R.est0[r]
-    if before > rest then
-        R.est0[r] = before - step > rest and before - step or rest
-    end
-    if R.lo0[r] > rest then
-        R.lo0[r] = R.lo0[r] - step > rest and R.lo0[r] - step or rest
-    end
-    if R.hi0[r] > rest then
-        R.hi0[r] = R.hi0[r] - step > rest and R.hi0[r] - step or rest
-    end
+    apply(r, "decay", step, step, step)
     if R.est0[r] ~= before then
         R.pinDelta[r], R.pinOwn[r] = R.pinDelta[r] + R.est0[r] - before, true
         I.Sample(R.power[r], "modelled", R.est0[r], t, Obs.CombatEnd)
@@ -872,7 +1065,7 @@ end
 -- under a stepped truth. Allocates nothing.
 local function topBeat(r, t)
     local rest, h = R.rest[r], R.hi0[r] - R.decay[r] * R.decayIv[r]
-    R.hi0[r] = h > rest and h or rest
+    apply(r, "decay.top", nil, nil, h > rest and h or rest)
     R.topNext[r] = h > rest and t + R.decayIv[r] or 0
 end
 
@@ -883,11 +1076,15 @@ I.OnAdvance(function(from, to)
     for r = 1, R.n do
         local learned = R.regH[r] ~= 0 or R.spH[r] ~= 0
         if R.swing[r] == 0 and (learned or R.shaped[r]) then
-            local max, a, b, k = R.max[r], spans(r, from, dt)
+            local a, b, k = spans(r, from, dt)
             if learned or k ~= 0 then -- a slot with no learned regen still gains an `mp5` entry's k (as VS.Power does)
-                R.est0[r] = clamp(R.est0[r] + R.regE[r] * a + R.spE[r] * b + k, max)
-                R.lo0[r] = clamp(R.lo0[r] + R.regL[r] * a + R.spL[r] * b + k, max)
-                R.hi0[r] = clamp(R.hi0[r] + R.regH[r] * a + R.spH[r] * b + k, max)
+                apply(
+                    r,
+                    "regen",
+                    R.est0[r] + R.regE[r] * a + R.spE[r] * b + k,
+                    R.lo0[r] + R.regL[r] * a + R.spL[r] * b + k,
+                    R.hi0[r] + R.regH[r] * a + R.spH[r] * b + k
+                )
                 R.pinA[r], R.pinB[r] = R.pinA[r] + a, R.pinB[r] + b
                 R.pinDelta[r] = R.pinDelta[r] + k -- an `mp5` entry's known gain, kept out of the measurement
                 norm(r)
@@ -900,10 +1097,7 @@ I.OnAdvance(function(from, to)
             local r = G.slot[g]
             stepped(r, tick)
             seen(r, tick, OTHER)
-            local max = R.max[r]
-            R.est0[r] = clamp(R.est0[r] + v, max)
-            R.lo0[r] = clamp(R.lo0[r] + v, max)
-            R.hi0[r] = clamp(R.hi0[r] + v, max)
+            apply(r, "tick", v, v, v)
             R.pinDelta[r], R.pinOwn[r] = R.pinDelta[r] + v, true
             moved(r, to)
             norm(r)
@@ -934,16 +1128,8 @@ I.OnAdvance(function(from, to)
                 topBeat(r, R.topNext[r])
             end
         elseif start then
-            local rest, drop, before = R.rest[r], d * (to - start), R.est0[r]
-            if before > rest then
-                R.est0[r] = before - drop > rest and before - drop or rest
-            end
-            if R.lo0[r] > rest then
-                R.lo0[r] = R.lo0[r] - drop > rest and R.lo0[r] - drop or rest
-            end
-            if R.hi0[r] > rest then
-                R.hi0[r] = R.hi0[r] - drop > rest and R.hi0[r] - drop or rest
-            end
+            local drop, before = d * (to - start), R.est0[r]
+            apply(r, "decay", drop, drop, drop)
             if R.est0[r] ~= before then
                 R.pinDelta[r], R.pinOwn[r] = R.pinDelta[r] + R.est0[r] - before, true
                 I.Sample(R.power[r], "modelled", R.est0[r], to, Obs.CombatEnd)
@@ -970,8 +1156,13 @@ end
 -- One measurement m of a continuous part of slot r (its declared rate ref, its EMA E/L/H and deviation D) into that
 -- part's EMA (TDF calibrate). False when m is noise (a missed spend, a cap) or the part has no declared rate. A part
 -- declared 0 with a `bound` (an `fsr` slot's mp5 part: the slot's declared total) learns any m in [0, bound x
--- REGEN_RATIO] instead of the ratio test.
-local function ema(r, m, ref, E, L, H, D, bound)
+-- REGEN_RATIO] instead of the ratio test. `high`: how far m may read over the truth (a band pair's stamps, crossing;
+-- 0: none); Q, its EMA beside E's, makes E - Q the EMA of the samples' lower ends, and L = E - max(spread, Q) is at
+-- most that. On a plain slot and an `fsr` mp5 part that is at or under the true rate (owner: the floor's rate never
+-- above the true regen) while each stamp is at most band.stamp late and never early, the seed is at or under the truth
+-- and the true rate holds over the EMA's memory; an `fsr` spirit part's sample prices the mp5 part at regE, so its low
+-- also needs regE at or over the mp5 truth (L1975).
+local function ema(r, m, ref, E, L, H, D, bound, Q, high)
     local scale = ref
     if ref == 0 then
         scale = bound or 0
@@ -986,8 +1177,9 @@ local function ema(r, m, ref, E, L, H, D, bound)
     end
     -- the spread floor is REGEN_SPREAD_MIN times the reference m is measured against (calibrate's ratio: x 1)
     local est, dev, spread = Stats.Ema(E[r], D[r], m, I.ALPHA, abs(scale) * I.REGEN_SPREAD_MIN)
-    D[r] = dev
-    E[r], L[r], H[r] = est, est - spread, est + spread
+    local q = Q[r] + I.ALPHA * (high - Q[r])
+    D[r], Q[r] = dev, q
+    E[r], L[r], H[r] = est, est - (spread > q and spread or q), est + spread
     return true
 end
 
@@ -1036,17 +1228,21 @@ end
 -- to one tick of it, and a multiplied spirit rate's first tick dwarfs the parts it would measure (a plain slot's
 -- whole-rate `mult` keeps its tick error small next to the interval's gain, and still measures). `a`, `b`: the
 -- interval's weights (pinA, pinB between two pins; spans between two band crossings), `from`: its start, `event`: what
--- measured it.
-local function calibrate(r, m, t, a, b, from, event)
+-- measured it, `low`: the lowest m the interval allows (a band pair's, crossing; nil: m).
+local function calibrate(r, m, t, a, b, from, event, low)
+    local high = low and m - low or 0
     if R.shaped[r] then
         local ok
-        if R.fsr[r] and edged(r, from, t) then
+        -- spans reads the latest window: an entry edge after the interval (a band pair folded after its stamp) hides
+        -- the window the interval held, and its share would land on the wrong part (band-edge round 1: 25 for 15.4)
+        local to = I.clock > t and I.clock or t
+        if R.fsr[r] and edged(r, from, to) or to > t and edged(r, t, to) then
             return -- the game's ticks put the new rate on a grid the belief does not see: off by up to a tick of it
         elseif b <= 0 and a > 0 then
             local bound = R.fsr[r] and R.decl[r] + R.spDecl[r] or nil
-            ok = ema(r, m / a, R.decl[r], R.regE, R.regL, R.regH, R.dev, bound) -- nonzero: a > 0 checked
+            ok = ema(r, m / a, R.decl[r], R.regE, R.regL, R.regH, R.dev, bound, R.regQ, high / a) -- a > 0 checked
         elseif b >= I.PIN_GAP then
-            ok = ema(r, (m - R.regE[r] * a) / b, R.spDecl[r], R.spE, R.spL, R.spH, R.spDev) -- nonzero: b >= 1
+            ok = ema(r, (m - R.regE[r] * a) / b, R.spDecl[r], R.spE, R.spL, R.spH, R.spDev, nil, R.spQ, high / b) -- b >= 1
         end
         if ok then
             I.Sample(R.regen[r], "modelled", R.regE[r] + R.spE[r], t, event)
@@ -1054,7 +1250,7 @@ local function calibrate(r, m, t, a, b, from, event)
         return
     end
     if R.swing[r] == 0 then
-        if ema(r, m, R.decl[r], R.regE, R.regL, R.regH, R.dev) then
+        if ema(r, m, R.decl[r], R.regE, R.regL, R.regH, R.dev, nil, R.regQ, high) then
             I.Sample(R.regen[r], "modelled", R.regE[r], t, event)
         end
         return
@@ -1129,13 +1325,12 @@ local function pin(r, v, width, t, origin, event, mid)
         local m = R.shaped[r] and gain or gain / dt -- nonzero: dt >= PIN_GAP (1 s)
         calibrate(r, m, t, R.pinA[r], R.pinB[r], R.pinT[r], Obs.Usable)
     end
-    local max = R.max[r]
     local was = R.lo0[r] + R.over[r]
     local est = v + width / 2
     if origin == "pinned" then
         est = R.est0[r] < v and v or (R.est0[r] > v + width and v + width or R.est0[r])
     end
-    R.est0[r], R.lo0[r], R.hi0[r] = clamp(est, max), clamp(v, max), clamp(v + width, max)
+    apply(r, "pin", est, v, v + width)
     R.snapT[r] = -1e9 -- an anchor, not a snap
     R.pinT[r], R.pinV[r], R.pinDelta[r], R.pinValid[r], R.pinOwn[r] = t, vm, 0, measures, false
     R.pinA[r], R.pinB[r] = 0, 0
@@ -1146,8 +1341,8 @@ end
 -- Whether slot r's live band already showed a gain of d at t (the display ahead of our event): its low end rose by d,
 -- less a cell, within the margin before it. One rise shows one gain. Allocates nothing.
 local function shownGain(r, d, t)
-    local by, since = R.roseBy[r], t - R.roseT[r]
-    if not R.bandOn[r] or since < 0 or since > I.BAND_MARGIN + 1e-6 or by <= 0 or by < d - R.max[r] / 100 then
+    local by = R.roseBy[r]
+    if not R.bandOn[r] or not nearStamp(t, R.roseT[r], "after") or by <= 0 or by < d - R.max[r] / 100 then
         return false
     end
     R.roseBy[r] = 0
@@ -1163,8 +1358,9 @@ end
 -- is moved by the most regen could have changed it; a late short one is dropped if it then conflicts with the floor,
 -- and an affordable one above the believed top opens the top to the maximum, as a timely one does; while a band is live
 -- only the side it contradicts yields (L1675): a yes leaves the band's top (c past it: lo = hi = c), a short answer the
--- band's low end (the record's bounds may lie inside the band, or the band be held). True when it moved the estimate
--- (a snap: the estimate now stands on this rung, so the caller writes a `pinned` sample).
+-- band's low end (the record's bounds may lie inside the band, or the band be held), or the top when the floor's own
+-- regen over the usability lag explains the answer (edgeFloor, L1946: no proof against the floor). True when it moved
+-- the estimate (a snap: the estimate now stands on this rung, so the caller writes a `pinned` sample).
 local function ladder(r, c, affordable, t, lag)
     if lag > 0 and R.swing[r] == 0 then
         local a, b, k = spans(r, t - lag, lag)
@@ -1178,41 +1374,33 @@ local function ladder(r, c, affordable, t, lag)
             end
         end
     end
-    local snapped = false
     local was = R.lo0[r] + R.over[r]
+    local e0, h0, bLo = R.est0[r], R.hi0[r], R.bandLo[r]
+    -- a yes above the believed top: a gain the belief did not see (a refill: a potion, a pause, a mana return) put the
+    -- slot anywhere from c to its maximum; a bound, never the pin [c, c] (GAP V)
+    local e, l, h = bound(
+        e0,
+        R.lo0[r],
+        h0,
+        affordable and "yes" or "short",
+        c,
+        R.bandOn[r],
+        bLo,
+        bandTop(bLo, R.bandHi[r]),
+        edgeFloor,
+        R.max[r]
+    )
+    apply(r, "rung", e, l, h)
+    local snapped = affordable and e0 < c or not affordable and e0 > c - I.EPS
+    if snapped then
+        R.snapT[r] = t
+    end
     if affordable then
-        if R.lo0[r] < c then
-            R.lo0[r] = c
-        end
-        if R.est0[r] < c then
-            R.est0[r], R.snapT[r], snapped = c, t, true
-        end
-        if R.hi0[r] < c then
-            -- above the believed top: a gain the belief did not see (a refill: a potion, a pause, a mana return) put
-            -- the slot anywhere from c to its maximum; a bound, never the pin [c, c] (GAP V)
-            local v = R.max[r]
-            if R.bandOn[r] then
-                v = bandTop(R.bandLo[r], R.bandHi[r])
-                v = v > c and v or c
-            end
-            R.hi0[r] = v
+        if h0 < c then
             R.capT[r] = -1e9 -- a usable answer above the top: the short one is contradicted, the read stands
         end
     else
         local top = c - I.EPS
-        if R.hi0[r] > top then
-            R.hi0[r] = top
-        end
-        if R.est0[r] > top then
-            R.est0[r], R.snapT[r], snapped = top, t, true
-        end
-        if R.lo0[r] > top then
-            local v = top < 0 and 0 or top -- the newest bound wins
-            if R.bandOn[r] and R.bandLo[r] < v then
-                v = R.bandLo[r]
-            end
-            R.lo0[r] = v
-        end
         if was >= top then
             R.capT[r], R.capB[r] = t, false
         elseif R.swing[r] == 0 then
@@ -1228,9 +1416,9 @@ local function ladder(r, c, affordable, t, lag)
     return snapped
 end
 
--- The lift a swing whose wound is still in flight can owe: its wound comes within the longest landing lag (Rows.lua's
--- pair window, 2 s off hand), so an older lift is nobody's.
-I.LIFT_WINDOW = 2
+-- The lift a swing whose wound is still in flight can owe: its wound comes within the longest landing lag (the
+-- swing.land row's off hand, Rows.lua's pair window), so an older lift is nobody's.
+I.LIFT_WINDOW = I.Lat.lag("swing.land", 2)
 
 -- Swing-paid slot r was at e, lo, hi before a rung at t moved it: what it lifted is owed by a swing at or before t
 -- whose wound has not landed yet (I.On(Obs.Swing)). A lift older than the window is dropped first; a rung that lifts
@@ -1314,7 +1502,7 @@ end
 -- its crit (the hand's `crit`, unscaled); none for a crit of a slot without one. `owed`: the step first covers the
 -- slot's rung lift (R.liftE/L/H). Allocates nothing.
 local function swingStep(r, hand, c, t, owed, at)
-    local max, v, s, sp, w = R.max[r], 0, 1, 0, 0
+    local v, s, sp, w = 0, 1, 0, 0
     if c == 1 then
         v, s, sp, w = I.SwingValue(r, hand, at), R.scale[r], R.spread[r], I.SwingWidth(r, hand, at)
     else
@@ -1337,9 +1525,7 @@ local function swingStep(r, hand, c, t, owed, at)
                 R.swAccG[r] = R.swAccG[r] - v
             end
         end
-        R.est0[r] = clamp(R.est0[r] + de, max)
-        R.lo0[r] = clamp(R.lo0[r] + dl, max)
-        R.hi0[r] = clamp(R.hi0[r] + dh, max)
+        apply(r, "swing", de, dl, dh)
         stepped(r, at)
         I.Sample(R.power[r], "modelled", R.est0[r], t, Obs.Swing)
     end
@@ -1383,12 +1569,12 @@ end
 -- since the credit voids it, and so does a NOT answer in its window. Returns whether a credit of slot r explains a
 -- crossing of cost c: confirmed by this answer, or still awaiting its verdict with its step across c.
 -- Allocates nothing.
-local function back(cur, d, pre, max)
+local function back(cur, d, pre)
     local v = cur - d
     if v < pre then
         v = cur < pre and cur or pre
     end
-    return clamp(v, max)
+    return v -- apply's put clamps it
 end
 
 -- Record k's verdict from answer `now` (YES, SHORT, NOT) at t: nil before its window opens (it stays open), else
@@ -1408,10 +1594,13 @@ local function verdict(k, now, t)
     end
     local s = recR[k]
     if v and now ~= YES and recFirm[k] then
-        local max = R.max[s]
-        R.est0[s] = back(R.est0[s], recEst[k], recE0[k], max)
-        R.lo0[s] = back(R.lo0[s], recLo[k], recLo0[k], max)
-        R.hi0[s] = back(R.hi0[s], recHi[k], recHi0[k], max)
+        apply(
+            s,
+            "verdict",
+            back(R.est0[s], recEst[k], recE0[k]),
+            back(R.lo0[s], recLo[k], recLo0[k]),
+            back(R.hi0[s], recHi[k], recHi0[k])
+        )
         local h = hitRate[recHand[k]] - recHit[k]
         hitRate[recHand[k]] = h > 0 and h or 0
         I.Sample(R.power[s], "modelled", R.est0[s], t, Obs.Usable)
@@ -1430,10 +1619,7 @@ local function retract(k, t)
         recA[k], recR[k] = 0, 0
         return
     end
-    local max = R.max[s]
-    R.lo0[s] = back(R.lo0[s], recLo[k], recLo0[k], max)
-    local h = back(R.hi0[s], recHi[k], recHi0[k], max)
-    R.hi0[s] = h > R.est0[s] and h or R.est0[s]
+    apply(s, "retract", nil, back(R.lo0[s], recLo[k], recLo0[k]), back(R.hi0[s], recHi[k], recHi0[k])) -- hi down to est at most
     estDebt[s] = estDebt[s] + recEst[k]
     local hr = hitRate[recHand[k]] - recHit[k]
     hitRate[recHand[k]] = hr > 0 and hr or 0
@@ -1446,8 +1632,7 @@ function I.SettleDebt(r)
     local d = estDebt[r]
     if r > 0 and d and d > 0 then
         estDebt[r] = 0
-        local e = R.est0[r] - d
-        R.est0[r] = e > R.lo0[r] and e or R.lo0[r]
+        apply(r, "debt", R.est0[r] - d)
     end
 end
 
@@ -1513,10 +1698,7 @@ end
 local function liftTo(r, v)
     if v > R.lo0[r] then
         v = v < R.hi0[r] and v or R.hi0[r]
-        R.lo0[r] = v
-        if R.est0[r] < v then
-            R.est0[r] = v
-        end
+        apply(r, "lift", R.est0[r] < v and v or nil, v)
     end
 end
 
@@ -1578,11 +1760,12 @@ I.On(Obs.Usable, function(o, t, lag)
     end
     -- a short answer read before the regen's crossing of the cost could show (I.GAIN_SHOWS) still caps, but leaves the
     -- modelled floor: a pin a tick of regen contradicts is no proof the rest assumption was wrong (remeasure)
-    keepFloor = false
+    keepFloor, edgeFloor = false, false
     if now == SHORT and r ~= 0 and R.swing[r] == 0 and lag <= 0 then
         local c = I.CostOf(a)
         local ga, gb, gk = spans(r, o.t - I.GAIN_SHOWS, I.GAIN_SHOWS)
         keepFloor = c - I.EPS >= R.est0[r] - R.regE[r] * ga - R.spE[r] * gb - gk and R.lo0[r] + R.over[r] >= c - I.EPS
+        edgeFloor = c - I.EPS >= R.lo0[r] - R.regL[r] * ga - R.spL[r] * gb - gk
     end
     local was, wasT = usable[a], ansT[a]
     usable[a], ansT[a] = now, o.t
@@ -1623,6 +1806,7 @@ I.On(Obs.Usable, function(o, t, lag)
     end
     local explained = I.CreditVerdict and judge(a, now, t, r, c, was, wasT)
     keepFloor = keepFloor and rung and c > 0 -- no rung, no kept floor: a later read must not inherit it
+    edgeFloor = edgeFloor and rung and c > 0
     if not rung then
         return -- a second power cost (Overpower's combo points) makes a short answer ambiguous: no rung
     end
@@ -1693,7 +1877,7 @@ I.On(Obs.Usable, function(o, t, lag)
             R.raised[r] = R.raised[r] + 1
         end
     end
-    keepFloor = false -- this apply's only (remeasure)
+    keepFloor, edgeFloor = false, false -- this apply's only (remeasure, ladder)
 end)
 
 I.On(Obs.Read, function(o, t, lag)
@@ -1743,20 +1927,20 @@ I.On(Obs.Read, function(o, t, lag)
                 end
                 e = e > 0 and e or 0
                 R.decl[r], R.spDecl[r], R.readT[r] = e, sp, t
-                R.regE[r], R.regL[r], R.regH[r] = e, e, e
-                R.spE[r], R.spL[r], R.spH[r] = sp, sp, sp
+                R.regE[r], R.regL[r], R.regH[r], R.regQ[r] = e, e, e, 0
+                R.spE[r], R.spL[r], R.spH[r], R.spQ[r] = sp, sp, sp, 0
                 I.Sample(R.regen[r], "observed", e + sp, t, Obs.Read)
             end
         elseif c == ReadOf.Regen and R.swing[r] == 0 and not (R.fsr[r] and mixed) then
             local v = o.b / f - k -- nonzero: f > 0 checked above
             v = v > 0 and v or 0 -- an `mp5` aura believed up that the game dropped: never a draining rate
             R.decl[r], R.readT[r] = v, t
-            R.regE[r], R.regL[r], R.regH[r] = v, v, v
+            R.regE[r], R.regL[r], R.regH[r], R.regQ[r] = v, v, v, 0
             I.Sample(R.regen[r], "observed", v + R.spE[r], t, Obs.Read)
         elseif c == ReadOf.RegenSpirit and R.fsr[r] and not mixed then -- after its slot's Regen read (Power.lua)
             local v = o.b / f -- nonzero: f > 0 checked above
             R.spDecl[r], R.readT[r] = v, t
-            R.spE[r], R.spL[r], R.spH[r] = v, v, v
+            R.spE[r], R.spL[r], R.spH[r], R.spQ[r] = v, v, v, 0
             I.Sample(R.regen[r], "observed", R.regE[r] + v, t, Obs.Read)
         end
     end
@@ -1778,7 +1962,12 @@ local function crossing(r, lo, hi, bt)
     local was = R.bandLo[r]
     if lo == was then
         return
-    elseif lo < was or abs(lo - R.bandHi[r]) > I.EPS or lo >= R.max[r] - I.EPS or R.movedT[r] > bt - I.BAND_MARGIN then
+    elseif
+        lo < was
+        or abs(lo - R.bandHi[r]) > I.EPS
+        or lo >= R.max[r] - I.EPS
+        or nearStamp(R.movedT[r], bt, "since", true)
+    then
         R.markT[r] = -1
         return
     end
@@ -1790,8 +1979,10 @@ local function crossing(r, lo, hi, bt)
         end
         local a, b, k = spans(r, from, dt)
         local gain = lo - R.markV[r] - k
+        -- each end stamped up to a step late (L1794): the cell took up to dt + I.BAND_STAMP, its entries' k with it
+        local low = (lo - R.markV[r]) * dt / (dt + I.BAND_STAMP) - k -- nonzero: dt >= PIN_GAP (1 s)
         local m = R.shaped[r] and gain or gain / dt -- nonzero: dt >= PIN_GAP (1 s)
-        calibrate(r, m, bt, a, b, from, Obs.Band)
+        calibrate(r, m, bt, a, b, from, Obs.Band, R.shaped[r] and low or low / dt)
     end
     R.markT[r], R.markV[r] = bt, lo
 end
@@ -1810,12 +2001,8 @@ local function applyBand(r, lo, hi, bt, t)
         pin(r, lo, 0, t, "observed", Obs.Band)
         R.pinValid[r], R.exactT[r] = false, bt
     else
-        local floor0, ceil0 = lo, top
-        if l <= top and h >= lo then
-            floor0, ceil0 = l > lo and l or lo, h < top and h or top
-        end
-        local est = e < floor0 and floor0 or (e > ceil0 and ceil0 or e)
-        R.est0[r], R.lo0[r], R.hi0[r] = est, floor0, ceil0
+        local est, floor0, ceil0 = bound(e, l, h, "band", nil, true, lo, top, false, R.max[r])
+        apply(r, "band", est, floor0, ceil0)
         R.assume[r], R.over[r] = false, 0
         I.Sample(R.power[r], "observed", est, t, Obs.Band)
     end
@@ -1842,7 +2029,7 @@ local function closeWindow(r, lo, bt)
     local n, what, e = R.winN[r], R.winK[r], R.winT[r]
     if n > 0 and e > bt + 1e-6 then
         -- some of several, or one within the margin, may lie on either side: neither window is clean
-        R.winN[r] = (n > 1 or e - bt <= I.BAND_MARGIN + 1e-6) and 2 or 1
+        R.winN[r] = (n > 1 or nearStamp(e, bt, "until")) and 2 or 1
         return
     end
     R.winN[r] = 0
@@ -1909,7 +2096,7 @@ I.On(Obs.Band, function(o, t)
         R.winN[r] = 0 -- the first band: no change to learn from
     elseif bt ~= R.bandAt[r] then
         local rise = lo - R.bandLo[r]
-        if rise > 0 and (rise >= R.roseBy[r] or bt - R.roseT[r] > I.BAND_MARGIN) then
+        if rise > 0 and (rise >= R.roseBy[r] or not nearStamp(bt, R.roseT[r], "until", true)) then
             R.roseT[r], R.roseBy[r] = bt, rise
         end
         if R.swing[r] == 0 then
@@ -1981,7 +2168,7 @@ I.On(Obs.Swing, function(o, t)
         end
         for r = 1, R.n do
             if R.swing[r] == hand or (hand == 2 and R.swing[r] == 1 and R.swingOff[r] ~= 0) then
-                local v, sc, sp, max = I.SwingValue(r, hand, o.t), R.scale[r], R.spread[r], R.max[r]
+                local v, sc, sp = I.SwingValue(r, hand, o.t), R.scale[r], R.spread[r]
                 local e, lo, hi = R.est0[r], R.lo0[r], R.hi0[r]
                 local pE, pL, pH = R.liftE[r], R.liftL[r], R.liftH[r]
                 -- a rung that lifted the slot while this swing was out already holds its rage (owe): net it first
@@ -1997,7 +2184,7 @@ I.On(Obs.Swing, function(o, t)
                         de, R.liftE[r] = net(de, R.liftE[r])
                         dh, R.liftH[r] = net(dh, R.liftH[r])
                     end
-                    R.est0[r], R.hi0[r] = clamp(e + de, max), clamp(hi + dh, max)
+                    apply(r, "assumed", de, nil, dh)
                     if k > 0 then
                         recAsm[k] = f
                         predict(k, r, hand, e, lo, hi, 0, e, math.huge)
@@ -2017,9 +2204,7 @@ I.On(Obs.Swing, function(o, t)
                         dh, R.liftH[r] = net(dh > 0 and dh or 0, R.liftH[r])
                         dl, R.liftL[r] = net(dl, R.liftL[r])
                     end
-                    R.est0[r] = clamp(e + de, max)
-                    R.hi0[r] = clamp(hi + (dh > 0 and dh or 0), max)
-                    R.lo0[r] = clamp(lo + dl, max)
+                    apply(r, "confirmed", de, dl, dh > 0 and dh or 0)
                     local h = hitRate[hand] + HIT_ALPHA
                     h = h < 1 and h or 1
                     predict(k, r, hand, recE0[k], recLo0[k], recHi0[k], h - hitRate[hand], recX0[k], math.huge)
@@ -2137,10 +2322,8 @@ I.On(Obs.PlayerHit, function(o, t)
                 unteach(o.t) -- a paying block or avoid too (re-review N4)
                 if not R.bandOn[r] then
                     width = type(width) == "number" and width > 0 and width or 0
-                    local max = R.max[r]
-                    R.est0[r] = clamp(R.est0[r] + gain, max)
-                    R.lo0[r] = clamp(R.lo0[r] + (gain > width and gain - width or 0), max)
-                    R.hi0[r] = clamp(R.hi0[r] + gain + width, max)
+                    local lo = R.lo0[r] + (gain > width and gain - width or 0)
+                    apply(r, "taken", R.est0[r] + gain, lo, R.hi0[r] + gain + width)
                     norm(r)
                     -- the full gain even when capped, as I.ResourceShift does (review minor 3: skipped for both)
                     R.pinDelta[r], R.gain[r], R.pinOwn[r] = R.pinDelta[r] + gain, R.gain[r] + gain, true
@@ -2235,6 +2418,7 @@ function I.ShareRead()
                 R.regE[r], R.spE[r] = reshare(R.regE[r], R.spE[r], c, n)
                 R.regL[r], R.spL[r] = reshare(R.regL[r], R.spL[r], c, n)
                 R.regH[r], R.spH[r] = reshare(R.regH[r], R.spH[r], c, n)
+                R.regQ[r], R.spQ[r] = reshare(R.regQ[r], R.spQ[r], c, n) -- reshare is linear: E - Q stays exact
                 R.decl[r], R.spDecl[r] = reshare(R.decl[r], R.spDecl[r], c, n)
                 R.pinValid[r] = false
                 moved(r, I.clock)
@@ -2279,7 +2463,7 @@ I.On(Obs.CombatEnd, function(o, t)
             setMax(r, maxOf(r))
         end
         if R.rest[r] < R.lo0[r] then
-            R.lo0[r] = R.rest[r]
+            apply(r, "rest", nil, R.rest[r])
         end
         R.pinValid[r] = false
         moved(r, t)
@@ -2300,10 +2484,7 @@ local function window(r, t, u)
     local _, b1 = spans(r, t, late)
     local d = b0 - b1
     if d ~= 0 then
-        local max = R.max[r]
-        R.est0[r] = clamp(R.est0[r] - R.spE[r] * d, max)
-        R.lo0[r] = clamp(R.lo0[r] - R.spL[r] * d, max)
-        R.hi0[r] = clamp(R.hi0[r] - R.spH[r] * d, max)
+        apply(r, "window", -(R.spE[r] * d), -(R.spL[r] * d), -(R.spH[r] * d)) -- x + -(p) is x - p in doubles
         R.pinB[r] = R.pinB[r] - d
         norm(r)
     end
@@ -2362,7 +2543,6 @@ end)
 --- within I.LIFT_WINDOW: the rung already showed the pool with it (L1504). Never a lift an earlier swing owes (L1525
 --- ruling (a)). Allocates nothing.
 function I.ResourceShift(r, delta, t, event, late)
-    local max = R.max[r]
     local de, dl, dh = delta, delta, delta
     local j = (late == 1 or late == 2) and delta > 0 and snap(late, t) or 0
     if j > 0 and I.clock - R.liftT[r] <= I.LIFT_WINDOW then
@@ -2380,15 +2560,13 @@ function I.ResourceShift(r, delta, t, event, late)
     if shown then
         dl = 0
     end
-    R.est0[r] = clamp(R.est0[r] + de, max)
     local lo = R.lo0[r]
-    R.lo0[r] = clamp(lo + dl, max)
+    apply(r, "shift", de, dl, dh)
     if delta < 0 and R.over[r] > 0 then -- the part the measured floor could not lose (at 0) comes off the model's
         local o = R.over[r] + delta - (R.lo0[r] - lo)
         R.over[r] = o > 0 and o or 0
     end
     norm(r)
-    R.hi0[r] = clamp(R.hi0[r] + dh, max)
     R.pinDelta[r] = R.pinDelta[r] + delta
     if delta ~= 0 then
         moved(r, t)
@@ -2454,38 +2632,47 @@ function I.Refund(r, d, t, held, dL, dH, fE, fL)
         top = top + (moved > 0 and moved or 0)
     end
     I.ResourceShift(r, d, t, Obs.Avoided)
-    if dL then
-        R.lo0[r], R.hi0[r] = clamp(lo + dL, R.max[r]), clamp(hi + dH, R.max[r])
+    if dL then -- a `now`'s give-back: lo and hi take dL and dH from where they were
+        apply(r, "refund.give", nil, lo + dL, hi + dH)
         norm(r)
     end
+    -- The nine clamps (CLAMP-r1), each a ruling. Keeps: an answer heard since the cast already holds the refund.
+    -- step 1 KEEP LO: a usable answer since the cast raised lo, or `held` (a late refund, L1096): lo stays
     if held or R.sinceYes[r] then
-        R.lo0[r] = lo
+        apply(r, "refund.keep_lo", nil, lo)
     end
+    -- step 2 KEEP EST: one raised est, or `held`: est stays
     if held or R.sinceSnap[r] then
-        R.est0[r] = e
+        apply(r, "refund.keep_est", e)
     end
+    -- Floors: the give-back's own (L1237, L1295 I1: before the tops, so an answer only bounds it from below).
+    -- step 3 FLOOR LO: lo at least fL
     if fL and R.lo0[r] < fL then
-        R.lo0[r] = clamp(fL, R.max[r])
+        apply(r, "refund.floor_lo", nil, fL)
         norm(r)
     end
+    -- step 4 FLOOR EST: est at least fE
     if fE and R.est0[r] < fE then
-        R.est0[r] = clamp(fE, R.max[r])
+        apply(r, "refund.floor_est", fE)
     end
+    -- Tops: the lowest top a short answer set since the cast, plus what the slot gained since (it saw the refunded pool).
+    -- step 5 TOP HI: hi at most the top
     if R.hi0[r] > top then
-        R.hi0[r] = top
+        apply(r, "refund.top_hi", nil, nil, top)
     end
+    -- step 6 TOP EST: est at most the top
     if R.est0[r] > top then
-        R.est0[r] = top
+        apply(r, "refund.top_est", top)
     end
+    -- step 7 TOP LO: lo at most the top
     if R.lo0[r] > top then
-        R.lo0[r] = top
+        apply(r, "refund.top_lo", nil, top)
     end
-    if R.est0[r] < R.lo0[r] then
-        R.est0[r] = R.lo0[r]
-    end
-    if R.hi0[r] < R.est0[r] then
-        R.hi0[r] = R.est0[r]
-    end
+    -- The order (D-R3): a floor or a keep may have left lo over est, or est over hi.
+    -- step 8 EST OVER LO: est up to lo
+    apply(r, "refund.est_over_lo")
+    -- step 9 HI OVER EST: hi up to est
+    apply(r, "refund.hi_over_est")
     if dL then -- a `now`'s give-back explains a flip (R.gain) by what est took, not by the whole take
         local took = R.est0[r] - e
         R.gain[r] = R.gain[r] - d + (took > 0 and took or 0)
@@ -2520,14 +2707,7 @@ end
 --- serial and mana's five-second window stay. `pinT0`: the slot's pin time at the refund; a pin since reset pinDelta
 --- with the refund in it, so the measurement keeps nothing of it. Allocates nothing.
 function I.Unrefund(r, d, dE, dL, dH, t, pinT0)
-    local max = R.max[r]
-    R.est0[r], R.lo0[r], R.hi0[r] = clamp(R.est0[r] - dE, max), clamp(R.lo0[r] - dL, max), clamp(R.hi0[r] - dH, max)
-    if R.lo0[r] > R.est0[r] then
-        R.lo0[r] = R.est0[r]
-    end
-    if R.hi0[r] < R.est0[r] then
-        R.hi0[r] = R.est0[r]
-    end
+    apply(r, "unrefund", -dE, -dL, -dH) -- x + -d is x - d in doubles; then lo down to est, hi up to est
     norm(r)
     R.gain[r] = R.gain[r] - d
     moved(r, t)
@@ -2542,8 +2722,8 @@ end
 --- older top's decay grid (I.OnAdvance starts its own). Allocates nothing.
 function I.ResourceSet(r, v, width, t, event)
     I.ResourceShift(r, v - R.est0[r], t, event)
-    local max = R.max[r]
-    R.lo0[r], R.over[r], R.hi0[r], R.topNext[r] = clamp(v, max), 0, clamp(v + width, max), 0
+    apply(r, "set", nil, v, v + width)
+    R.over[r], R.topNext[r] = 0, 0
 end
 
 --- A one-time ceiling on the pool, not a spend or a change to its maximum. Each stream loses only its own excess;
@@ -2557,7 +2737,7 @@ function I.ResourceCap(r, maximum, t, event)
     I.SettleDebt(r) -- settle pre-cap corrections before the nonlinear transform, never subtract them afterwards
     local lo = R.lo0[r]
     local floor = clamp(lo + R.over[r], cap)
-    R.lo0[r], R.est0[r], R.hi0[r] = clamp(lo, cap), clamp(R.est0[r], cap), clamp(R.hi0[r], cap)
+    apply(r, "cap.cast", clamp(R.est0[r], cap), clamp(lo, cap), clamp(R.hi0[r], cap))
     R.over[r] = floor - R.lo0[r]
     -- A cap has no single delta for the whole interval. The next measurement starts a fresh calibration, and a
     -- pre-cap swing credit cannot retract its old step from this capped pool. No gain/spend hooks or FSR window.
@@ -2591,9 +2771,14 @@ end
 --- restore): the estimate takes the average as a cast's change (I.ResourceShift), the floor the roll's low end and the
 --- top its high end, each from where it was; a gain the band already shows adds nothing to lo. Allocates nothing.
 function I.ResourceGainSpread(r, d, spread, t, event)
-    local lo, hi, max = R.lo0[r], R.hi0[r], R.max[r]
+    local lo, hi = R.lo0[r], R.hi0[r]
     local shown = I.ResourceShift(r, d, t, event)
-    R.lo0[r], R.hi0[r] = shown and lo or clamp(lo + d - spread, max), clamp(hi + d + spread, max)
+    if shown then
+        apply(r, "spread.keep", nil, lo)
+        apply(r, "spread", nil, nil, hi + d + spread)
+    else
+        apply(r, "spread", nil, lo + d - spread, hi + d + spread)
+    end
     norm(r)
 end
 

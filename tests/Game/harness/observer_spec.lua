@@ -224,6 +224,35 @@ describe("the observer", function()
         }, got)
     end)
 
+    it("reads the new target's own death status before each target change", function()
+        setup()
+        local other = W.add(entities.new({ guid = "Creature-2", kind = "mob" }))
+        W.t = 1
+        W.emit({ kind = "prepull" })
+        W.t = 2
+        W.emit({ kind = "spell", src = us, dst = mob, act = "WOUND", amount = mob.health, school = 1 })
+        W.t = 3
+        us.target = other
+        W.emit({ kind = "target" })
+        W.t = 4
+        us.target = mob
+        W.emit({ kind = "target" })
+        W.t = 5
+        W.emit({ kind = "spell", src = us, dst = other, act = "WOUND", amount = other.health, school = 1 })
+
+        local guid, dead, status = nil, false, {}
+        for _, e in ipairs(events(observer.observe(W))) do
+            if e[2] == "@guid" and e[3] == "target" then
+                guid = e[4]
+            elseif e[2] == "@dead" and e[3] == "target" then
+                dead = e[4]
+            elseif e[2] == "PLAYER_TARGET_CHANGED" and guid then
+                status[#status + 1] = { guid, dead }
+            end
+        end
+        assert.are.same({ { "Creature-1", false }, { "Creature-2", false }, { "Creature-1", true } }, status)
+    end)
+
     -- (integration design 5.4, lane B4) the unmeasured knobs: the displayed power ahead of or behind the pool by one
     -- regen tick; the display shows a spend before or after its cast event; off, the stream is today's
     it("(bands) bandLead moves the shown power a tick, spendFirst a spend against its cast event", function()

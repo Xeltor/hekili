@@ -126,6 +126,7 @@ local function newState(class, race)
         moving = false,
         time = 0,
         now = 0,
+        index = 1,
         offset = 0,
         delay = 0,
         query_time = 0,
@@ -142,6 +143,7 @@ local function newState(class, race)
         "spend",
         "gain",
         "setCooldown",
+        "lockCooldown",
         "setDistance",
         "interrupt",
         "summonTotem",
@@ -353,6 +355,9 @@ function M.load(classToken, race)
             return unit == "player" and client.combat == true
         end,
         IsMounted = function()
+            return false
+        end,
+        IsStealthed = function()
             return false
         end,
         UnitOnTaxi = function()

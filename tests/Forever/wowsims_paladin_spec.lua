@@ -115,8 +115,22 @@ describe("the Paladin wowsims.com packs #slow #wowsims", function()
         -- re-pin e5a9cd2a2d -> e4ef929e54: 0.949 (39) top [consecration -> seal_of_command 2], ON flicker 1.00; both
         -- bars kept
         -- ON flicker 2.7 -> 0 (0.00/min measured at the batch): replay-flips-09 ade4d6379 (a flip whose middle icon wowsims casts before the next tick is excused, L1317)
-        local r, line = ws.gate("Retribution (wowsims.com)", C, "paladin_retribution", 0.93, REPLAY)
+        -- Trinket fix d868ecf6f (L1960, FABLE-FOR-OWNER 2026-11-26, fable-trinket-flash-decision.md): a
+        -- `use_items,use_off_gcd=1` line's flag now reaches the trinkets it walks. Timing fixture re-recorded, one row:
+        -- everlook_pathcarver at log 3.50 in:grain -> early (-1.4; off-GCD real 5 -> 6, no floor reads off-GCD rows): it
+        -- now shows ready during the GCD, and wowsims presses it at its GCD's end (generator rule 7,
+        -- tools/wowsims/apl.lua: use_off_gcd=1 is the documented deviation from wowsims's GCD wait). Off the GCD per the
+        -- wowsims pin ab0f00e4fc (paladin_retribution.log 297: `GCD = 0s`; Items.lua's `gcd = "off"` from the pin's
+        -- db.json); no live capture yet (L1973). Decisions, agreement and flicker unchanged.
+        local r, line, keys = ws.gate("Retribution (wowsims.com)", C, "paladin_retribution", 0.93, REPLAY)
         ab.check(r.flicker <= 0 + 1e-9, "Retribution (wowsims.com)", "ON flicker ceiling: " .. line)
+        -- fable-eng3-decision.md Q1 test 3: the opener's sequence opens in the belief (the gate checks it followed)
+        local opened = 0
+        for _, name in ipairs({ "move1", "move2" }) do
+            local k = keys["Retribution (wowsims.com):" .. name .. "#Primary"]
+            opened = opened + (k and k.OPEN >= 1 and k.up > 0 and 1 or 0)
+        end
+        assert.is_true(opened > 0, "neither move1 nor move2 opened in the belief")
     end)
     -- the pack's own worst idle at 60: wowsims's priority spends itself dry (its own Retribution is out of mana from 60 s
     -- of its log), so its longest wait is for mana. 4.4 before central fix 8, while

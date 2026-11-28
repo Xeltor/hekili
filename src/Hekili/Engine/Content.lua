@@ -73,7 +73,13 @@ local format = string.format
 -- defensive line's health threshold slider).
 --   Since then, without a bump: HealthOption's second argument (an ability key naming the slider's form, def-2 review
 --   Minor 4); an older core shows the ability's name alone.
-local CONTENT_API = 20
+--   Also without a bump: the `now` and handler verb `lockCooldown` and the ability fields `category` and
+--   `categoryCooldown` (on-use trinkets); an older core reads nil for the verb, so a use's category lock raises, and
+--   ignores the fields.
+-- 21 (2026-11-26, lane 6, L1827): spec:RegisterTotemSlots and a resource meta's `onTarget`, `rest` and `points`, which
+-- the core no longer guesses from key names: an older core raises on the call, and this core gives an older pack's
+-- combo points no target binding, its energy and mana no rest at the maximum and its element names no slot.
+local CONTENT_API = 21
 
 local done, notice = false, nil
 
@@ -129,6 +135,24 @@ function ns.LoadContent(deferIfUnavailable)
     end
     done = true
     notice = load("Hekili_Shared") or loadPack(hasClass and token)
+    local F = ns.Fields
+    local inFile = F.failed -- read before Finish, which raises through the same fail()
+    local ok, err = pcall(F.Finish)
+    F.closed = true -- later registrations are unchecked (Fields.lua F.Check): never a raise in combat
+    for _, msg in ipairs({ inFile or false, not ok and tostring(err) or false }) do
+        if msg then
+            local line = format(L["a content load check failed, so that content may be incomplete: %s"], msg)
+            notice = notice and (notice .. "\n" .. line) or line
+        end
+    end
+    if not ok then
+        err = tostring(err)
+        ns.Error(err)
+        local handler = geterrorhandler and geterrorhandler() -- none in a headless load
+        if handler then
+            handler(err)
+        end
+    end
     return true
 end
 

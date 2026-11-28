@@ -296,8 +296,8 @@ function M.env(w)
     function e.spend(n, resource)
         table.insert(e.spent, { n, resource })
     end
-    function e.gain(n, resource)
-        table.insert(e.gained, { n, resource })
+    function e.gain(n, resource, spread) -- spread: the `now` context's roll half-width (nil: none)
+        table.insert(e.gained, { n, resource, spread })
     end
     function e.capResource(resource, maximum)
         e[resource].current = math.min(e[resource].current, maximum)

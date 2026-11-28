@@ -1,7 +1,11 @@
 # Headless checks for Hekili (Forever). Run `make bootstrap` once, then `make check` before every commit.
 # StyLua and lua-language-server come from mise (mise.toml); the rest from .lua/ (scripts/bootstrap.sh).
 LUA_ENV := .lua
-BUSTED := $(LUA_ENV)/bin/busted
+# The busted runs (test, test-<tag>, gate bodies, accuracy, bench) use LuaJIT with the compiler on (scripts/busted_lj.sh, the
+# .lj/ env); `make LUA_VM=puc ...` runs them on PUC 5.1.5 as before. Everything else (`make syntax` = PUC `luac -p`, the
+# game is Lua 5.1 and LuaJIT accepts goto, which the client rejects; the lua tools; luacheck) stays on PUC.
+LUA_VM ?= luajit
+BUSTED := $(if $(filter puc,$(LUA_VM)),$(LUA_ENV)/bin/busted,scripts/busted_lj.sh)
 LUACHECK := $(LUA_ENV)/bin/luacheck
 LUAC := $(LUA_ENV)/bin/luac
 LUA := $(if $(wildcard $(LUA_ENV)/bin/lua),$(LUA_ENV)/bin/lua,lua5.1)
@@ -28,17 +32,32 @@ typecheck:
 # kinds design's fight counts (#druid), the 20-fight Rogue (#rogue), Paladin (#paladin), Shaman (#shaman), Hunter
 # (#hunter), Mage (#mage), Priest (#priest) and Warlock (#warlock) gates and the benchmark (#bench) run only behind their own targets.
 TEST_EXCLUDE := --exclude-tags=party,loop,druid,rogue,paladin,shaman,hunter,mage,priest,warlock,bench
+# #puc specs depend on PUC's hash order (the checked-in generated pack blocks encode in pairs() order; the English text
+# golden's Options build): under LuaJIT they run in a second PUC pass (`--tags=puc`), never in the LuaJIT one.
+ifeq ($(LUA_VM),puc)
+PUC_PASS := :
+PUC_EXCL :=
+else
+PUC_EXCL := ,puc
+TEST_EXCLUDE := $(TEST_EXCLUDE)$(PUC_EXCL)
+PUC_PASS := BUSTED=$(LUA_ENV)/bin/busted scripts/busted_parallel.sh --tags=puc
+endif
 
 # One busted process per spec file, in parallel (scripts/busted_parallel.sh); `make test-serial` is the one-process run.
+# The unit tier runs with the compiler off (LJ_JIT=off, scripts/busted_lj.sh): its zero-allocation specs read
+# collectgarbage("count"), which counts the JIT's trace allocations. The loop tags, gates, accuracy and bench keep it on.
 test:
-	BUSTED=$(BUSTED) scripts/busted_parallel.sh $(TEST_EXCLUDE)
+	LJ_JIT=off BUSTED=$(BUSTED) scripts/busted_parallel.sh $(TEST_EXCLUDE)
+	$(PUC_PASS)
 
 test-serial:
-	$(BUSTED) $(TEST_EXCLUDE)
+	LJ_JIT=off $(BUSTED) $(TEST_EXCLUDE)
+	$(PUC_PASS)
 
 # The edit loop: skips the harness gate specs tagged #slow (hundreds of simulated fights); `make check` runs them.
 test-fast:
-	$(BUSTED) --exclude-tags=slow,party,loop,druid,rogue,paladin,shaman,hunter,mage,priest,warlock,bench
+	LJ_JIT=off $(BUSTED) --exclude-tags=slow,party,loop,druid,rogue,paladin,shaman,hunter,mage,priest,warlock,bench$(PUC_EXCL)
+	$(PUC_PASS)
 
 # The merge gate: check-full (never skips), then every 20-fight loop tag in one scripts/busted_parallel.sh run (one busted process per
 # spec file, nproc - 2 at a time for the whole gate, at least 1). `make test-<tag>` runs one tag the same way, nproc
@@ -155,6 +174,7 @@ wowsims-packs:
 test-wowsims:
 	$(BUSTED) --tags=wowsims
 
+# PUC `luac -p` on purpose, never LuaJIT: the client is Lua 5.1 (goto is a syntax error there, and LuaJIT accepts it).
 syntax:
 	git ls-files -z '*.lua' | xargs -0 -n 200 $(LUAC) -p
 
@@ -189,7 +209,7 @@ tools-test:
 	python3 -m unittest discover -s tests/tools -t tests/tools
 
 # `make check` skips (one line) when every input matches the last green run (scripts/check_stamp.sh); FULL=1 runs it.
-# check-full: the four long checks at once (-Otarget keeps each one's output whole), then the short serial tail; one
+# check-full: the four long checks at once (-Otarget keeps each one's output whole), then the short serial tail (Apple make 3.81 lacks -O, so there the output interleaves); one
 # exit code. The begin and write lines hold no $(MAKE), so `make -n` never runs them; make stops at the first failing
 # line, so write (the stamp) runs only after both stages pass. A command-line override other than FULL (a subset or
 # another tool) or -i/-e (errors ignored, environment over the Makefile) never skips and never stamps.
@@ -197,13 +217,13 @@ tools-test:
 # does; `make gate` runs every tag itself, so a plain check-full leaves it out (`make gate FULL=1` runs the Warlock gate twice, plain gate once).
 # shortcut: a failed or killed run leaves its start manifest in /tmp; harmless, write is the only reader.
 STAMP_START := $(shell mktemp -u /tmp/hekili-check-start.XXXXXX)
-STAMP_OFF := $(strip $(filter-out FULL=%,$(MAKEOVERRIDES)) $(findstring i,$(firstword -$(MAKEFLAGS))) $(findstring e,$(firstword -$(MAKEFLAGS))))
+STAMP_OFF := $(strip $(filter-out FULL=%,$(MAKEOVERRIDES)) $(findstring i,$(firstword $(filter-out --%,$(MAKEFLAGS)))) $(findstring e,$(firstword $(filter-out --%,$(MAKEFLAGS)))))
 check:
 	@if [ -z "$(FULL)$(STAMP_OFF)" ] && scripts/check_stamp.sh test; then :; else $(MAKE) check-full; fi
 
 check-full:
 	@$(if $(STAMP_OFF),echo "check: command-line overrides or -i/-e; this run leaves no stamp",scripts/check_stamp.sh begin $(STAMP_START))
-	$(MAKE) -j4 -Otarget lint fmt-check typecheck test
+	$(MAKE) -j4 $(if $(filter 3.%,$(MAKE_VERSION)),,-Otarget) lint fmt-check typecheck test
 	$(if $(FULL),$(MAKE) test-warlock)
 	$(MAKE) syntax api-check packs-check tools-test wiki-check
 	@python3 tools/locales.py --report || true  # information only: untranslated keys per language, never a failure

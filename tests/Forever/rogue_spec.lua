@@ -637,7 +637,7 @@ describe("Forever Rogue priorities", function()
         error(pack .. ": no " .. action)
     end
 
-    it("keeps the class file's generated blocks in step with APLs/, one wowsims.com pack a spec", function()
+    it("#puc keeps the class file's generated blocks in step with APLs/, one wowsims.com pack a spec", function()
         local mp = assert(loadfile("tools/make_pack.lua"))("lib")
         local f = assert(io.open(FILE))
         local src = f:read("*a")
@@ -680,6 +680,28 @@ describe("Forever Rogue priorities", function()
                     end
                 end
             end
+        end
+    end)
+
+    it("carries Eureka's sustained Energy hold onto the weapon-swap fallback", function()
+        for _, name in ipairs(PACKS) do
+            local builderHold, fallbackHold
+            for _, e in ipairs(packs[name].lists.default) do
+                if e.action == "sinister_strike" then
+                    local criteria = e.criteria or ""
+                    local at = criteria:find("&(!(action.eureka.known", 1, true)
+                    local hold = at and criteria:sub(at + 1)
+                    if criteria:find("action.mutilate.known&!rogue_mutilate", 1, true) then
+                        fallbackHold = hold
+                    elseif criteria:find("rogue_sustained", 1, true) then
+                        builderHold = hold
+                    else
+                        assert.is_nil(hold, name)
+                    end
+                end
+            end
+            assert.is_not_nil(builderHold, name)
+            assert.are.equal(builderHold, fallbackHold, name)
         end
     end)
 

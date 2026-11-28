@@ -131,7 +131,7 @@ local bR, bD, bE, bL, bH, bP = {}, {}, {}, {}, {}, {}
 -- PT_AVOID from the owner's two Feral captures (probe-cp-lag-2026-11-25.txt): of 33 landed builders, 29 showed the point
 -- in the success's own frame and 4 later, at 0.102 / 0.103 / 0.105 / 0.119 s; none before the success. 0.3 s covers the
 -- tail with margin (n = 33: a longer tail is unseen); a crit's second point once came 0.089 s after the first.
-local PT_AVOID = 0.3
+local PT_AVOID = I.Lat.lag("cp.avoid")
 local rdV1, rdT1, rdV2, rdT2 = {}, {}, {}, {}
 local castE, castL, castSp, castPin = 0, 0, 0, 0
 local ptA, ptT, ptR, ptV0, ptSwap, ptGo, ptV, ptVT = 0, -1, 0, 0, 0, 0, 0, -1
@@ -173,6 +173,7 @@ local refund = {} -- by resource slot: the class's default share (the resource m
 A.refund = {} -- by ability index: the share of its cost an avoid gives back (the ability's `refundOnAvoid`), 0 none
 A.refundNow = {} -- by ability index: true when an avoid gives back what its `now` took (`refundNowOnAvoid`, L1237)
 I.avoidsRun = 0
+I.undoFull = 0 -- (L1918) target writes a full undo journal could not hold (asserted 0 in tests)
 
 --- The context's reads answer at `t` from now on (a resource's `taken`, run at a hit: Families/Resources.lua); its
 --- verbs stay inert outside a cast. Allocates nothing.
@@ -267,8 +268,9 @@ NAMES.talent = setmetatable({}, {
     end,
 })
 
--- totem.<element>: the belief's totem slot (Families/Totems.lua; the sim's state.totem shape, State.lua).
-local TOTEM_SLOT = { fire = 1, earth = 2, water = 3, air = 4 }
+-- totem.<element>: the belief's totem slot (Families/Totems.lua; the sim's state.totem shape, State.lua). The element
+-- names and their slots are the pack's (def.totemSlots, RegisterTotemSlots: lane 6, L1827 row 5), set at the build.
+local totemSlot = {}
 local totemMeta = {
     __index = function(r, f)
         local rec = VS.Totem(rawget(r, "slot"), T)
@@ -290,9 +292,6 @@ NAMES.totem = setmetatable({}, {
         return NO_TOTEM
     end,
 })
-for elem, slot in pairs(TOTEM_SLOT) do
-    rawset(NAMES.totem, elem, setmetatable({ slot = slot }, totemMeta))
-end
 
 -- action.<key>.in_range: the range poll's last plain answer for the ability (Sources/Target.lua; the sim's
 -- state.action.x.in_range is the client's IsSpellInRange): true unless the client answered false. Entries per tracked
@@ -608,6 +607,15 @@ function NAMES.setCooldown(action, duration)
         I.CooldownModel(a, T + duration, duration, T, CAST)
     end
 end
+--- lockCooldown(action, duration): the simulation's verb (State.lua): `action` held on cooldown at least `duration` s
+--- from the cast, never shortened, its learned length untouched (a shared category's window, not its own cooldown).
+function NAMES.lockCooldown(action, duration)
+    local a = abByKey[action]
+    if live and a and type(duration) == "number" and A.ready0[a] < T + duration then
+        A.ready0[a] = T + duration
+        I.Sample(A.cd[a], "modelled", A.ready0[a], T, CAST)
+    end
+end
 --- reduceCooldown(action, time): Hekili's verb (State.lua): a running cooldown `time` s shorter (ready at the cast at
 --- the earliest); a charged ability's next charge `time` s sooner (VS.Charges counts the recharges it then passes).
 function NAMES.reduceCooldown(action, time)
@@ -630,7 +638,7 @@ end
 --- summonTotem(name, element, duration): Hekili's signature (State.lua); the element's slot expires `duration` s after
 --- the cast (an unknown element or a non-number duration writes nothing).
 function NAMES.summonTotem(name, elem, duration)
-    local slot = TOTEM_SLOT[elem]
+    local slot = totemSlot[elem]
     if live and slot and type(duration) == "number" then
         I.TotemModel(slot, T + duration, A.qid[curA] or 0, type(name) == "string" and name or "", T, CAST)
     end
@@ -792,6 +800,14 @@ I.OnBuild(function(def)
     end
     for k in pairs(NAMES.window) do
         rawset(NAMES.window, k, nil)
+    end
+    for k in pairs(totemSlot) do
+        rawset(NAMES.totem, k, nil)
+        totemSlot[k] = nil
+    end
+    for elem, slot in pairs(def.totemSlots or NO_SETTINGS) do -- a hand-built def may carry none
+        totemSlot[elem] = slot
+        rawset(NAMES.totem, elem, setmetatable({ slot = slot }, totemMeta))
     end
     local wins = def.windows or NO_SETTINGS -- a hand-built def may carry no `windows`
     for k = 1, #wins do
@@ -1053,7 +1069,7 @@ end)
 -- ran it full (wowsims: the last tick lands at the end), so its `now_finish` runs at the stop, its writes no avoid's
 -- to undo. A stop earlier (a break, a clip), later than FINISH_LATE past the end, or a channel with no plain start runs
 -- nothing (dim: never a full channel assumed). Allocates nothing.
-local FINISH_TOL = 0.05 -- UNMEASURED: CHANNEL_STOP at a full channel's end is read at or just after it
+local FINISH_TOL = I.Lat.lag("channel.stop") -- UNMEASURED: CHANNEL_STOP at a full channel's end is read at or after it
 local FINISH_LATE = 0.5 -- a stop later than this past the end is another channel's (one whose start was secret)
 local chanA, chanEnd = 0, 0
 local stopA, stopT = 0, -1 -- the last stopped channel and its stop's time (a kill in the same instant still sees it)

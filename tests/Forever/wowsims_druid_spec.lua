@@ -104,6 +104,8 @@ describe("the Druid wowsims.com packs #slow #wowsims", function()
     -- 76.64, where Rake fades in the instant wowsims Shreds: same-instant order, as 23.25 above; the other is 44.13,
     -- the fixture's Shred never row (timing_druid_feral.lua; read as a Shred cost edge, mechanism not traced); both
     -- located by a scratch print of each miss's time) and innervate -> cat_form 1 (the powershift tie, now at 14.79)
+    -- The fork's Prowl protection moves only the scoped opener timing row. The log gains Prowl at -1.00 and
+    -- cancels it at the pull, so Faerie Fire returns as the first ready icon at 0.00. The other 84 rows match upstream.
     it("Feral (wowsims.com) follows wowsims's casts", function()
         local r, line = ws.gate(
             "Feral (wowsims.com)",

@@ -4233,19 +4233,24 @@ found = true end
 
                                             local link = Hekili:GetSpellLinkWithTexture( spells.best )
                                             out = format( out, UnitClass( "player" ), link )
+                                            -- sorted: pairs() order differs per client/VM, and the list is shown to the player (L1939)
+                                            local alts = {}
                                             for spell in pairs( spells ) do
-                                                if type( spell ) == "number" and spell ~= spells.best then
-                                                    n = n + 1
+                                                if type( spell ) == "number" and spell ~= spells.best then alts[ #alts + 1 ] = spell end
+                                            end
+                                            table.sort( alts )
 
-                                                    link = Hekili:GetSpellLinkWithTexture( spell )
+                                            for _, spell in ipairs( alts ) do
+                                                n = n + 1
 
-                                                    if n == 2 and spells.count == 2 then
-                                                        out = out .. link .. "."
-                                                    elseif n ~= spells.count then
-                                                        out = out .. link .. ", "
-                                                    else
-                                                        out = out .. format( L["and %s."], link )
-                                                    end
+                                                link = Hekili:GetSpellLinkWithTexture( spell )
+
+                                                if n == 2 and spells.count == 2 then
+                                                    out = out .. link .. "."
+                                                elseif n ~= spells.count then
+                                                    out = out .. link .. ", "
+                                                else
+                                                    out = out .. format( L["and %s."], link )
                                                 end
                                             end
                                         end
@@ -6328,8 +6333,9 @@ n = tonumber( n ) + 1
                                         wait = {
                                             type = "input",
                                             name = L["Pooling Time"],
-                                            desc = L["Specify the time, in seconds, as a number or as an expression that evaluates to a number.\n" ..
-                                                "Default is |cFFFFD1000.5|r.  An example expression would be |cFFFFD100energy.time_to_max|r."],
+                                            -- (fable-eng3-decision.md Q2, reading D) parsed and kept, no effect: every update is a fresh walk
+                                            desc = L["Kept with the line and in exports, but it has no effect here: the entries below this one wait while its conditions are true, " ..
+                                                "and are shown from the time they stop being true."],
                                             order = 6,
                                             width = 1.5,
                                             multiline = 3,

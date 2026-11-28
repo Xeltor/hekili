@@ -50,10 +50,13 @@ local function addPvE(recipe)
             .. "))",
     }
     recipe.leveling = {
-        -- The pinned builder gate uses spellbook knowledge, so a weapon swap needs its own fallback.
-        "sinister_strike,if=rogue_sustained&!rogue_hold_opening_stealth&"
-            .. points
-            .. "<5&action.mutilate.known&!rogue_mutilate",
+        -- The pinned builder gate uses spellbook knowledge, so a weapon swap needs its own fallback under the same hold.
+        {
+            line = "sinister_strike,if=rogue_sustained&!rogue_hold_opening_stealth&"
+                .. points
+                .. "<5&action.mutilate.known&!rogue_mutilate",
+            inheritHold = true,
+        },
     }
 
     -- Guard the generated damage lines in short-pull contexts, including the ones inside racial sequences.

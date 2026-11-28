@@ -21,6 +21,7 @@ local Plain, Stage, Note = S.Plain, S.Stage, S.Note
 -- the GCD uses the same sentinels, with 0 idle and 1 active.
 local last, gcdLast = {}, -1
 local seedPending, seedAt = false, 0
+local lastItem = {} -- by ability index: the last plain item ready time staged (-1 none)
 
 -- The highest known rank of each ability (rank order: its `id`, then its `copy` IDs) and, out of combat, its plain
 -- cost and whether it costs a second power type. Out of the hot path: build, SPELLS_CHANGED.
@@ -67,6 +68,7 @@ I.OnBuild(function(def)
     I.GCD_SPELL = def.gcdSpell
     for a = 1, #def.abilities do
         last[a] = -1
+        lastItem[a] = -1
     end
     gcdLast = -1
     seedPending, seedAt = true, 0
@@ -120,13 +122,37 @@ local function ready(api, spellID)
     return not active or onGcd == true, active
 end
 
+-- An item's ready time from its plain cooldown read (0 ready), or nil: secret, raising, or held until its buff ends
+-- (enable 0: the client starts it later). Allocates nothing.
+local function itemReady(api, item)
+    local ok, s, d, e = pcall(api.C_Item.GetItemCooldown, item) -- secret: each value through Plain next; a raise is nil
+    if not ok then
+        return nil
+    end
+    s, d, e = Plain(api, s), Plain(api, d), Plain(api, e)
+    if type(s) ~= "number" or type(d) ~= "number" or e == 0 or e == false then
+        return nil
+    end
+    return s > 0 and d > 0 and s + d or 0
+end
+
 local function onCooldown(api, t)
     if not I.built then
         return
     end
     local A, edge = I.ab, false
     for a = 1, A.n do
-        local r = ready(api, A.qid[a])
+        -- an item's cooldown is the item's, not its use spell's (lane gear-1): no use spell's flag constrains it
+        local r, item = nil, A.obj[a].item
+        if item == nil then
+            r = ready(api, A.qid[a])
+        elseif type(item) == "number" then
+            local at = itemReady(api, item)
+            if at and at ~= lastItem[a] then
+                lastItem[a] = at
+                edge = Stage(Obs.ItemCooldown, t, a, at) or edge
+            end
+        end
         if r ~= nil then
             local v = r and 1 or 0
             if v ~= last[a] then
@@ -164,14 +190,27 @@ S.Poll(17, function(api, t)
         return
     end
     seedPending, seedAt = false, t + I.CD_PROBE
-    for a = 1, I.ab.n do
-        if last[a] < 0 then
-            local r = ready(api, I.ab.qid[a])
+    local A = I.ab
+    for a = 1, A.n do
+        local item = A.obj[a].item
+        if type(item) == "number" and lastItem[a] < 0 then
+            local at = itemReady(api, item)
+            if at and (at <= t or I.log.n < I.log.cap) then
+                lastItem[a] = at
+                -- As for spells, an initial idle read cannot clear a cast modelled before this poll.
+                if at > t then
+                    S.Direct(Obs.ItemCooldown, t, a, at)
+                end
+            elseif at then
+                seedPending = true
+            end
+        elseif item == nil and last[a] < 0 then
+            local r = ready(api, A.qid[a])
             if r ~= nil and I.log.n < I.log.cap then
                 local v = r and 1 or 0
                 -- Initially idle needs no pin: a cast before this first drain may be newer than the API answer.
                 -- A dropped edge must still recover, even when the preceding not-ready edge is not folded yet.
-                if not r or last[a] == -2 or I.ab.flag[a] == 0 then
+                if not r or last[a] == -2 or A.flag[a] == 0 then
                     S.Direct(Obs.Cooldown, t, a, v, 0)
                 end
                 last[a] = v

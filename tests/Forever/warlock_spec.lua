@@ -984,7 +984,7 @@ describe("Forever Warlock through the engine", function()
             H.Fire("UNIT_COMBAT", "target", act, "", 0, 32)
             assert.is_true(headless.cycle(H, t + 0.4))
             S.reset("Primary", true)
-            assert.is_nil(spec.missedAt)
+            assert.are.equal(0, spec.missedAt.corruption, act) -- the modeled aura settled without a legacy stamp
             return S.debuff.corruption.up, VS.Aura("target", 172, t + 0.4) ~= nil
         end
         assert.are.same({ false, false }, { corruption("RESIST") })
@@ -1155,7 +1155,7 @@ end)
 
 -- The priorities: the wowsims.com packs (generated from wowsims/forever's builds by `make wowsims-packs`).
 describe("Forever Warlock priorities", function()
-    it("keeps the class file's generated blocks in step with APLs/, each spec's package its pack", function()
+    it("#puc keeps the class file's generated blocks in step with APLs/, each spec's package its pack", function()
         local mp = assert(loadfile("tools/make_pack.lua"))("lib")
         local f = assert(io.open(FILE))
         local src = f:read("*a")

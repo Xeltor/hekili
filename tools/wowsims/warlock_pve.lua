@@ -20,7 +20,7 @@ local function addPvE(recipe)
         "Raid damage follows the pinned WoWSims priority. Player combat uses learned pressure and control on the selected opponent.",
     }
 
-    local priority = {
+    recipe.levelingFirst = {
         -- A ready instant self-heal also ends the priority scan. Record the demon's rescue before it.
         "health_funnel,display_pet_below=30,if=combat>0&warlock_funnel_available",
         "will_to_survive,if=warlock_alive&warlock_stunned",
@@ -51,9 +51,16 @@ local function addPvE(recipe)
         "create_healthstone,if=warlock_can_prepare&warlock_needs_healthstone&!action.create_healthstone.executing",
         "demon_armor,if=warlock_can_prepare&buff.demon_armor.down",
         "demon_skin,if=warlock_can_prepare&!action.demon_armor.known&buff.demon_skin.down&(!action.demon_armor.known|buff.demon_armor.down)",
+    }
+    local priority = {
         "shadow_bolt,focus=1,if=" .. field .. "&buff.shadow_trance.up&warlock_spell_in_range" .. dotBudget,
     }
-    recipe.levelingFirst = priority
+    -- Every damage line below is for the field or an engaged player. Check that context before walking it.
+    recipe.levelingFirst[#recipe.levelingFirst + 1] = {
+        name = "field",
+        when = "warlock_contextual|warlock_pvp_target",
+        lines = priority,
+    }
 
     local function add(action, condition)
         priority[#priority + 1] = action .. ",if=" .. condition

@@ -3,6 +3,8 @@ local fake = require("Game.State.helpers.fake_api")
 local fs = require("Game.State.helpers.fake_spec")
 
 describe("cooldown flags at startup", function()
+    local ITEM, USE_SPELL = 272438, 1291101
+
     local function drain(I, now)
         I.Sources.Flush()
         I.Sources.RunPolls(now)
@@ -58,6 +60,33 @@ describe("cooldown flags at startup", function()
         I.Build(fs.def(h), ctl.now)
         drain(I, ctl.now)
         assert.are.equal(ctl.now + I.CD_PROBE, VS.Cooldown(fs.SPENDER_C, ctl.now).est)
+    end)
+
+    it("seeds an item's cooldown from the item API even while its use spell reads active", function()
+        local api, ctl = fake.new()
+        local ns = load.module()
+        local VS, I = ns.VirtualState, ns.VirtualStateInternal
+        local def = fs.def(fs.new(9))
+        def.abilities[#def.abilities + 1] =
+            { key = "trinket", id = USE_SPELL, item = ITEM, cooldown = 360, gcd = "off" }
+        def.abilityIds[#def.abilityIds + 1] = { USE_SPELL }
+        def.abilitySlot[#def.abilitySlot + 1] = 0
+        ctl.now = 10
+        ctl.cooldown[USE_SPELL] = { isActive = true, isOnGCD = false }
+        ctl.itemCooldown[ITEM] = { 8, 5 }
+        VS.Start(api)
+        I.Build(def, ctl.now)
+        drain(I, ctl.now)
+        assert.are.equal(13, VS.ItemCooldown(ITEM, ctl.now).est)
+
+        ctl.now, ctl.itemCooldown[ITEM] = 13, { 0, 0 }
+        ctl.Fire("SPELL_UPDATE_COOLDOWN")
+        drain(I, ctl.now)
+        assert.is_true(VS.ItemCooldown(ITEM, ctl.now).est <= ctl.now)
+        ctl.now, ctl.itemCooldown[ITEM] = 14, { fake.SECRET, fake.SECRET }
+        ctl.Fire("SPELL_UPDATE_COOLDOWN")
+        drain(I, ctl.now)
+        assert.is_true(VS.ItemCooldown(ITEM, ctl.now).est <= ctl.now)
     end)
 
     it("does not erase a cast before the first drain with initial idle flags", function()

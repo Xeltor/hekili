@@ -120,6 +120,15 @@ describe("the Driver's update rate", function()
             assert.are.equal(0, rate(1))
         end)
 
+        it("a stealth change wakes it within the 0.2 s wait", function()
+            rest()
+            f.refreshTimer = 0
+            H.ctl.stealthed = true
+            H.Fire("UPDATE_STEALTH")
+            assert.are.equal(1, rate(0.25) * 0.25)
+            assert.are.equal(0, rate(1))
+        end)
+
         it("entering combat wakes it within the 0.2 s wait", function()
             rest()
             f.refreshTimer = 0

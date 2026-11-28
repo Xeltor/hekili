@@ -250,6 +250,7 @@ describe("Forever Druid", function()
                 local a = assert(w.abilities[key])
                 n = n + 1
                 local want = KIT[key]
+                e.buff.bear_form = nil -- a previous ability's form (feral_charge, below) must not leak: pairs order differs per VM
                 assert.is_not_nil(want, "unexpected ability " .. key)
                 assert.are.same(want[1], idsOf(a), key)
                 local cd, gcd = ld.run(a.cooldown, e), ld.run(a.gcd, e) -- caster form's (Faerie Fire's gcd is a function)
@@ -812,7 +813,8 @@ describe("Forever Druid", function()
         end)
 
         it(
-            "declares Primal Fury's rage as `onCrit` on the bear's strikes: 5 at 2/2, 2.5 at 1/2, in Bear Form",
+            "declares Primal Fury's rage as `onCrit` on the bear's strikes: 5 at 2/2, at 1/2 a range (floor none, "
+                .. "estimate 2.5, top 5), in Bear Form",
             function()
                 local bear = { maul = true, swipe_bear = true, lacerate = true, primal_bite = true }
                 for key, a in pairs(w.abilities) do
@@ -835,7 +837,8 @@ describe("Forever Druid", function()
                             got[#got + 1] = g
                         end
                     end
-                    assert.are.same({ { 5, "rage" }, { 2.5, "rage" } }, got, key)
+                    -- 1/2 is a roll the belief cannot see (owner L1397; Fable L1984): gain(2.5, "rage", 2.5)
+                    assert.are.same({ { 5, "rage" }, { 2.5, "rage", 2.5 } }, got, key)
                 end
             end
         )
@@ -920,7 +923,7 @@ describe("Forever Druid", function()
 
     it(
         "gains rage per white swing in Bear Form only, at the form's fixed 2.5 s x 4.5 (wowsims's two-hand factor), a crit "
-            .. "2.5 s x 3.46 more and Primal Fury's 5; Enrage 2/s; decay 1.25",
+            .. "2.5 s x 3.46 more and Primal Fury's 5 at 2/2 only; Enrage 2/s; decay 1.25",
         function()
             local models = w.resources[1].models
             w.state.buff.bear_form = { up = false }
@@ -939,8 +942,8 @@ describe("Forever Druid", function()
             local talent = w.state.talent
             w.state.talent = rank(2) -- Primal Fury ("Blood Frenzy", DB2 16958): 16959's 5 rage at 2/2
             near(16.25, setfenv(models.mainhand.crit, w.state)())
-            w.state.talent = rank(1) -- 50% at 1/2 (wowsims's ladder): its expected 2.5
-            near(13.75, setfenv(models.mainhand.crit, w.state)())
+            w.state.talent = rank(1) -- 50% at 1/2 (wowsims's ladder): a roll, no proc booked on a white crit (L1984)
+            near(11.25, setfenv(models.mainhand.crit, w.state)())
             w.state.talent = talent
             assert.are.same({ "enrage", 1, 2 }, { models.enrage.aura, models.enrage.interval, models.enrage.value })
             assert.is_nil(models.enrage.pausesDecay) -- unverified (checkpoint Q9)
@@ -952,20 +955,20 @@ describe("Forever Druid", function()
     )
 
     it(
-        "declares energy paused in Bear Form, combo points with no maximum, mana's five-second rule, Classic's order",
+        "declares energy paused in Bear Form and resting at max, combo points on the target as points, mana's five-second rule, Classic's order",
         function()
             assert.are.same({ 3, 4, 1, 0 }, w.order)
-            for _, pt in ipairs({ 4 }) do
-                assert.are.same({ nil, nil }, { w.resources[pt].models, w.resources[pt].meta }, pt)
-            end
+            -- combo points: no models, on the target, a count (lane 6 rows 1 and 3)
+            assert.are.same({ nil, { onTarget = true, points = true } }, { w.resources[4].models, w.resources[4].meta })
             -- no energy in Bear Form (wowsims forms.go pauseCatEnergy)
             assert.are.same(
-                { { bear_pause = { aura = "bear_form", mult = 0 } }, { regen = 10, refundOnAvoid = 0.8 } },
+                { { bear_pause = { aura = "bear_form", mult = 0 } }, { regen = 10, rest = "max", refundOnAvoid = 0.8 } },
                 { w.resources[3].models, w.resources[3].meta }
             )
             -- wowsims/forever's logs: 2.2 mana a 0.1 s tick outside the rule, none inside it (Feral, Balance)
             local fsr, e = w.resources[0].meta.fsr, ld.env(w)
             assert.are.same({ 22, 0 }, { fsr.spirit, fsr.mp5 })
+            assert.are.equal("max", w.resources[0].meta.rest) -- lane 6 row 2
             -- the static share follows Reflection's rank (17/33/50%, wowsims's curve)
             local shares = {}
             for rank = 0, 3 do
@@ -1208,10 +1211,17 @@ end)
 
 describe("Forever Druid's bleeds use the shared aura rollback", function()
     local engine = require("Forever.helpers.engine")
-    it("leaves modeled abilities to the shared rollback so a failed refresh preserves the first application", function()
+    it("registers the modeled bleeds with the shared rollback", function()
         local env = engine.load("DRUID")
         assert.are.same({}, env.loadErrors)
-        assert.is_nil(env.class.kit.missedAt)
+        local kit = env.class.kit
+        for _, aura in ipairs({ "pounce_bleed", "rake", "rip" }) do
+            assert.is_true(kit.modeledMissAuras[aura], aura)
+            assert.are.equal(0, kit.missedAt[aura], aura)
+        end
+        for _, ability in ipairs({ "pounce", "rake", "rip" }) do
+            assert.is_nil(kit.missAura[kit.abilities[ability].id], ability)
+        end
     end)
 
     it("shares verified NPC bleed immunity without suppressing a mixed damage and bleed ability", function()
@@ -1357,20 +1367,27 @@ describe("Forever Druid in VirtualState's now context", function()
         assert.are.same({ 10, 0 }, { n, I.nowErrors })
     end)
 
-    it("gives Primal Fury's 5 rage at a bear strike's own crit with the talent at 2/2, none at 0/2 (GAP T)", function()
+    -- 1/2 is a roll the belief cannot see (owner L1397, Fable L1984): the floor gains none, the estimate the mean, the
+    -- top a whole proc; 2/2 is certain: 5 in all three
+    it("gives Primal Fury's rage at a bear strike's own crit: 5 at 2/2, a range at 1/2, none at 0/2 (GAP T)", function()
         I.Sources.Direct(VS.Obs.CombatStart, 1.5) -- in combat: no rage decay
         cast(5487, 2) -- Bear Form
         local function crit(t)
             cast(407995, t) -- Primal Bite
-            local before = power(1, t + 0.05)
+            local b = VS.Power(1, t + 0.05)
+            local lo, est, hi = b.lo, b.est, b.hi
             ctl.Fire("UNIT_COMBAT", "target", "WOUND", "CRITICAL", 100, 1)
             ctl.Tick(t + 0.06)
             VS.Drain(t + 0.07)
-            return power(1, t + 0.1) - before
+            local a = VS.Power(1, t + 0.1)
+            assert.is_true(hi + 5 < 100, tostring(hi)) -- the top is not at the cap
+            return { a.lo - lo, a.est - est, a.hi - hi }
         end
-        assert.are.equal(0, crit(4))
+        assert.are.same({ 0, 0, 0 }, crit(4))
+        I.SetTalentRank(I.talents.bySpell[16958], 1)
+        assert.are.same({ 0, 2.5, 5 }, crit(6))
         I.SetTalentRank(I.talents.bySpell[16958], 2)
-        assert.are.equal(5, crit(6))
+        assert.are.same({ 5, 5, 5 }, crit(8))
         assert.are.equal(0, I.nowErrors, tostring(I.nowError))
     end)
 
@@ -1981,6 +1998,11 @@ describe("Forever Druid Ravage opener (R69)", function()
         S.offset = 1
         assert.is_false(S:IsUsable("faerie_fire"), "the first slot may be waiting for the global cooldown")
 
+        S.removeBuff("cat_form")
+        assert.is_true(S.buff.cat_form.down)
+        assert.is_false(S:IsUsable("faerie_fire"), "the live Cat Form still protects Prowl")
+        S.applyBuff("cat_form")
+
         S.index = 2
         S.applyBuff("prowl")
         assert.is_false(S:IsUsable("faerie_fire"), "a later slot still has simulated Prowl")
@@ -2290,9 +2312,12 @@ describe("Forever Druid Rake after an avoided recast (hotfix 0.8.6)", function()
     it("keeps the first application up when the recast is dodged, with its remains", function()
         local first = rake(1, "WOUND")
         local expiry = VS.Aura("target", 1822, first + 0.1).est
+        local belief = H.ns.VirtualStateInternal
+        local avoids = belief.avoidsRun
         rake(2, "DODGE")
+        assert.are.equal(avoids + 1, belief.avoidsRun)
         assert.are.equal(expiry, VS.Aura("target", 1822, t + 0.1).est) -- the belief put the first one back
-        assert.is_nil(spec.missedAt) -- modeled bleeds use the shared rollback
+        assert.are.equal(0, spec.missedAt.rake) -- the modeled miss belongs to the belief, not the legacy row history
         t = t + 0.5
         assert.is_true(headless.cycle(H, t))
         S.reset("Primary", true)

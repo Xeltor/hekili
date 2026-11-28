@@ -14,6 +14,7 @@
 embeds.xml
 
 Game\State\VirtualState.lua
+Game\State\Latency.lua
 Game\State\ObsLog.lua
 Game\State\Belief.lua
 Game\State\Stats.lua
@@ -90,6 +91,7 @@ Engine\Schema\Trees.lua
 Engine\Schema\Selectors.lua
 Engine\Schema\Tracked.lua
 Engine\Schema\Spec.lua
+Engine\Schema\Fields.lua
 Engine\Schema\Spec\Regen.lua
 Engine\Schema\Spec\Auras.lua
 Engine\Schema\Spec\Ranks.lua

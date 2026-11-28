@@ -169,7 +169,20 @@ Translation:
   ruling" below.
 - `sequences` (`true`): the APL's `strictSequence` and `sequence` entries are written as `strict_sequence` and
   `sequence` lines (rules 14 and 14b below; windows design v6 §10). Unset, they stay `prev.1` chains and
-  class-registered windows. Set per recipe as each spec moves to APL sequences.
+  class-registered windows. Set per recipe as each spec moves to APL sequences. A sequence in the pre-pull list is
+  omitted either way and named in the header (review M4: none at the pin; its form is decided when a pin brings one).
+- `sequenceIf` (`{ [sequence name] = SimC term }`, with `sequences`): the term is ANDed into that sequence's
+  condition, and the translator writes the sequence's close line,
+  `close_window,name=<w>,if=window.<w>.up&!window.<w>.done&!(<term>)`, in `default` before the line that reaches the
+  sequence's list (the list is no longer walked once the term turns false). For a span wowsims's sequence ends on
+  that the APL does not say: Retribution's opener runs until the first main-hand swing,
+  `window.before_first_swing.up` (the Paladin class's Lua window; windows design v6 10.3, L898). A window the term
+  reads counts as the kit's. A name the APL has no sequence of is an error (CN12), as is a list `default` never calls.
+  The term `time>0` binds a sequence to the fight and writes no close line (it turns false only at combat end, which
+  closes every row): Beast Mastery Turret's hha (L1919). A bare sequence line is walked out of combat as well, so
+  without it combat end's own poll reopened hha and the fight's last Summon Hawk carried into the next pull at step 2;
+  wowsims restarts every sequence at the pull (sim.reset before PrePull). A recipe that converts a sequence wowsims
+  runs only in the fight gives it this term.
 - `windowVars` (`{ [variable name] = window }`): an APL variable that times "since the last shot or swing", read from
   the kit's registered window instead (rule 10: `window.<w>.up&window.<w>.elapsed<op>x`; the hunters' "Just shot"
   from `weave`). A name the APL's variables lack is an error (CN12).
@@ -206,7 +219,9 @@ Translation:
   recast of a still-active buff to fill an idle window (owner policy R41, below).
 - `levelingFirst` (lines put first in `actions`): a form the sim starts in and the APL never casts (Balance's Moonkin
   Form), which a trailing line would never reach; silent while the form is up. They lead a non-empty precombat list
-  too, so a pre-pull cast never shows before the form.
+  too, so a pre-pull cast never shows before the form. An entry `{ name = "field", when = "<condition>", lines = { ... } }`
+  emits a guarded list call and keeps its member conditions and order. Use a context guard that stays stable during
+  look-ahead. A copy reached only from precombat follows the usual pre-pull rules.
 - `extra` (`{ { before = "<action>", line = "<simc line>" } }`): a line put just before the first `actions` line of
   `before`, or its last with `last = true` (the translator errors when there is none). Set `translated = true` to anchor on the translated rotation when a recipe adds an earlier line for the same action. With `first = true` (no `before`) it goes at
   the top of `actions` after the `levelingFirst` lines, the `first` lines in recipe order: a defensive line wowsims never casts (L1808: Evasion, Ice
@@ -249,11 +264,13 @@ only), `procs` (`{ [id or "id:tag"] = true }`: neither a decision nor a cast), `
    variables). Omits a prepull entry with no constant `doAtValue` or one after the pull (a time folds from
    constants, `math`, the kit's base cast time and its unhasted GCD, each a `# Deviation:` line, and a spell's travel
    time: the request's `distanceFromTarget` over the kit's `velocity`, its `flightTime` if it has one, 0 with neither, as
-   wowsims's distance over missile speed; translator-2: the Warlocks' Shadow Bolt / Soul Fire opener: a hardcast with
-   no aura of its own gets no guard, so in game it shows until cast and the pre-pull line after it waits). Each
+   wowsims's distance over missile speed; the Warlocks' Shadow Bolt / Soul Fire opener). Each
    pre-pull cast (precombat and the lists only it calls) gets a guard against recasting, a mechanical derivation from
    its ability's handler (recorded once): its own aura `!buff.<key>.up` / `!debuff.<key>.up` (none when the aura's
-   duration is at most the cooldown: Bloodrage), its totem `!totem.<element>.up`, else none (Charge); a mutually
+   duration is at most the cooldown: Bloodrage), its totem `!totem.<element>.up`, a cast with travel (the kit's
+   `flightTime`, else its `velocity`) that a later line follows `action.<key>.time_since>action.<key>.travel_time`
+   (L504: in game the player is out of combat until it lands, so it would show again while it flies and hide the
+   next line, Shadow Brand's Corruption; none under a fixed cooldown: Charge), else none; a mutually
    exclusive group's first line (seals: each handler removes the other's aura) by every member's aura. A handler that
    raises gives no guard and a header note.
 2. Omitted (and listed in the `# Omitted:` header): hidden entries, conditions folding to false, nodes the fork

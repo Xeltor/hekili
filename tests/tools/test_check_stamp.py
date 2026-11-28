@@ -261,7 +261,7 @@ class Stamp(unittest.TestCase):
                 os.remove(self.path(rel))
 
     def test_non_md_under_docs_runs(self):  # ruling S5: only *.md counts as docs
-        for rel in ("docs/dev/x.lua", "docs/dev/data.json", "docs/dev/notes.MD"):
+        for rel in ("docs/dev/x.lua", "docs/dev/data.json", "docs/dev/upper.MD"):
             with self.subTest(rel=rel):
                 self.stamp()
                 self.write(rel, "x\n")
@@ -313,8 +313,15 @@ NOT_INPUTS = {
     "ANTHROPIC_API_KEY": "release-only tool, mocked in its tests",
     "CF_API_KEY": "release-only tool, mocked in its tests",
     "DISCORD_RELEASES_WEBHOOK": "release-only tool, mocked in its tests",
+    "MAKE_VERSION": "make's own constant: the Makefile drops -Otarget on make 3.x, output order only",
     "XDG_CACHE_HOME": "scripts/busted_parallel.sh's run-order cache: order only",
+    "GITHUB_ACTIONS": "scripts/busted_parallel.sh: output format only (groups, annotations, summary)",
+    "GITHUB_STEP_SUMMARY": "scripts/busted_parallel.sh: output format only (groups, annotations, summary)",
+    "SECONDS": "bash builtin: the elapsed-time clock",
     "GATE_TAGS": "tools/accuracy/run.sh: make accuracy, not check",
+    "MATRIX_CAPTURE": "tests/Forever/pairing_matrix_spec.lua: a re-pin's output file; the assertions never read it",
+    "RULES_CAPTURE": "pairing_matrix_spec.lua and helpers/rule_trace.lua: a rule re-pin's output file; never asserted",
+    "FIELDS_V5": "tests/Forever/fields_spec.lua: V5's list for the lane page; the assertions never read it",
     "WOWSIMS_NEW": "tools/wowsims/drift.lua: a dev-only report, not check",
     "WOWSIMS_NEW_TREE": "tools/wowsims/drift.lua: a dev-only report, not check",
     "WOWSIMS_NEW_CLI": "tools/wowsims/drift.lua: a dev-only report, not check",
@@ -328,6 +335,10 @@ NOT_INPUTS = {
     "UPDATES": "tests/Forever/windows_cpu_bench.lua: a dev-only CPU bench, not check",
     "BORDER_PACKS": "tools/check_border.sh: set only by border_check_spec to point at a fixture; unset in a real run",
     "BORDER_STATE": "tools/check_border.sh: set only by border_check_spec to point at a fixture; unset in a real run",
+    "FLOORS_LABEL": "tools/floors_trace.lua: the floor tools' busted helper, not check",
+    "FLOORS_OUT": "tools/floors_trace.lua: the floor tools' busted helper, not check",
+    "FLOORS_MODE": "tools/floors_trace.lua: the floor tools' busted helper, not check",
+    "FLOORS_SEEDS": "tools/floors_trace.lua: the floor tools' busted helper, not check",
 }
 # Files that read an environment variable by a computed name, with the names they read (all in ENV_VARS).
 DYNAMIC_READS = {"tools/wowsims/export.lua": "env(name): WOWSIMS, WOWSIMS_CLI, WOWDB"}

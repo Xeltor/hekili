@@ -35,6 +35,9 @@
 -- reissue pieces again, so the 4-piece Rogue Armor Energize (27788, +20 energy, 0.8 PPM on landed white swings) fires in the log (the oracle set has no
 -- Darkmantle set-ID patch: the reissue pieces carry their own set ID), and Stormshroud's 3-piece 23863 (+30 energy) too. Both are random
 -- resource procs and are NOT modelled (owner L1396/L1397); energy is secret in combat, so the belief sees each gain at its next read.
+-- Lane TR-1 (L1246): Blade Flurry's in-fight cast is the #8 strict sequence after Blood Fury, which wowsims prunes for
+-- any race but the Orc, so #9's autocast casts it there (the Human log: 117.53, "priority 9"); the pack's #9 line
+-- `blade_flurry,if=...&!action.blood_fury.known` gives it to every non-Orc (rule 13).
 return require("tools.wowsims.rogue_pve")({
     class = "ROGUE",
     pack = "Combat (wowsims.com)",
@@ -60,6 +63,9 @@ return require("tools.wowsims.rogue_pve")({
     -- by role (docs/dev/wowsims-packs.md): Garrote a stealth-window cast; Slice and Dice and Rupture both at 1, so they
     -- sort by soonest; Venom none (the user, 2026-10-21)
     focus = { garrote = 1, slice_and_dice = 1, rupture = 1 },
+    -- L1902 (Fable ruling 1b): the 3-point "Fight About to End" Eviscerate dumps points bound to this target, so it reads
+    -- the target's death; Slice and Dice's read of the same variable (a buff of ours) stays the fight's
+    targetBound = { eviscerate = "Fight About to End" },
     -- Riposte (owner ruling R70, 2026-11-06: "add it to the apl and make it focus=1"): not from wowsims, which never plays it
     -- (its fight has no parry on us; at 4b0030a44b the Combat SS build does not even take the talent). Off the global
     -- cooldown, so it leads the list (anchored on Garrote, the first line left once upstream dropped its Ambush opener:

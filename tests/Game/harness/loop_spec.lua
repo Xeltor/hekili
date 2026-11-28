@@ -196,7 +196,7 @@ describe("the headless loop's CPU metric", function()
         end)
         local m, r = bytes()
         assert.are.equal(math.floor(#m.cpu / loop.BYTES_EVERY), m.sampled)
-        assert.is_truthy(loop.line(m):find(("bytes %.0f per Update"):format(r.bytes), 1, true))
+        assert.is_truthy(loop.line(m):find(("bytes%%([a-z]+%%) %.0f per Update"):format(r.bytes)))
         local _, r10 = bytes(10)
         -- ten empty tables a cycle, 32 B or more each: exact whatever the collector did between the sampled cycles
         assert.is_true(r10.bytes - r.bytes >= 10 * 32, r10.bytes - r.bytes)
@@ -254,25 +254,26 @@ describe("the headless loop's CPU metric", function()
 end)
 
 describe("the headless loop between two fights on one boot", function()
+    local stub = {
+        character = function()
+            return { level = 60, power = { type = 1, token = "RAGE", max = 100 } }
+        end,
+        resolve = function()
+            return {}
+        end,
+        usable = function()
+            return {}
+        end,
+        uptime = function()
+            return {}
+        end,
+        gain = function()
+            return 0
+        end,
+        WORLD = { level = 60, max = 100, mobHealth = 1e9 },
+    }
+
     it("ends a fight killed by the last tick's press out of combat for every instance", function()
-        local stub = {
-            character = function()
-                return { level = 60, power = { type = 1, token = "RAGE", max = 100 } }
-            end,
-            resolve = function()
-                return {}
-            end,
-            usable = function()
-                return {}
-            end,
-            uptime = function()
-                return {}
-            end,
-            gain = function()
-                return 0
-            end,
-            WORLD = { level = 60, max = 100, mobHealth = 1e9 },
-        }
         local L = loop.new(stub)
         local o = {
             duration = 12,
@@ -303,6 +304,38 @@ describe("the headless loop between two fights on one boot", function()
             heard.UPDATE_SHAPESHIFT_FORM and 1,
             heard.PLAYER_TOTEM_UPDATE,
         })
+    end)
+
+    it("a player death ends a multi-enemy fight with the surviving enemy still counted", function()
+        local L, lastPoll = loop.new(stub), nil
+        local victims = { [4] = 4, [5] = 2, [6] = 1 } -- party member, first enemy, player
+        local o = {
+            duration = 12,
+            mobHealths = { 1e9, 1e9 },
+            others = { "caster" },
+            on = function(run, _, t)
+                lastPoll = t
+                local W, us = run.W, run.us
+                local victim = W.ents[victims[t]]
+                if victim then
+                    W.emit({
+                        kind = "spell",
+                        src = victim == us and W.ents[3] or us,
+                        dst = victim,
+                        act = "WOUND",
+                        amount = victim.health,
+                        school = 1,
+                    })
+                end
+            end,
+        }
+        local a = loop.run(L, 1, o, { { H = L.us } })
+        assert.are.equal(6, lastPoll)
+        assert.are.equal(6, a.W.wipeAt)
+        assert.are.equal(1, a.W.livesLeft)
+        assert.is_nil(a.W.killAt)
+        assert.is_nil(a.W.ents[3].diedAt)
+        assert.is_false(L.us.ns.VirtualStateInternal.inCombat)
     end)
 end)
 

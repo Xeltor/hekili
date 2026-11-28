@@ -8,7 +8,7 @@ local function boot(options)
     local c = world[spec].character()
     c.level, c.talents = options.level or 30, {}
     c.known = options.known or { BEAR, CAT, TRAVEL, AQUATIC, CLAW }
-    c.forms, c.form = { BEAR, CAT, TRAVEL, AQUATIC, MOONKIN }, options.form or 0
+    c.forms, c.form = { options.bear or BEAR, CAT, TRAVEL, AQUATIC, MOONKIN }, options.form or 0
     c.instanceType = options.instance or "none"
     c.power = { type = 0, token = "MANA", value = 3000, max = 3000 }
     local H = headless.new({
@@ -92,23 +92,24 @@ local function expectHidden(H, display)
 end
 
 describe("Druid form intent on Primary", function()
-    it("replaces Travel with Cat at ten yards and clears the stale Travel icon before drawing the new cue", function()
-        local H, display = boot({})
-        expectHidden(H, display)
-        selectTarget(H, "enemy", 18)
-        move(H, true)
-        expectCue(H, display, "travel_form")
+    it("keeps an outdoor tank in Bear between single pulls with hidden or visible Primary", function()
+        for _, known in ipairs({ { BEAR, CAT, TRAVEL, CLAW }, { BEAR, CAT, CLAW } }) do
+            local H, display, vis = boot({ spec = "Guardian", role = "TANK", form = 1, known = known })
+            move(H, true)
+            expectHidden(H, display)
 
-        local alpha, previous = display.alpha, display.upkeepCue
-        H.ctl.distance.target = 10
-        display.__scripts.OnUpdate(display, 0.55)
-        assert.are.equal(alpha, display.alpha)
-        assert.is_nil(previous.button)
-        expectCue(H, display, "cat_form")
-
-        H.ctl.form = 2
-        H.Fire("UPDATE_SHAPESHIFT_FORM")
-        expectHidden(H, display)
+            vis.always = 0.8
+            for _, kind in ipairs({ "enemy", "dead", "enemy" }) do
+                selectTarget(H, kind, 22)
+                draw(H, display)
+                assert.is_nil(display.upkeepOnly)
+                local out = H.Hekili.Engine.Output.Primary
+                for i = 1, out.count do
+                    assert.are_not.equal("cat_form", out.recs[i].actionName)
+                    assert.are_not.equal("travel_form", out.recs[i].actionName)
+                end
+            end
+        end
     end)
 
     it("chooses Cat even in Aquatic Form once a hostile target is selected", function()
@@ -136,13 +137,12 @@ describe("Druid form intent on Primary", function()
         expectCue(H, display, "bear_form")
     end)
 
-    it("prepares a learned Moonkin Form for Balance and holds it while approaching in Travel", function()
+    it("allows manual Travel before Balance selects a hostile target and prepares Moonkin", function()
         local H, display = boot({ spec = "Balance", level = 40, known = { TRAVEL, MOONKIN }, form = 3 })
-        selectTarget(H, "enemy", 18)
         move(H, true)
         expectHidden(H, display)
 
-        move(H, false)
+        selectTarget(H, "enemy", 18)
         expectCue(H, display, "moonkin_form")
     end)
 
@@ -156,7 +156,7 @@ describe("Druid form intent on Primary", function()
         expectCue(H, display, "cat_form")
     end)
 
-    it("can use a ranged opener when neither ground travel form is learned", function()
+    it("can use a ranged opener before learning a combat form", function()
         local H, display, vis = boot({ level = 8, known = { MOONFIRE } })
         H.ctl.ranges[MOONFIRE] = { 0, 30 }
         vis.always = 0.8
@@ -167,32 +167,26 @@ describe("Druid form intent on Primary", function()
         assert.is_nil(display.upkeepOnly)
     end)
 
-    it("keeps Travel through uncertain melee range and switches to the combat form once close", function()
+    it("uses an explicit target to cue combat Cat from manual Travel at any distance", function()
         local H, display = boot({ form = 3 })
-        selectTarget(H, "enemy", 18)
         move(H, true)
         expectHidden(H, display)
-        local range = H.ns.Facade.RangeLib
-        H.ns.Facade.RangeLib = function(unit, ...)
-            if unit == "target" then
-                return 8, 15
-            end
-            return range(unit, ...)
-        end
-        expectHidden(H, display)
-        H.ns.Facade.RangeLib = range
-        H.ctl.distance.target = 8
+
+        selectTarget(H, "enemy", 22)
         expectCue(H, display, "cat_form")
+        selectTarget(H, nil)
+        expectHidden(H, display)
     end)
 
     it("never brings up a travel form in combat, including while moving with an out-of-range target", function()
         local H, display, vis = boot({})
-        selectTarget(H, "enemy", 22)
         move(H, true)
-        expectCue(H, display, "travel_form")
+        H.ctl.swimming = true
+        expectCue(H, display, "aquatic_form")
 
         H.ctl.combat, H.ctl.unitCombat.target, H.ctl.threat.target = true, true, 3
         H.Fire("PLAYER_REGEN_DISABLED")
+        selectTarget(H, "enemy", 22)
         vis.always = 0.8
         draw(H, display)
         assert.is_nil(display.upkeepOnly)
@@ -222,45 +216,29 @@ describe("Druid form intent on Primary", function()
         end
     end)
 
-    it("uses land travel around friendly and dead targets and clears it on stopping, mounting, or death", function()
+    it("keeps ground movement manual around friendly or dead targets", function()
         local H, display = boot({})
         move(H, true)
-        expectCue(H, display, "travel_form")
+        expectHidden(H, display)
         selectTarget(H, "friendly", 3)
-        expectCue(H, display, "travel_form")
+        expectHidden(H, display)
         selectTarget(H, "dead", 3)
-        expectCue(H, display, "travel_form")
-        move(H, false)
         expectHidden(H, display)
 
+        H.ctl.intentOutdoors = false
+        H.Fire("ZONE_CHANGED_INDOORS")
+        expectHidden(H, display)
+    end)
+
+    it("keeps combat form cues hidden while mounted or dead", function()
+        local H, display = boot({})
         move(H, true)
         H.ctl.intentMounted = true
         H.Fire("PLAYER_MOUNT_DISPLAY_CHANGED")
+        selectTarget(H, "enemy", 3)
         expectHidden(H, display)
 
         H.ctl.intentMounted, H.ctl.dead.player = false, true
-        expectHidden(H, display)
-    end)
-
-    it("replaces Travel with learned Cat while crossing indoors and restores Travel outdoors", function()
-        local H, display = boot({})
-        move(H, true)
-        expectCue(H, display, "travel_form")
-
-        local previous = display.upkeepCue
-        H.ctl.intentOutdoors = false
-        H.Fire("ZONE_CHANGED_INDOORS")
-        assert.is_nil(previous.button)
-        expectCue(H, display, "cat_form")
-
-        H.ctl.intentOutdoors = true
-        H.Fire("ZONE_CHANGED_INDOORS")
-        expectCue(H, display, "travel_form")
-    end)
-
-    it("requires learned Cat for indoor travel", function()
-        local H, display = boot({ outdoors = false, known = { BEAR, TRAVEL } })
-        move(H, true)
         expectHidden(H, display)
     end)
 
@@ -281,7 +259,7 @@ describe("Druid form intent on Primary", function()
         end
     end)
 
-    it("switches a tank from manually chosen Cat to Bear when combat starts without a selected target", function()
+    it("retains a tank's chosen Cat at combat entry and cues Bear after the player leaves Cat", function()
         for _, instance in ipairs({ "party", "raid" }) do
             local H, display, vis =
                 boot({ spec = "Guardian", role = "TANK", instance = instance, outdoors = false, form = 2 })
@@ -291,13 +269,35 @@ describe("Druid form intent on Primary", function()
 
             H.ctl.combat = true
             H.Fire("PLAYER_REGEN_DISABLED")
+            expectHidden(H, display)
+
+            H.ctl.form = 0
+            H.Fire("UPDATE_SHAPESHIFT_FORM")
             expectCue(H, display, "bear_form")
         end
     end)
 
-    it("falls back to learned Cat for ground travel and keeps the normal queue when it is visible", function()
+    it("retains both Bear ranks when an outdoor enemy is selected", function()
+        for _, bear in ipairs({ BEAR, 9634 }) do
+            local H, display, vis =
+                boot({ spec = "Feral", level = 40, bear = bear, form = 1, known = { bear, CAT, CLAW } })
+            selectTarget(H, "enemy", 3)
+            expectHidden(H, display)
+
+            vis.always = 0.8
+            draw(H, display)
+            assert.is_false(H.Hekili.State:IsUsable("cat_form"))
+            local out = H.Hekili.Engine.Output.Primary
+            for i = 1, out.count do
+                assert.are_not.equal("cat_form", out.recs[i].actionName)
+            end
+        end
+    end)
+
+    it("keeps a combat Cat recommendation in the normal queue when it is visible", function()
         local H, display, vis = boot({ known = { BEAR, CAT, AQUATIC, CLAW } })
         move(H, true)
+        selectTarget(H, "enemy", 18)
         expectCue(H, display, "cat_form")
 
         vis.always = 0.8

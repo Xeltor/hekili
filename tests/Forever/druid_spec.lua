@@ -1968,6 +1968,27 @@ describe("Forever Druid Ravage opener (R69)", function()
         none(list, "cancel_buff")
     end)
 
+    it("holds Faerie Fire through live Prowl until the simulated opening attack", function()
+        local _, H = recs(5, false, 0.2)
+        local S = H.Hekili.State
+        S.reset("Primary", true)
+        S.index = 1
+        assert.is_true(S.buff.prowl.down)
+        assert.is_true(S:IsUsable("faerie_fire"))
+
+        H.ctl.stealthed = true
+        assert.is_false(S:IsUsable("faerie_fire"), "the live stealth flag leads the aura model")
+        S.offset = 1
+        assert.is_false(S:IsUsable("faerie_fire"), "the first slot may be waiting for the global cooldown")
+
+        S.index = 2
+        S.applyBuff("prowl")
+        assert.is_false(S:IsUsable("faerie_fire"), "a later slot still has simulated Prowl")
+        S:RunHandler("ravage")
+        assert.is_true(S.buff.prowl.down)
+        assert.is_true(S:IsUsable("faerie_fire"))
+    end)
+
     -- Player report 2 (hotfix 0.8.6, L1239): caught from Prowl, IsStealthed reads false at UPDATE_STEALTH: the
     -- believed Prowl goes down, so neither Ravage nor Pounce is usable. A secret answer changes nothing and raises
     -- nothing (Sources/Forms.lua): the believed Prowl stands.

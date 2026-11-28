@@ -3,7 +3,6 @@
 return function(recipe)
     local first = {
         "aquatic_form,if=combat=0&druid_form_intent",
-        "travel_form,if=combat=0&druid_form_intent",
         "bear_form,if=combat=0&druid_form_intent",
         "cat_form,if=combat=0&druid_form_intent",
         "frenzied_regeneration,display_below=25,if=!health.known&toggle.defensives&feral_defense&rage.lo>=10&buff.frenzied_regeneration.down",
@@ -24,7 +23,6 @@ return function(recipe)
         "mark_of_the_wild,if=feral_prepare_spell&feral_mark_missing",
         "thorns,if=feral_prepare_spell&buff.thorns.down",
         "regrowth,if=buff.regrowth.down&feral_prepare_elite&feral_primary",
-        "bear_form,display_below=35,if=feral_emergency_bear",
         "bear_form,if=buff.bear_form.down&feral_primary&feral_wants_bear",
         "cat_form,if=buff.cat_form.down&feral_wants_cat",
         "feral_charge,use_off_gcd=1,if=feral_interrupt&feral_spell_range",

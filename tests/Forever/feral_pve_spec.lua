@@ -17,22 +17,22 @@ describe("Feral leveling and group tanking", function()
         o.distance = 20
         assert.are_not.equal("auto_attack", (druid(o)))
     end)
-    it("starts ordinary outdoor pulls in Cat and keeps a party tank in Bear", function()
+    it("prepares Cat for ordinary outdoor pulls or Bear for a party tank from caster form", function()
         assert.are.equal("cat_form", (druid({ known = forms })))
-        assert.are.equal(
-            "bear_form",
-            (druid({ known = forms, form = "cat_form", group = 5, instance = "party", role = "TANK" }))
-        )
-        assert.are.equal("bear_form", (druid({ known = forms, form = "cat_form", group = 3, instance = "party" })))
+        assert.are.equal("bear_form", (druid({ known = forms, group = 5, instance = "party", role = "TANK" })))
+        assert.are.equal("bear_form", (druid({ known = forms, group = 3, instance = "party" })))
     end)
-    it("shifts for a second engaged melee enemy and ignores idle or distant bystanders", function()
+    it("prepares Bear for a second engaged melee enemy and continues attacking in a chosen Cat Form", function()
         for _, group in ipairs({ 0, 3 }) do
-            local o = { known = forms, form = "cat_form", group = group, combat = true, plate = true }
+            local o = { known = forms, group = group, combat = true, plate = true }
             assert.are.equal("bear_form", (druid(o)))
+            o.form = "cat_form"
+            assert.are.equal("claw", (druid(o)))
+            o.form = "caster"
             o.plateDistance = 20
-            assert.are.equal("claw", (druid(o)))
+            assert.are.equal("cat_form", (druid(o)))
             o.plateDistance, o.plate = 3, "idle"
-            assert.are.equal("claw", (druid(o)))
+            assert.are.equal("cat_form", (druid(o)))
         end
     end)
     it("leaves travel forms alone and requires a bracket or positive spell range for a second attacker", function()
@@ -41,7 +41,6 @@ describe("Feral leveling and group tanking", function()
         end
         local o = {
             known = forms,
-            form = "cat_form",
             combat = true,
             plate = true,
             setup = function(H)
@@ -67,7 +66,7 @@ describe("Feral leveling and group tanking", function()
                 return range(id, unit)
             end
         end
-        assert.are.equal("claw", (druid(o)))
+        assert.are.equal("cat_form", (druid(o)))
     end)
     it("uses Swipe for an engaged pack and stays in Bear as the pull thins", function()
         local o = { known = forms, combat = true, form = "bear_form", plate = true }
@@ -151,7 +150,6 @@ describe("Feral leveling and group tanking", function()
     it("keeps other tanks' assignments and idle dungeon targets out of the pickup rotation", function()
         local o = {
             known = forms,
-            form = "cat_form",
             group = 5,
             instance = "party",
             setup = function(_, ctl)
@@ -273,12 +271,12 @@ describe("Feral leveling and group tanking", function()
         }
         assert.are.equal("swipe_bear", (druid(o)))
     end)
-    it("keeps both packs flexible outdoors and shifts a Cat under direct pressure", function()
+    it("keeps both packs in the chosen form on an outdoor pull and under direct pressure", function()
         for _, spec in ipairs({ "Feral", "Guardian" }) do
             local o = { spec = spec, known = forms, form = "bear_form" }
-            assert.are.equal("cat_form", (druid(o)))
+            assert.are.equal("maul", (druid(o)))
             o.form, o.health, o.combat = "cat_form", 300, true
-            assert.are.equal("bear_form", (druid(o)))
+            assert.are.equal("claw", (druid(o)))
             o.defensives = false
             assert.are.equal("claw", (druid(o)))
         end

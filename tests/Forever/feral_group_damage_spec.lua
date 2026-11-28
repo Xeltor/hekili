@@ -17,7 +17,7 @@ local function aura(c, unit, id, source)
 end
 
 describe("Cat damage in a dungeon group", function()
-    it("follows the assigned role on dungeon and raid bosses and respects a damage player's manual Bear", function()
+    it("follows the assigned role from caster on dungeon and raid bosses and respects manually chosen forms", function()
         for _, instance in ipairs({ "party", "raid" }) do
             for _, spec in ipairs({ "Guardian", "Feral" }) do
                 local label = instance .. " " .. spec
@@ -48,7 +48,7 @@ describe("Cat damage in a dungeon group", function()
                 o.role, o.form = "TANK", "caster"
                 assert.are.equal("bear_form", (F.druid(o)), label .. " tank from caster")
                 o.form = "cat_form"
-                assert.are.equal("bear_form", (F.druid(o)), label .. " tank from Cat")
+                assert.are.equal("claw", (F.druid(o)), label .. " tank attacks from manual Cat")
                 o.form = "bear_form"
                 assert.are.equal("primal_bite", (F.druid(o)), label .. " tank attacks from Bear")
             end

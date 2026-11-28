@@ -113,11 +113,13 @@ describe("Feral and Guardian party roles and recovery", function()
         assert.are.equal("healing_touch", (F.tank(o)))
     end)
 
-    it("prepares Cat for a damage assignment between pulls and respects a manual Bear during the fight", function()
-        local o = { known = forms, role = "DAMAGER", noTarget = true, setup = assignedTank }
+    it("prepares Cat from caster for a damage assignment and keeps a manually chosen Bear", function()
+        local o = { known = forms, role = "DAMAGER", form = "caster", noTarget = true, setup = assignedTank }
         assert.are.equal("cat_form", (F.tank(o)))
         o.noTarget = false
         assert.are.equal("cat_form", (F.tank(o)))
+        o.form = "bear_form"
+        assert.are_not.equal("cat_form", (F.tank(o)))
         o.setup = function(H, ctl)
             assignedTank(H, ctl)
             ctl.unitCombat.party2 = true
@@ -150,10 +152,12 @@ describe("Feral and Guardian party roles and recovery", function()
     end)
 
     it("recognizes an outdoor party's assigned tank even when the selected enemy attacks the druid", function()
-        local o = { known = forms, form = "cat_form", group = 3, combat = true, plate = true, setup = assignedTank }
-        assert.are.equal("claw", (F.druid(o)))
+        local o = { known = forms, group = 3, combat = true, plate = true, setup = assignedTank }
+        assert.are.equal("cat_form", (F.druid(o)))
         o.setup = nil
         assert.are.equal("bear_form", (F.druid(o)))
+        o.form = "cat_form"
+        assert.are.equal("claw", (F.druid(o)))
     end)
 
     it("uses Bear on an ordinary pull until both Cat Form and its front-facing builder are learned", function()

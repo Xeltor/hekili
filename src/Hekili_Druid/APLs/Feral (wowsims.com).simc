@@ -20,7 +20,6 @@
 # Omitted: default #17: other OtherActionOffensivePotion
 
 actions.precombat=aquatic_form,if=combat=0&druid_form_intent
-actions.precombat+=/travel_form,if=combat=0&druid_form_intent
 actions.precombat+=/bear_form,if=combat=0&druid_form_intent
 actions.precombat+=/cat_form,if=combat=0&druid_form_intent
 actions.precombat+=/frenzied_regeneration,display_below=25,if=!health.known&toggle.defensives&feral_defense&rage.lo>=10&buff.frenzied_regeneration.down
@@ -41,7 +40,6 @@ actions.precombat+=/cure_poison,if=buff.dispellable_poison.up&(!action.abolish_p
 actions.precombat+=/mark_of_the_wild,if=feral_prepare_spell&feral_mark_missing
 actions.precombat+=/thorns,if=feral_prepare_spell&buff.thorns.down
 actions.precombat+=/regrowth,if=buff.regrowth.down&feral_prepare_elite&feral_primary
-actions.precombat+=/bear_form,display_below=35,if=feral_emergency_bear
 actions.precombat+=/bear_form,if=buff.bear_form.down&feral_primary&feral_wants_bear
 actions.precombat+=/cat_form,if=buff.cat_form.down&feral_wants_cat
 actions.precombat+=/feral_charge,use_off_gcd=1,if=feral_interrupt&feral_spell_range
@@ -64,7 +62,6 @@ actions.precombat+=/prowl,use_off_gcd=1,if=!buff.prowl.up&(!feral_field|feral_pu
 actions.precombat+=/dash,use_off_gcd=1,if=(!feral_field|feral_pull&!feral_wants_bear)
 actions=variable,name=v_paid_builder_fits_the_energy_pool,pure=1,value=(!(((!action.cat_form.known|buff.cat_form.up)&talent.predatory_discipline.enabled&((talent.primal_fury.enabled&combo_points.current>=4)|(!talent.primal_fury.enabled&combo_points.current>=5))&((talent.primal_fury.enabled&(!action.rip.known|debuff.rip.remains>=3))|(!talent.primal_fury.enabled&(((!talent.improved_shred.enabled&!(!talent.primal_fury.enabled&!talent.improved_shred.enabled&talent.predatory_discipline.enabled&talent.shifting_power.enabled&buff.idol_of_ferocity.up)&(time+fight_remains)<=60)&(!action.rip.known|debuff.rip.remains>=2))|(!(!talent.improved_shred.enabled&!(!talent.primal_fury.enabled&!talent.improved_shred.enabled&talent.predatory_discipline.enabled&talent.shifting_power.enabled&buff.idol_of_ferocity.up)&(time+fight_remains)<=60)&(!action.rip.known|debuff.rip.remains>=4))))))&!((buff.clearcasting.up&energy.lo>=45)|(!buff.clearcasting.up&(energy.lo>=75|((combo_points.current>=5|(talent.primal_fury.rank>=2&!talent.improved_shred.enabled))&energy.lo>=60)))))&(talent.primal_fury.rank=1|energy.lo>=60|((!talent.primal_fury.enabled|(talent.primal_fury.rank>=2&((talent.primal_fury.rank>=2&talent.shifting_power.enabled)&!talent.improved_shred.enabled&talent.predatory_discipline.enabled&talent.shifting_power.enabled&buff.idol_of_ferocity.up)))&combo_points.current<4)|(talent.primal_fury.rank>=2&!((talent.primal_fury.rank>=2&talent.shifting_power.enabled)&!talent.improved_shred.enabled&talent.predatory_discipline.enabled&talent.shifting_power.enabled&buff.idol_of_ferocity.up)&combo_points.current<3)))
 actions+=/aquatic_form,if=combat=0&druid_form_intent
-actions+=/travel_form,if=combat=0&druid_form_intent
 actions+=/bear_form,if=combat=0&druid_form_intent
 actions+=/cat_form,if=combat=0&druid_form_intent
 actions+=/frenzied_regeneration,display_below=25,if=!health.known&toggle.defensives&feral_defense&rage.lo>=10&buff.frenzied_regeneration.down
@@ -85,7 +82,6 @@ actions+=/cure_poison,if=buff.dispellable_poison.up&(!action.abolish_poison.know
 actions+=/mark_of_the_wild,if=feral_prepare_spell&feral_mark_missing
 actions+=/thorns,if=feral_prepare_spell&buff.thorns.down
 actions+=/regrowth,if=buff.regrowth.down&feral_prepare_elite&feral_primary
-actions+=/bear_form,display_below=35,if=feral_emergency_bear
 actions+=/bear_form,if=buff.bear_form.down&feral_primary&feral_wants_bear
 actions+=/cat_form,if=buff.cat_form.down&feral_wants_cat
 actions+=/feral_charge,use_off_gcd=1,if=feral_interrupt&feral_spell_range

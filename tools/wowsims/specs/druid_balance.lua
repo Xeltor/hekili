@@ -77,8 +77,6 @@ return {
     -- wowsims's sim starts in Moonkin Form (its list never casts it): the form first, once known (a talent, 40)
     levelingFirst = {
         "aquatic_form,if=combat=0&druid_form_intent",
-        "travel_form,if=combat=0&druid_form_intent",
-        "cat_form,if=combat=0&druid_form_intent",
         "moonkin_form,if=!buff.moonkin_form.up&(!druid_holding_travel|druid_form_intent)",
     },
     -- owner R20a: wowsims's low-mana branch only (the fight's length is unknown in game, gap AN)
